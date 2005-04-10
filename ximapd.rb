@@ -1422,6 +1422,8 @@ class Ximapd
         return HeaderSearchKey.new(header_name, s)
       when "SEEN"
         return SeenSearchKey.new(@session.mail_store.flags_db)
+      when "UNSEEN"
+        return UnseenSearchKey.new(@session.mail_store.flags_db)
       else
         return NullSearchKey.new
       end
@@ -2231,6 +2233,14 @@ class Ximapd
     def select(uids)
       return uids.select { |uid|
         /\\Seen\b/ni.match(@flags_db[uid])
+      }
+    end
+  end
+
+  class UnseenSearchKey < SeenSearchKey
+    def select(uids)
+      return uids.select { |uid|
+        !/\\Seen\b/ni.match(@flags_db[uid])
       }
     end
   end
