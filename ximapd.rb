@@ -1,5 +1,5 @@
 #!/usr/bin/env ruby
-# $Id: ximapd.rb 287 2005-04-08 16:18:46Z shugo $
+# $Id$
 # Copyright (C) 2005  Shugo Maeda <shugo@ruby-lang.org>
 # All rights reserved.
 #
@@ -272,6 +272,8 @@ class Ximapd
 
   class MailStore
     include QueryFormat
+
+    attr_reader :flags_db
 
     def initialize(config)
       @config = config
@@ -1418,6 +1420,8 @@ class Ximapd
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
         return HeaderSearchKey.new(header_name, s)
+      when "SEEN"
+        return SeenSearchKey.new(@session.mail_store.flags_db)
       else
         return NullSearchKey.new
       end
@@ -2171,6 +2175,9 @@ class Ximapd
         q.empty?
       }.join(" ")
       uids = @session.mail_store.uid_search(@session.current_mailbox, query)
+      for key in @keys
+        uids = key.select(uids)
+      end
       @session.send_data("SEARCH %s", uids.join(" "))
       send_tagged_ok
     end
@@ -2180,9 +2187,13 @@ class Ximapd
     def to_query
       return ""
     end
+
+    def select(uids)
+      return uids
+    end
   end
 
-  class BodySearchKey
+  class BodySearchKey < NullSearchKey
     def initialize(value)
       @value = value
     end
@@ -2192,7 +2203,7 @@ class Ximapd
     end
   end
 
-  class HeaderSearchKey
+  class HeaderSearchKey < NullSearchKey
     include QueryFormat
 
     def initialize(name, value)
@@ -2209,6 +2220,18 @@ class Ximapd
       else
         return ""
       end
+    end
+  end
+
+  class SeenSearchKey < NullSearchKey
+    def initialize(flags_db)
+      @flags_db = flags_db
+    end
+
+    def select(uids)
+      return uids.select { |uid|
+        /\\Seen\b/ni.match(@flags_db[uid])
+      }
     end
   end
 

@@ -1,4 +1,4 @@
-# $Id: ximapd-session-test.rb 287 2005-04-08 16:18:46Z shugo $
+# $Id$
 # Copyright (C) 2005  Shugo Maeda <shugo@ruby-lang.org>
 # All rights reserved.
 #
@@ -810,6 +810,8 @@ A005 UID SEARCH BODY "hello world"\r
 A006 UID SEARCH BODY "\\"hello world\\""\r
 A007 UID SEARCH BODY "\\"hello, world\\""\r
 A008 UID SEARCH HEADER SUBJECT hello\r
+A009 UID STORE #{uid1} FLAGS (\\Seen)\r
+A010 UID SEARCH BODY hello SEEN\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
@@ -838,6 +840,10 @@ EOF
     assert_equal("A007 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1} #{uid3}\r\n", sock.output.gets)
     assert_equal("A008 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("A009 OK UID STORE completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
+    assert_equal("A010 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
