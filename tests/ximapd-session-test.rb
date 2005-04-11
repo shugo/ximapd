@@ -745,6 +745,56 @@ EOF
     assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
   end
 
+  def test_expunge
+    sock = SpoofSocket.new(<<EOF)
+A001 UID EXPUNGE\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("A001 BAD Command unrecognized/login please\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 UID EXPUNGE\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("A002 BAD Command unrecognized\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 SELECT INBOX\r
+A003 EXPUNGE\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 0 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 0 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("A003 OK EXPUNGE completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+  end
+
   def test_uid_search
     mail_store = Ximapd::MailStore.new(@config)
     mail1 = <<EOF.gsub(/\n/, "\r\n")

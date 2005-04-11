@@ -1158,6 +1158,7 @@ class Ximapd
     SELECTED_STATE_COMMANDS = AUTHENTICATED_STATE_COMMANDS + [
       "CHECK",
       "CLOSE",
+      "EXPUNGE",
       "UID SEARCH",
       "FETCH",
       "UID FETCH",
@@ -1380,6 +1381,10 @@ class Ximapd
 
     def close
       return CloseCommand.new
+    end
+
+    def expunge
+      return NoopCommand.new
     end
 
     def uid_search
