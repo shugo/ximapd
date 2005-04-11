@@ -599,12 +599,14 @@ class Ximapd
         "last_peeked_uid" => 0
       }
       if query.nil?
-        query = name.slice(/\Aqueries\/(.*)/, 1)
-        if query.nil?
+        s = name.slice(/\Aqueries\/(.*)/, 1)
+        if s.nil?
           @mailbox_db["status"]["last_mailbox_id"] += 1
           query = format('mailbox-id = %d',
                          @mailbox_db["status"]["last_mailbox_id"])
           mailbox["id"] = @mailbox_db["status"]["last_mailbox_id"]
+        else
+          query = Net::IMAP.decode_utf7(s)
         end
       end
       mailbox["query"] = query
