@@ -35,6 +35,7 @@ require "digest/md5"
 require "iconv"
 require "nkf"
 require "date"
+require "logger"
 require "tmail"
 require "rast"
 
@@ -458,10 +459,10 @@ class Ximapd
       end
     end
 
-    def import_mail(str)
+    def import_mail(str, mailbox_name = nil, flags = "")
       @mailbox_db.transaction do
         open_index do |index|
-          return import_mail_internal(index, str)
+          return import_mail_internal(index, str, mailbox_name, flags)
         end
       end
     end
@@ -508,7 +509,9 @@ class Ximapd
               mails.push(mail)
             end
           else
-            uid = result.items[seq_number - 1].properties[0]
+            item = result.items[seq_number - 1]
+            next if item.nil?
+            uid = item.properties[0]
             mail = mailbox.get_mail(seq_number, uid)
             mails.push(mail)
           end
@@ -632,7 +635,19 @@ class Ximapd
       end
     end
 
-    def import_mail_internal(index, str)
+    def import_mail_internal(index, str, mailbox_name = nil, flags = "")
+      if mailbox_name.nil?
+        mailbox_id = 0
+      else
+        mailbox = @mailbox_db["mailboxes"][mailbox_name]
+        if mailbox.nil?
+          raise NoMailboxError.new("no such mailbox")
+        end
+        mailbox_id = mailbox["id"]
+        if mailbox_id.nil?
+          raise MailboxAccessError.new("can't import to virtual mailbox")
+        end
+      end
       s = str.gsub(/\r?\n/, "\r\n").sub(/\AFrom .*\r\n/, "")
       @mailbox_db["status"]["last_uid"] += 1
       uid = @mailbox_db["status"]["last_uid"]
@@ -642,7 +657,8 @@ class Ximapd
         f.flock(File::LOCK_EX)
         f.print(s)
       end
-      index_mail(index, uid, s)
+      @flags_db[uid] = flags
+      index_mail(index, uid, s, mailbox_id)
       return uid
     end
 
@@ -652,7 +668,7 @@ class Ximapd
       return File.expand_path(relpath, @mail_path)
     end
 
-    def index_mail(index, uid, mail)
+    def index_mail(index, uid, mail, mailbox_id)
       properties = Hash.new("")
       properties["uid"] = uid
       properties["size"] = mail.size
@@ -660,7 +676,7 @@ class Ximapd
       properties["internal-date"] = DateTime.now.to_s
       properties["date"] = properties["internal-date"]
       properties["x-mail-count"] = 0
-      properties["mailbox-id"] = 0
+      properties["mailbox-id"] = mailbox_id
       begin
         m = TMail::Mail.parse(mail)
         text = extract_text(m)
@@ -733,7 +749,7 @@ class Ximapd
       s = (mail["x-ml-name"] || mail["list-id"] || mail["mailing-list"]).to_s
       properties["x-ml-name"] = NKF.nkf("-m0 -w", s)
       properties["x-mail-count"] = mail["x-mail-count"].to_s.to_i
-      if properties["x-ml-name"].empty?
+      if properties["mailbox-id"] == 0 && properties["x-ml-name"].empty?
         properties["mailbox-id"] = 1
       end
       return properties
@@ -1153,6 +1169,7 @@ class Ximapd
       "LIST",
       "LSUB",
       "STATUS",
+      "APPEND",
       "IDLE"
     ]
     SELECTED_STATE_COMMANDS = AUTHENTICATED_STATE_COMMANDS + [
@@ -1289,33 +1306,6 @@ class Ximapd
       return ListCommand.new(reference_name, mailbox_name)
     end
 
-    def status
-      match(T_SPACE)
-      mailbox_name = mailbox
-      match(T_SPACE)
-      match(T_LPAR)
-      atts = []
-      atts.push(status_att)
-      loop do
-        token = lookahead
-        if token.symbol == T_RPAR
-          shift_token
-          break
-        end
-        match(T_SPACE)
-        atts.push(status_att)
-      end
-      return StatusCommand.new(mailbox_name, atts)
-    end
-
-    def status_att
-      att = atom.upcase
-      if !/\A(MESSAGES|RECENT|UIDNEXT|UIDVALIDITY|UNSEEN)\z/.match(att)
-        parse_error("unknown att `%s'", att)
-      end
-      return att
-    end
-
     def list_mailbox
       token = lookahead
       if string_token?(token)
@@ -1362,6 +1352,33 @@ class Ximapd
       return LIST_MAILBOX_TOKENS.include?(token.symbol)
     end
 
+    def status
+      match(T_SPACE)
+      mailbox_name = mailbox
+      match(T_SPACE)
+      match(T_LPAR)
+      atts = []
+      atts.push(status_att)
+      loop do
+        token = lookahead
+        if token.symbol == T_RPAR
+          shift_token
+          break
+        end
+        match(T_SPACE)
+        atts.push(status_att)
+      end
+      return StatusCommand.new(mailbox_name, atts)
+    end
+
+    def status_att
+      att = atom.upcase
+      if !/\A(MESSAGES|RECENT|UIDNEXT|UIDVALIDITY|UNSEEN)\z/.match(att)
+        parse_error("unknown att `%s'", att)
+      end
+      return att
+    end
+
     def mailbox
       result = astring
       if /\AINBOX\z/ni.match(result)
@@ -1369,6 +1386,30 @@ class Ximapd
       else
         return result
       end
+    end
+
+    def append
+      match(T_SPACE)
+      mailbox_name = mailbox
+      match(T_SPACE)
+      token = lookahead
+      if token.symbol == T_LPAR
+        flags = flag_list
+        match(T_SPACE)
+        token = lookahead
+      else
+        flags = []
+      end
+      if token.symbol == T_QUOTED
+        shift_token
+        datetime = token.value
+        match(T_SPACE)
+      else
+        datetime = nil
+      end
+      token = match(T_LITERAL)
+      message = token.value
+      return AppendCommand.new(mailbox_name, flags, datetime, message)
     end
 
     def idle
@@ -2154,6 +2195,20 @@ class Ximapd
         format("%s %d", att, status.send(att.downcase))
       }.join(" ")
       @session.send_data("STATUS %s (%s)", quoted(@mailbox_name), s)
+      send_tagged_ok
+    end
+  end
+
+  class AppendCommand < Command
+    def initialize(mailbox_name, flags, datetime, message)
+      @mailbox_name = mailbox_name
+      @flags = flags
+      @datetime = datetime
+      @message = message
+    end
+
+    def exec
+      @session.mail_store.import_mail(@message, @mailbox_name, @flags.join(" "))
       send_tagged_ok
     end
   end

@@ -162,7 +162,9 @@ Date: Wed, 30 Mar 2005 17:34:46 +0900
 
 Hello world
 EOF
-    uid1 = session.mail_store.import_mail(mail1)
+    mail_store = Ximapd::MailStore.new(@config)
+    uid1 = mail_store.import_mail(mail1)
+    mail_store.close
     sock = SpoofSocket.new(<<EOF)
 A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
@@ -192,7 +194,9 @@ Date: Fri, 01 Apr 2005 11:47:10 +0900
 
 Goodbye world
 EOF
-    uid2 = session.mail_store.import_mail(mail2)
+    mail_store = Ximapd::MailStore.new(@config)
+    uid2 = mail_store.import_mail(mail2)
+    mail_store.close
     sock = SpoofSocket.new(<<EOF)
 A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
@@ -224,7 +228,9 @@ Date: Fri, 01 Apr 2005 11:47:10 +0900
 
 ximapd-0.0.0 is released!
 EOF
-    uid3 = session.mail_store.import_mail(mail3)
+    mail_store = Ximapd::MailStore.new(@config)
+    uid3 = mail_store.import_mail(mail3)
+    mail_store.close
     sock = SpoofSocket.new(<<EOF)
 A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
@@ -614,6 +620,90 @@ EOF
     assert_equal("* STATUS \"INBOX\" (MESSAGES 1 UNSEEN 0 UIDNEXT 2)\r\n",
                  sock.output.gets)
     assert_equal("A005 OK STATUS completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+  end
+
+  def test_append
+    mail = <<EOF
+Date: Mon, 7 Feb 1994 21:52:25 -0800 (PST)\r
+From: Fred Foobar <foobar@Blurdybloop.COM>\r
+Subject: afternoon meeting\r
+To: mooch@owatagu.siam.edu\r
+Message-Id: <B27397-0100000@Blurdybloop.COM>\r
+MIME-Version: 1.0\r
+Content-Type: TEXT/PLAIN; CHARSET=US-ASCII\r
+\r
+Hello Joe, do you think we can meet at 3:30 tomorrow?\r
+EOF
+
+    sock = SpoofSocket.new(<<EOF)
+A001 APPEND INBOX {#{mail.length}}\r
+#{mail}\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ Ready for additional command text\r\n",
+                 sock.output.gets)
+    assert_equal("A001 BAD Command unrecognized/login please\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 APPEND INBOX {#{mail.length}}\r
+#{mail}\r
+A003 SELECT INBOX\r
+A004 FETCH 1 (BODY[] FLAGS)\r
+A005 CREATE foo\r
+A006 APPEND foo (\\Seen) {#{mail.length}}\r
+#{mail}\r
+A007 SELECT foo\r
+A008 FETCH 1 (BODY[] FLAGS)\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("+ Ready for additional command text\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK APPEND completed\r\n", sock.output.gets)
+    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT 2] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (BODY[] {#{mail.length}}\r\n",
+                 sock.output.gets)
+    assert_equal(mail, sock.output.read(mail.length))
+    assert_equal(" FLAGS (\\Recent))\r\n", sock.output.gets)
+    assert_equal("A004 OK FETCH completed\r\n", sock.output.gets)
+    assert_equal("A005 OK CREATE completed\r\n", sock.output.gets)
+    assert_equal("+ Ready for additional command text\r\n",
+                 sock.output.gets)
+    assert_equal("A006 OK APPEND completed\r\n", sock.output.gets)
+    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT 3] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A007 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (BODY[] {#{mail.length}}\r\n",
+                 sock.output.gets)
+    assert_equal(mail, sock.output.read(mail.length))
+    assert_equal(" FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("A008 OK FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
