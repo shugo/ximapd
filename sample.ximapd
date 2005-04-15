@@ -3,4 +3,4 @@ user: <user>
 password: <password>
 data_dir: ~/ximapd
 db_type: YAML
-history_size: 10
+history_size: 5
