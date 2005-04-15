@@ -227,6 +227,11 @@ class Ximapd
   DEFAULT_HISTORY_SIZE = 10
   DEFAULT_CHARSET = "iso-2022-jp"
   DEFAULT_SYNC_THRESHOLD_CHARS = 500000
+  DEFAULT_ML_NAME_HEADER_FIELDS = [
+    "x-ml-name",
+    "list-id",
+    "mailing-list"
+  ]
 
   DEFAULT_STATUS = {
     "uidvalidity" => 1,
@@ -312,6 +317,8 @@ class Ximapd
       @history_size = @config["history_size"] || DEFAULT_HISTORY_SIZE
       @sync_threshold_chars =
         @config["sync_threshold_chars"] || DEFAULT_SYNC_THRESHOLD_CHARS
+      @ml_name_header_fields =
+        @config["ml_name_header_fields"] || DEFAULT_ML_NAME_HEADER_FIELDS
       @last_peeked_uids = {}
     end
 
@@ -746,8 +753,11 @@ class Ximapd
         properties["date"] = DateTime.parse(mail["date"].to_s).to_s
       rescue
       end
-      s = (mail["x-ml-name"] || mail["list-id"] || mail["mailing-list"]).to_s
-      properties["x-ml-name"] = NKF.nkf("-m0 -w", s)
+      s = nil
+      @ml_name_header_fields.each do |field_name|
+        s ||= mail[field_name]
+      end
+      properties["x-ml-name"] = NKF.nkf("-m0 -w", s.to_s)
       properties["x-mail-count"] = mail["x-mail-count"].to_s.to_i
       if properties["mailbox-id"] == 0 && properties["x-ml-name"].empty?
         properties["mailbox-id"] = 1

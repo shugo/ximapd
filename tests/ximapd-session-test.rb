@@ -267,6 +267,41 @@ EOF
     assert_equal("A004 NO no such mailbox\r\n", sock.output.gets)
     assert_equal("A005 NO can't access mailbox\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
+
+    mail4 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+Subject: support STARTTLS
+X-Trac-Project: ximapd
+Date: Fri, 01 Apr 2005 11:47:10 +0900
+
+support the STARTTLS command
+EOF
+    config = @config.dup
+    config["ml_name_header_fields"] = ["X-ML-Name", "X-Trac-Project"]
+    mail_store = Ximapd::MailStore.new(config)
+    uid4 = mail_store.import_mail(mail4)
+    mail_store.close
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 SELECT ml/ximapd\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid4 + 1}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
   end
 
   def test_create
