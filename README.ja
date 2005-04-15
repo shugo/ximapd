@@ -1,0 +1,47 @@
+= ximapd
+
+== 概要
+
+ximapdは検索ベースのIMAPサーバです。
+
+== 動作環境
+
+* Ruby 1.8.2 以降
+* Rast 0.0.1 以降
+* Ruby interface for BDB 0.5.4 以降
+* TMail 0.10.8 以降
+
+== インストール
+
+ximapd.rbをPATHにコピーしてください。
+
+== セットアップ
+
+(1) sample.ximapdを~/.ximapdにコピーしてください。
+
+      $ cp sample.ximapd ~/.ximapd
+
+(2) ~/.ximapdを編集してください。
+
+      $ vi ~/.ximapd
+
+    Do not forget to change `user' and `password'!
+
+(3) 古いメールを取り込んでください。
+
+      $ ximapd.rb --import /path/to/mail
+      $ ximapd.rb --import /path/to/dir
+      $ ximapd.rb --import-mbox /path/to/mbox
+
+(4) 新しいメールを受信するために~/.forwardを書いてください。
+
+      $ cat ~/.forward
+      /home/username/mbox,"|/path/to/ximapd.rb --import"
+
+    ximapd.rbはメールを失うかもしれません。
+    かならず、他の場所にメールをコピーするようにしてください。
+
+== 使い方
+
+ThunderbirdのようなIMAPクライアントを使用して、ximapdに接続してください。
+もし何もエラーが起きなければ、あなたはラッキーです:)
