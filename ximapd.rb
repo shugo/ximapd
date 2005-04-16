@@ -39,11 +39,11 @@ require "logger"
 require "tmail"
 require "rast"
 
-#module TMail
-#  def Decoder.decode(str, encoding = nil)
-#    return str
-#  end
-#end
+module TMail
+  def Decoder.decode(str, encoding = nil)
+    return str
+  end
+end
 
 class Ximapd
   VERSION = "0.0.0"
@@ -792,7 +792,7 @@ class Ximapd
       @ml_name_header_fields.each do |field_name|
         s ||= mail[field_name]
       end
-      properties["x-ml-name"] = NKF.nkf("-m0 -w", s.to_s)
+      properties["x-ml-name"] = NKF.nkf("-w", s.to_s)
       properties["x-mail-count"] = mail["x-mail-count"].to_s.to_i
       if properties["mailbox-id"] == 0 && properties["x-ml-name"].empty?
         properties["mailbox-id"] = 1
@@ -801,7 +801,7 @@ class Ximapd
     end
 
     def get_header_field(mail, field)
-      return NKF.nkf("-m0 -w", mail[field].to_s)
+      return NKF.nkf("-w", mail[field].to_s)
     end
 
     def add_history(query)

@@ -951,6 +951,15 @@ Date: Sun, 03 Apr 2005 03:06:39 +0900
 Hello, foo
 EOF
     uid3 = mail_store.import_mail(mail3)
+    mail4 = Iconv.conv("iso-2022-jp", "utf-8", <<EOF).gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
+Date: Sun, 03 Apr 2005 03:06:39 +0900
+
+こんにちは、みなさん
+EOF
+    uid4 = mail_store.import_mail(mail4)
     mail_store.close
 
     sock = SpoofSocket.new(<<EOF)
@@ -990,16 +999,17 @@ A008 UID SEARCH HEADER SUBJECT hello\r
 A009 UID STORE #{uid1} FLAGS (\\Seen)\r
 A010 UID SEARCH BODY hello SEEN\r
 A011 UID SEARCH BODY hello UNSEEN\r
+A012 UID SEARCH CHARSET UTF-8 HEADER SUBJECT "こんにちは"\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
-    assert_equal("* 3 EXISTS\r\n", sock.output.gets)
-    assert_equal("* 3 RECENT\r\n", sock.output.gets)
+    assert_equal("* 4 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 4 RECENT\r\n", sock.output.gets)
     assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
-    assert_equal("* OK [UIDNEXT #{uid3 + 1}] Predicted next UID\r\n",
+    assert_equal("* OK [UIDNEXT #{uid4 + 1}] Predicted next UID\r\n",
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
@@ -1024,6 +1034,8 @@ EOF
     assert_equal("A010 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
     assert_equal("A011 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid4}\r\n", sock.output.gets)
+    assert_equal("A012 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
@@ -1129,7 +1141,7 @@ EOF
 Date: Wed, 30 Mar 2005 17:34:46 +0900
 Message-ID: <41ECC569.8000603@ruby-lang.org>
 From: Shugo Maeda <shugo@ruby-lang.org>
-Subject: hello
+Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
 To: Foo <foo@ruby-lang.org>,
         bar@ruby-lang.org
 Cc: Baz <baz@ruby-lang.org>
@@ -1201,7 +1213,7 @@ EOF
 Date: Wed, 30 Mar 2005 17:34:46 +0900
 Message-ID: <41ECC569.8000603@ruby-lang.org>
 From: Shugo Maeda <shugo@ruby-lang.org>
-Subject: hello
+Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
 To: Foo <foo@ruby-lang.org>,
         bar@ruby-lang.org
 Cc: Baz <baz@ruby-lang.org>
@@ -1249,7 +1261,7 @@ EOF
     assert_equal(mail1[5, 10], sock.output.read(10))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A010 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (UID 1 ENVELOPE (\"Wed, 30 Mar 2005 17:34:46 +0900\" \"hello\" ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Foo\" NIL \"foo\" \"ruby-lang.org\") (NIL NIL \"bar\" \"ruby-lang.org\")) ((\"Baz\" NIL \"baz\" \"ruby-lang.org\")) NIL \"<41C448BF.7080605@ruby-lang.org>\" \"<41ECC569.8000603@ruby-lang.org>\"))\r\n",
+    assert_equal("* 1 FETCH (UID 1 ENVELOPE (\"Wed, 30 Mar 2005 17:34:46 +0900\" \"=?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=\" ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Foo\" NIL \"foo\" \"ruby-lang.org\") (NIL NIL \"bar\" \"ruby-lang.org\")) ((\"Baz\" NIL \"baz\" \"ruby-lang.org\")) NIL \"<41C448BF.7080605@ruby-lang.org>\" \"<41ECC569.8000603@ruby-lang.org>\"))\r\n",
                  sock.output.gets)
     assert_equal("A011 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
