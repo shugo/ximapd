@@ -39,11 +39,11 @@ require "logger"
 require "tmail"
 require "rast"
 
-module TMail
-  def Decoder.decode(str, encoding = nil)
-    return str
-  end
-end
+#module TMail
+#  def Decoder.decode(str, encoding = nil)
+#    return str
+#  end
+#end
 
 class Ximapd
   VERSION = "0.0.0"
