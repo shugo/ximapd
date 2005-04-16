@@ -1126,12 +1126,14 @@ EOF
   def test_uid_fetch
     mail_store = Ximapd::MailStore.new(@config)
     mail1 = <<EOF.gsub(/\n/, "\r\n")
-From: shugo@ruby-lang.org
-Subject: hello
-To: foo@ruby-lang.org,
-        bar@ruby-lang.org,
-	baz@ruby-lang.org
 Date: Wed, 30 Mar 2005 17:34:46 +0900
+Message-ID: <41ECC569.8000603@ruby-lang.org>
+From: Shugo Maeda <shugo@ruby-lang.org>
+Subject: hello
+To: Foo <foo@ruby-lang.org>,
+        bar@ruby-lang.org
+Cc: Baz <baz@ruby-lang.org>
+In-Reply-To: <41C448BF.7080605@ruby-lang.org>
 Content-Type: text/plain; charset=US-ASCII
 
 Hello world
@@ -1175,6 +1177,7 @@ A007 UID FETCH 1 BODYSTRUCTURE\r
 A008 UID FETCH 1 BODY.PEEK[HEADER.FIELDS (From To)]\r
 A009 UID FETCH 1 BODY[]\r
 A010 UID FETCH 1 BODY[]<5.10>\r
+A011 UID FETCH 1 ENVELOPE\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
@@ -1195,12 +1198,14 @@ EOF
                  sock.output.gets)
     assert_equal("A003 OK UID FETCH completed\r\n", sock.output.gets)
     header = <<EOF.gsub(/\n/, "\r\n")
-From: shugo@ruby-lang.org
-Subject: hello
-To: foo@ruby-lang.org,
-        bar@ruby-lang.org,
-	baz@ruby-lang.org
 Date: Wed, 30 Mar 2005 17:34:46 +0900
+Message-ID: <41ECC569.8000603@ruby-lang.org>
+From: Shugo Maeda <shugo@ruby-lang.org>
+Subject: hello
+To: Foo <foo@ruby-lang.org>,
+        bar@ruby-lang.org
+Cc: Baz <baz@ruby-lang.org>
+In-Reply-To: <41C448BF.7080605@ruby-lang.org>
 Content-Type: text/plain; charset=US-ASCII
 
 EOF
@@ -1224,10 +1229,9 @@ EOF
                  sock.output.gets)
     assert_equal("A007 OK UID FETCH completed\r\n", sock.output.gets)
     header_fields = <<EOF.gsub(/\n/, "\r\n")
-From: shugo@ruby-lang.org
-To: foo@ruby-lang.org,
-        bar@ruby-lang.org,
-	baz@ruby-lang.org
+From: Shugo Maeda <shugo@ruby-lang.org>
+To: Foo <foo@ruby-lang.org>,
+        bar@ruby-lang.org
 
 EOF
     assert_equal("* 1 FETCH (UID 1 BODY[HEADER.FIELDS (\"FROM\" \"TO\")] {#{header_fields.length}}\r\n",
@@ -1245,6 +1249,9 @@ EOF
     assert_equal(mail1[5, 10], sock.output.read(10))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A010 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (UID 1 ENVELOPE (\"Wed, 30 Mar 2005 17:34:46 +0900\" \"hello\" ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Foo\" NIL \"foo\" \"ruby-lang.org\") (NIL NIL \"bar\" \"ruby-lang.org\")) ((\"Baz\" NIL \"baz\" \"ruby-lang.org\")) NIL \"<41C448BF.7080605@ruby-lang.org>\" \"<41ECC569.8000603@ruby-lang.org>\"))\r\n",
+                 sock.output.gets)
+    assert_equal("A011 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 

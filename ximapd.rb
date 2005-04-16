@@ -39,6 +39,12 @@ require "logger"
 require "tmail"
 require "rast"
 
+module TMail
+  def Decoder.decode(str, encoding = nil)
+    return str
+  end
+end
+
 class Ximapd
   VERSION = "0.0.0"
 
@@ -293,7 +299,11 @@ class Ximapd
     module_function
 
     def quoted(s)
-      return format('"%s"', s.gsub(/[\\"]/n, "\\\\\\1"))
+      if s.nil?
+        return "NIL"
+      else
+        return format('"%s"', s.to_s.gsub(/[\\"]/n, "\\\\\\1"))
+      end
     end
 
     def literal(s)
@@ -851,6 +861,33 @@ class Ximapd
       @seqno = seqno
       @uid = uid
       @flags_db = flags_db
+      @parsed_mail = nil
+    end
+
+    def envelope
+      mail = parsed_mail
+      s = "("
+      s.concat(quoted(mail["date"]))
+      s.concat(" ")
+      s.concat(quoted(mail["subject"]))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.from_addrs))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.from_addrs))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.reply_to_addrs || mail.from_addrs))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.to_addrs))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.cc_addrs))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.bcc_addrs))
+      s.concat(" ")
+      s.concat(quoted(mail.in_reply_to))
+      s.concat(" ")
+      s.concat(quoted(mail.message_id))
+      s.concat(")")
+      return s
     end
 
     def flags(get_recent = true)
@@ -903,11 +940,46 @@ class Ximapd
     end
 
     def body
-      mail = TMail::Mail.parse(to_s)
-      return body_internal(mail)
+      return body_internal(parsed_mail)
     end
 
     private
+
+    def parsed_mail
+      if @parsed_mail.nil?
+        @parsed_mail = TMail::Mail.parse(to_s)
+      end
+      return @parsed_mail
+    end
+
+    def envelope_addrs(addrs)
+      if addrs.nil? || addrs.empty?
+        return "NIL"
+      else
+        return "(" + addrs.collect { |addr|
+          if addr.address_group?
+            addr.flatten
+          else
+            addr
+          end
+        }.flatten.collect { |addr|
+          envelope_addr(addr)
+        }.join(" ") + ")"
+      end
+    end
+
+    def envelope_addr(addr)
+      name = addr.phrase
+      if addr.routes.empty?
+        adl = nil
+      else
+        adl = addr.routes.collect { |i| "@" + i }.join(",") + ":"
+      end
+      mailbox = addr.local
+      host = addr.domain
+      return format("(%s %s %s %s)",
+                    quoted(name), quoted(adl), quoted(mailbox), quoted(host))
+    end
 
     def body_internal(mail)
       if mail.multipart?
@@ -965,7 +1037,7 @@ class Ximapd
       @config = config
       @sock = sock
       @logger = @config["logger"]
-      @parser = CommandParser.new(self)
+      @parser = CommandParser.new(self, @logger)
       @logout = false
       @peeraddr = nil
       @state = NON_AUTHENTICATED_STATE
@@ -1099,8 +1171,9 @@ class Ximapd
   end
 
   class CommandParser
-    def initialize(session)
+    def initialize(session, logger)
       @session = session
+      @logger = logger
       @str = nil
       @pos = nil
       @lex_state = nil
@@ -1574,6 +1647,8 @@ class Ximapd
     def fetch_att
       token = match(T_ATOM)
       case token.value
+      when /\A(?:ENVELOPE)\z/ni
+        return EnvelopeFetchAtt.new
       when /\A(?:FLAGS)\z/ni
         return FlagsFetchAtt.new
       when /\A(?:RFC822)\z/ni
@@ -1963,7 +2038,7 @@ class Ximapd
       @logger.debug("@str: #{@str.inspect}")
       @logger.debug("@pos: #{@pos}")
       @logger.debug("@lex_state: #{@lex_state}")
-      if @token.symbol
+      if @token && @token.symbol
         @logger.debug("@token.symbol: #{@token.symbol}")
         @logger.debug("@token.value: #{@token.value.inspect}")
       end
@@ -2377,6 +2452,7 @@ class Ximapd
 
   class EnvelopeFetchAtt
     def fetch(mail)
+      return format("ENVELOPE %s", mail.envelope)
     end
   end
 
