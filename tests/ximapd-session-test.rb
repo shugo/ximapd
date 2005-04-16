@@ -956,6 +956,7 @@ From: shugo@ruby-lang.org
 To: foo@ruby-lang.org
 Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
 Date: Sun, 03 Apr 2005 03:06:39 +0900
+Content-Type: text/plain; charset=iso-2022-jp
 
 こんにちは、みなさん
 EOF
@@ -1000,6 +1001,7 @@ A009 UID STORE #{uid1} FLAGS (\\Seen)\r
 A010 UID SEARCH BODY hello SEEN\r
 A011 UID SEARCH BODY hello UNSEEN\r
 A012 UID SEARCH CHARSET UTF-8 HEADER SUBJECT "こんにちは"\r
+A013 UID SEARCH CHARSET UTF-8 BODY "みなさん"\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
@@ -1036,6 +1038,8 @@ EOF
     assert_equal("A011 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid4}\r\n", sock.output.gets)
     assert_equal("A012 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid4}\r\n", sock.output.gets)
+    assert_equal("A013 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
