@@ -42,6 +42,9 @@ require "rast"
 class Ximapd
   VERSION = "0.0.0"
 
+  LOG_SHIFT_AGE = 10
+  LOG_SHIFT_SIZE = 10 * 1024 * 1024
+
   @@debug = false
 
   def self.debug
@@ -66,17 +69,39 @@ class Ximapd
     check_config(config)
     @config = config
     @server = nil
+    if Ximapd.debug
+      @logger = Logger.new(STDERR)
+      @logger.level = Logger::DEBUG
+    else
+      log_file = @config["log_file"] ||
+        File.expand_path("ximapd.log", @config["data_dir"])
+      shift_age = @config["log_shift_age"] || LOG_SHIFT_AGE
+      shift_size = @config["shift_size"] || LOG_SHIFT_SIZE
+      @logger = Logger.new(log_file, shift_age, shift_size)
+      log_level = (@config["log_level"] || "INFO").upcase
+      @logger.level = Logger.const_get(log_level)
+    end
+    @config["logger"] = @logger
   end
 
   def start
     @server = TCPServer.new(@config["port"])
+    @logger.info("started")
     daemon if !Ximapd.debug
-    loop do
-      sock = @server.accept
-      Thread.start(sock) do |socket|
-        service = Session.new(@config, sock)
-        service.start
+    trap("TERM") do
+      exit # TODO: exit safely
+    end
+    begin
+      loop do
+        sock = @server.accept
+        Thread.start(sock) do |socket|
+          service = Session.new(@config, sock)
+          service.start
+        end
       end
+    ensure
+      @logger.info("terminated")
+      @logger.close
     end
   end
 
@@ -939,6 +964,7 @@ class Ximapd
     def initialize(config, sock)
       @config = config
       @sock = sock
+      @logger = @config["logger"]
       @parser = CommandParser.new(self)
       @logout = false
       @peeraddr = nil
@@ -948,7 +974,8 @@ class Ximapd
     end
 
     def start
-      @peeraddr = @sock.peeraddr
+      @peeraddr = @sock.peeraddr[3]
+      @logger.info("connect from #{@peeraddr}")
       send_ok("ximapd version %s", VERSION)
       while !@logout
         begin
@@ -963,17 +990,16 @@ class Ximapd
         rescue
           raise if @@test
           send_tagged_bad(cmd.tag, "%s failed - %s", cmd.name, $!)
-          if Ximapd.debug
-            STDERR.printf("%s: %s\n", $!.class, $!)
-            for line in $@
-              STDERR.printf("  %s\n", line)
-            end
+          @logger.error("#{$!.class}: #{$!}")
+          for line in $@
+            @logger.error("  #{line}")
           end
         end
       end
       @mail_store.close if @mail_store
       @sock.shutdown
       @sock.close
+      @logger.info("disconnect from #{@peeraddr}")
     end
 
     def logout
@@ -1004,9 +1030,7 @@ class Ximapd
       s = @sock.gets("\r\n")
       return s if s.nil?
       line = s.sub(/\r\n\z/n, "")
-      if Ximapd.debug
-        $stderr.puts(line.gsub(/^/n, "C: "))
-      end
+      @logger.debug(line.gsub(/^/n, "C: ")) if Ximapd.debug
       return line
     end
 
@@ -1025,16 +1049,12 @@ class Ximapd
         end
       end
       return nil if buf.length == 0
-      if Ximapd.debug
-        $stderr.print(buf.gsub(/^/n, "C: "))
-      end
+      @logger.debug(buf.gsub(/^/n, "C: ")) if Ximapd.debug
       return @parser.parse(buf)
     end
 
     def send_line(line)
-      if Ximapd.debug
-        $stderr.puts(line.gsub(/^/n, "S: "))
-      end
+      @logger.debug(line.gsub(/^/n, "S: ")) if Ximapd.debug
       @sock.print(line + "\r\n")
     end
 
@@ -1940,14 +1960,12 @@ class Ximapd
     end
 
     def parse_error(fmt, *args)
-      if Ximapd.debug
-        $stderr.printf("@str: %s\n", @str.dump)
-        $stderr.printf("@pos: %d\n", @pos)
-        $stderr.printf("@lex_state: %s\n", @lex_state)
-        if @token.symbol
-          $stderr.printf("@token.symbol: %s\n", @token.symbol)
-          $stderr.printf("@token.value: %s\n", @token.value.inspect)
-        end
+      @logger.debug("@str: #{@str.inspect}")
+      @logger.debug("@pos: #{@pos}")
+      @logger.debug("@lex_state: #{@lex_state}")
+      if @token.symbol
+        @logger.debug("@token.symbol: #{@token.symbol}")
+        @logger.debug("@token.value: #{@token.value.inspect}")
       end
       raise CommandParseError, format(fmt, *args)
     end

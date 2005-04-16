@@ -32,6 +32,7 @@ require "test/unit"
 require "stringio"
 require "tmpdir"
 require "fileutils"
+require "logger"
 
 require "ximapd"
 
@@ -43,7 +44,8 @@ class XimapdSessionTest < Test::Unit::TestCase
     @config = {
       "user" => "foo",
       "password" => "bar",
-      "data_dir" => File.expand_path("data", @tmpdir)
+      "data_dir" => File.expand_path("data", @tmpdir),
+      "logger" => Logger.new("/dev/null")
     }
     @challenge_generator =
       Ximapd::AuthenticateCramMD5Command.challenge_generator
