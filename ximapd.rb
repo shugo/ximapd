@@ -291,7 +291,7 @@ class Ximapd
     module_function
 
     def quote_query(s)
-      return format('"%s"', s.gsub(/[\\"]/n, "\\\\\\1"))
+      return format('"%s"', s.gsub(/[\\"]/n, "\\\\\\&"))
     end
   end
 
@@ -302,7 +302,7 @@ class Ximapd
       if s.nil?
         return "NIL"
       else
-        return format('"%s"', s.to_s.gsub(/[\\"]/n, "\\\\\\1"))
+        return format('"%s"', s.to_s.gsub(/[\\"]/n, "\\\\\\&"))
       end
     end
 
@@ -979,7 +979,11 @@ class Ximapd
       else
         adl = addr.routes.collect { |i| "@" + i }.join(",") + ":"
       end
-      mailbox = addr.local
+      if addr.local
+        mailbox = addr.local.tr('"', '')
+      else
+        mailbox = nil
+      end
       host = addr.domain
       return format("(%s %s %s %s)",
                     quoted(name), quoted(adl), quoted(mailbox), quoted(host))
