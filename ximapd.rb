@@ -994,7 +994,7 @@ class Ximapd
         parts = mail.parts.collect { |part|
           body_internal(part)
         }.join
-        return format("(%s %s)", parts, quoted(mail.sub_type.upcase))
+        return format("(%s %s)", parts, quoted(upcase(mail.sub_type)))
       else
         fields = []
         content_type = mail["content-type"]
@@ -1002,7 +1002,7 @@ class Ximapd
           params = "()"
         else
           params = "(" + content_type.params.collect { |k, v|
-            format("%s %s", quoted(k.upcase), quoted(v.upcase))
+            format("%s %s", quoted(upcase(k)), quoted(upcase(v)))
           }.join(" ") + ")"
         end
         fields.push(params)
@@ -1016,10 +1016,17 @@ class Ximapd
           fields.push(mail.body.to_a.length.to_s)
         end
         return format("(%s %s %s)",
-                      quoted(mail.main_type.upcase),
-                      quoted(mail.sub_type.upcase),
+                      quoted(upcase(mail.main_type)),
+                      quoted(upcase(mail.sub_type)),
                       fields.join(" "))
       end
+    end
+
+    def upcase(s)
+      if s.nil?
+        return s
+      end
+      return s.upcase
     end
   end
 
