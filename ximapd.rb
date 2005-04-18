@@ -947,6 +947,11 @@ class Ximapd
       return body_internal(parsed_mail)
     end
 
+    def multipart?
+      mail = parsed_mail
+      return mail.multipart?
+    end
+
     private
 
     def parsed_mail
@@ -1692,18 +1697,20 @@ class Ximapd
     def section
       match(T_LBRA)
       token = lookahead
-      if token.symbol == T_ATOM
-        shift_token
-        case token.value
-        when /\A(?:(?:([0-9.])+\.)?(HEADER|TEXT))\z/ni
+      if token.symbol != T_RBRA
+        s = atom([T_ATOM, T_NUMBER, T_NIL, T_PLUS])
+        case s
+        when /\A(?:(?:([0-9.]+)\.)?(HEADER|TEXT))\z/ni
           result = Section.new($1, $2.upcase)
-        when /\A(?:(?:([0-9.])+\.)?(HEADER\.FIELDS(?:\.NOT)?))\z/ni
+        when /\A(?:(?:([0-9.]+)\.)?(HEADER\.FIELDS(?:\.NOT)?))\z/ni
           match(T_SPACE)
           result = Section.new($1, $2.upcase, header_list)
-        when /\A(?:([0-9.])+\.(MIME))\z/ni
+        when /\A(?:([0-9.]+)\.(MIME))\z/ni
           result = Section.new($1, $2.upcase)
+        when /\A([0-9.]+)\z/ni
+          result = Section.new($1)
         else
-          parse_error("unknown section `%s'", token.value)
+          parse_error("unknown section `%s'", s)
         end
       end
       match(T_RBRA)
@@ -1863,11 +1870,20 @@ class Ximapd
       return token.value.upcase
     end
 
-    def atom
+    ATOM_TOKENS = [
+      T_ATOM,
+      T_NUMBER,
+      T_NIL,
+      T_LBRA,
+      T_RBRA,
+      T_PLUS
+    ]
+
+    def atom(tokens = ATOM_TOKENS)
       result = ""
       loop do
         token = lookahead
-        if atom_token?(token)
+        if tokens.include?(token.symbol)
           result.concat(token.value)
           shift_token
         else
@@ -1879,15 +1895,6 @@ class Ximapd
         end
       end
     end
-
-    ATOM_TOKENS = [
-      T_ATOM,
-      T_NUMBER,
-      T_NIL,
-      T_LBRA,
-      T_RBRA,
-      T_PLUS
-    ]
 
     def atom_token?(token)
       return ATOM_TOKENS.include?(token.symbol)
@@ -2537,12 +2544,21 @@ class Ximapd
     end
 
     def fetch(mail)
-      if @section.nil?
+      if @section.nil? ||
+        (@section.text.nil? &&
+         (@section.part.nil? || @section.part == "1") &&
+         !mail.multipart?)
+        if @section.nil?
+          part = ""
+        else
+          part = @section.part
+        end
         if @partial.nil?
-          return format("BODY[] %s", literal(mail.to_s))
+          return format("BODY[%s] %s", part, literal(mail.to_s))
         else
           s = mail.to_s[@partial.offset, @partial.size] 
-          return format("BODY[]<%d> %s", @partial.offset, literal(s))
+          return format("BODY[%s]<%d> %s",
+                        part, @partial.offset, literal(s))
         end
       end
       case @section.text

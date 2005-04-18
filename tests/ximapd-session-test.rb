@@ -1155,6 +1155,35 @@ Content-Type: text/plain; charset=US-ASCII
 Hello world
 EOF
     uid1 = mail_store.import_mail(mail1)
+    mail2= <<EOF.gsub(/\n/, "\r\n")
+Message-ID: <4263685A.6090203@ruby-lang.org>
+Date: Mon, 18 Apr 2005 16:57:14 +0900
+From: Shugo Maeda <shugo@ruby-lang.org>
+MIME-Version: 1.0
+To: shugo@ruby-lang.org
+Subject: hello.txt
+Content-Type: multipart/mixed;
+ boundary="------------040107050003050408030009"
+
+This is a multi-part message in MIME format.
+--------------040107050003050408030009
+Content-Type: text/plain; charset=US-ASCII
+Content-Transfer-Encoding: 7bit
+
+see hello.txt.
+
+
+--------------040107050003050408030009
+Content-Type: text/plain;
+ name="hello.txt"
+Content-Transfer-Encoding: base64
+Content-Disposition: inline;
+ filename="hello.txt"
+
+SGVsbG8gV29ybGQK
+--------------040107050003050408030009--
+EOF
+    uid2 = mail_store.import_mail(mail2)
     mail_store.close
 
     sock = SpoofSocket.new(<<EOF)
@@ -1194,16 +1223,17 @@ A008 UID FETCH 1 BODY.PEEK[HEADER.FIELDS (From To)]\r
 A009 UID FETCH 1 BODY[]\r
 A010 UID FETCH 1 BODY[]<5.10>\r
 A011 UID FETCH 1 ENVELOPE\r
+A012 UID FETCH 1 BODY[1]\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
-    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
-    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 2 RECENT\r\n", sock.output.gets)
     assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
-    assert_equal("* OK [UIDNEXT #{uid1 + 1}] Predicted next UID\r\n",
+    assert_equal("* OK [UIDNEXT #{uid2 + 1}] Predicted next UID\r\n",
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
@@ -1268,6 +1298,11 @@ EOF
     assert_equal("* 1 FETCH (UID 1 ENVELOPE (\"Wed, 30 Mar 2005 17:34:46 +0900\" \"=?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=\" ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Foo\" NIL \"foo\" \"ruby-lang.org\") (NIL NIL \"bar\" \"ruby-lang.org\")) ((\"Baz\" NIL \"baz..\" \"ruby-lang.org\")) NIL \"<41C448BF.7080605@ruby-lang.org>\" \"<41ECC569.8000603@ruby-lang.org>\"))\r\n",
                  sock.output.gets)
     assert_equal("A011 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (UID 1 BODY[1] {#{mail1.length}}\r\n",
+                 sock.output.gets)
+    assert_equal(mail1, sock.output.read(mail1.length))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A012 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
