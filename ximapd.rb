@@ -95,6 +95,7 @@ class Ximapd
     @logger.info("started")
     daemon if !Ximapd.debug
     trap("TERM") do
+      @logger.debug("term caught")
       exit # TODO: exit safely
     end
     begin
@@ -255,7 +256,6 @@ class Ximapd
     ]
   }
 
-  DEFAULT_HISTORY_SIZE = 5
   DEFAULT_CHARSET = "iso-2022-jp"
   DEFAULT_SYNC_THRESHOLD_CHARS = 500000
   DEFAULT_ML_NAME_HEADER_FIELDS = [
@@ -277,9 +277,6 @@ class Ximapd
       "last_peeked_uid" => 0
     },
     "ml" => {
-      "flags" => "\\Noselect"
-    },
-    "history" => {
       "flags" => "\\Noselect"
     },
     "queries" => {
@@ -349,7 +346,6 @@ class Ximapd
         Rast::DB.create(@index_path, INDEX_OPTIONS)
       end
       @default_charset = @config["default_charset"] || DEFAULT_CHARSET
-      @history_size = @config["history_size"] || DEFAULT_HISTORY_SIZE
       @sync_threshold_chars =
         @config["sync_threshold_chars"] || DEFAULT_SYNC_THRESHOLD_CHARS
       @ml_name_header_fields =
@@ -529,7 +525,6 @@ class Ximapd
         #end
         query += " " + mailbox["query"]
         result = index.search(query, options)
-        add_history(query)
         return result.items.collect { |i| i.properties[0] }
       end
     end
@@ -810,32 +805,6 @@ class Ximapd
 
     def decode_encoded_word(s)
       return NKF.nkf("-w", s)
-    end
-
-    def add_history(query)
-      @mailbox_db.transaction do
-        histories = @mailbox_db["mailboxes"].keys.grep(/\Ahistory\//).sort
-        if histories.length >= @history_size
-          histories[0, histories.length - @history_size + 1].each do |mbox|
-            @mailbox_db["mailboxes"].delete(mbox)
-          end
-        end
-        history_name = format("history/%s",
-                              DateTime.now.strftime("%Y-%m-%d %H:%M:%S"))
-        n = 2
-        begin
-          create_mailbox_internal(history_name, query)
-        rescue MailboxExistError
-          s = format("<%d>", n)
-          if n == 2
-            history_name += " " + s
-          else
-            history_name.sub!(/<.*?>\z/n, s)
-          end
-          n += 1
-          retry
-        end
-      end
     end
   end
 
@@ -2277,7 +2246,7 @@ class Ximapd
     end
 
     def exec
-      if /\A(INBOX|ml|history|queries)\z/ni.match(@mailbox_name)
+      if /\A(INBOX|ml|queries)\z/ni.match(@mailbox_name)
         @session.send_tagged_no(@tag, "can't delete %s", @mailbox_name)
         return
       end
@@ -2293,7 +2262,7 @@ class Ximapd
     end
 
     def exec
-      if /\A(INBOX|ml|history|queries)\z/ni.match(@mailbox_name)
+      if /\A(INBOX|ml|queries)\z/ni.match(@mailbox_name)
         @session.send_tagged_no(@tag, "can't rename %s", @mailbox_name)
         return
       end
