@@ -2570,6 +2570,8 @@ class Ximapd
         end
       end
       case @section.text
+      when "HEADER"
+        return format("BODY[HEADER] %s", literal(mail.header))
       when "HEADER.FIELDS"
         s = mail.header_fields(@section.header_list)
         fields = @section.header_list.collect { |i|
