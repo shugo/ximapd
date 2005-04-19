@@ -2387,7 +2387,11 @@ class Ximapd
       for key in @keys
         uids = key.select(uids)
       end
-      @session.send_data("SEARCH %s", uids.join(" "))
+      if uids.empty?
+        @session.send_data("SEARCH")
+      else
+        @session.send_data("SEARCH %s", uids.join(" "))
+      end
       send_tagged_ok
     end
   end

@@ -1024,7 +1024,7 @@ EOF
     assert_equal("A004 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
     assert_equal("A005 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH \r\n", sock.output.gets)
+    assert_equal("* SEARCH\r\n", sock.output.gets)
     assert_equal("A006 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
     assert_equal("A007 OK UID SEARCH completed\r\n", sock.output.gets)
