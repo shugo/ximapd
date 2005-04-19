@@ -11,6 +11,13 @@ ximapdは実験的なIMAPデーモンです。
 * Ruby interface for BDB 0.5.4 以降
 * TMail 0.10.8 以降
 
+== Subversionレポジトリ
+
+http://svn.shugo.net/ximapd/trunkから最新のソースコードを
+取得できます。
+
+  $ svn co http://svn.shugo.net/ximapd/trunk ximapd
+
 == インストール
 
 ximapd.rbをPATHにコピーしてください。

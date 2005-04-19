@@ -11,6 +11,12 @@ ximapd is an eXperimental IMAP Daemon.
 * Ruby interface for BDB 0.5.4 or later
 * TMail 0.10.8 or later
 
+== Subversion Repository
+
+You can get the latest source code from http://svn.shugo.net/ximapd/trunk.
+
+  $ svn co http://svn.shugo.net/ximapd/trunk ximapd
+
 == Install
 
 Copy ximapd.rb under PATH.
