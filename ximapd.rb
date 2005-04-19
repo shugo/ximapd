@@ -1381,13 +1381,13 @@ class Ximapd
 
     def select
       match(T_SPACE)
-      mailbox_name = astring
+      mailbox_name = mailbox
       return SelectCommand.new(mailbox_name)
     end
 
     def create
       match(T_SPACE)
-      mailbox_name = astring
+      mailbox_name = mailbox
       return CreateCommand.new(mailbox_name)
     end
 
