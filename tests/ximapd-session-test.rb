@@ -370,6 +370,7 @@ EOF
     mail_store = Ximapd::MailStore.new(@config)
     ruby = mail_store.mailboxes["queries/ruby"]
     assert_equal("ruby", ruby["query"])
+    mail_store.close
   end
 
   def test_delete
@@ -476,6 +477,57 @@ EOF
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
     assert_equal("A008 OK LIST completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 CREATE queries/ruby\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("A002 OK CREATE completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+    mail_store = Ximapd::MailStore.new(@config)
+    ruby = mail_store.mailboxes["queries/ruby"]
+    assert_equal("ruby", ruby["query"])
+    mail_store.close
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 RENAME queries/ruby ruby\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("A002 OK RENAME completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+    mail_store = Ximapd::MailStore.new(@config)
+    ruby = mail_store.mailboxes["ruby"]
+    assert_equal("ruby", ruby["query"])
+    mail_store.close
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 RENAME ruby queries/perl\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("A002 OK RENAME completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+    mail_store = Ximapd::MailStore.new(@config)
+    perl = mail_store.mailboxes["queries/perl"]
+    assert_equal("perl", perl["query"])
+    mail_store.close
   end
 
   def test_subscribe

@@ -414,6 +414,10 @@ class Ximapd
           @mailbox_db["mailboxes"].delete(k)
           @mailbox_db["mailboxes"][new_key] = v
         end
+        s = new_name.slice(/\Aqueries\/(.*)/, 1)
+        if s
+          @mailbox_db["mailboxes"][new_name]["query"] = Net::IMAP.decode_utf7(s)
+        end
       end
     end
 
