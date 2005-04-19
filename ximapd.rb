@@ -1615,6 +1615,9 @@ class Ximapd
         return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Seen")
       when "OLD"
         return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Recent")
+      when "NOT"
+        match(T_SPACE)
+        return NotSearchKey.new(search_key(charset))
       else
         return NullSearchKey.new
       end
@@ -2454,6 +2457,26 @@ class Ximapd
       return uids.select { |uid|
         !@flag_re.match(@flags_db[uid])
       }
+    end
+  end
+
+  class NotSearchKey
+    def initialize(key)
+      @key = key
+    end
+
+    def to_query
+      q = @key.to_query
+      if q.empty?
+        return ""
+      else
+        return format("! ( %s )", q)
+      end
+    end
+
+    def select(uids)
+      rejected = @key.select(uids)
+      return uids - rejected
     end
   end
 
