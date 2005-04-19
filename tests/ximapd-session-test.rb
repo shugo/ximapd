@@ -326,6 +326,7 @@ A004 LIST "" "*"\r
 A005 SELECT foo\r
 A006 CREATE bar/baz/quux\r
 A007 LIST "" "*"\r
+A008 CREATE queries/ruby\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
@@ -364,7 +365,11 @@ EOF
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
     assert_equal("A007 OK LIST completed\r\n", sock.output.gets)
+    assert_equal("A008 OK CREATE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
+    mail_store = Ximapd::MailStore.new(@config)
+    ruby = mail_store.mailboxes["queries/ruby"]
+    assert_equal("ruby", ruby["query"])
   end
 
   def test_delete
