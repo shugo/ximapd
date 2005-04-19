@@ -1583,7 +1583,7 @@ class Ximapd
     end
 
     def search_key(charset)
-      name = atom
+      name = tokens([T_ATOM, T_NUMBER, T_NIL, T_PLUS, T_STAR])
       case name
       when "BODY"
         match(T_SPACE)
@@ -1619,6 +1619,11 @@ class Ximapd
         return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Seen")
       when "OLD"
         return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Recent")
+      when /\A(\d+|\*)\z/
+        return UidSearchKey.new(parse_seq_number($1))
+      when /\A(\d+|\*):(\d+|\*)\z/
+        return UidRangeSearchKey.new(parse_seq_number($1),
+                                     parse_seq_number($2))
       when "NOT"
         match(T_SPACE)
         return NotSearchKey.new(search_key(charset))
@@ -1725,7 +1730,7 @@ class Ximapd
       match(T_LBRA)
       token = lookahead
       if token.symbol != T_RBRA
-        s = atom([T_ATOM, T_NUMBER, T_NIL, T_PLUS])
+        s = tokens([T_ATOM, T_NUMBER, T_NIL, T_PLUS])
         case s
         when /\A(?:(?:([0-9.]+)\.)?(HEADER|TEXT))\z/ni
           result = Section.new($1, $2.upcase)
@@ -1897,16 +1902,7 @@ class Ximapd
       return token.value.upcase
     end
 
-    ATOM_TOKENS = [
-      T_ATOM,
-      T_NUMBER,
-      T_NIL,
-      T_LBRA,
-      T_RBRA,
-      T_PLUS
-    ]
-
-    def atom(tokens = ATOM_TOKENS)
+    def tokens(tokens)
       result = ""
       loop do
         token = lookahead
@@ -1921,6 +1917,19 @@ class Ximapd
           end
         end
       end
+    end
+
+    ATOM_TOKENS = [
+      T_ATOM,
+      T_NUMBER,
+      T_NIL,
+      T_LBRA,
+      T_RBRA,
+      T_PLUS
+    ]
+
+    def atom
+      return tokens(ATOM_TOKENS)
     end
 
     def atom_token?(token)
@@ -2461,6 +2470,43 @@ class Ximapd
       return uids.select { |uid|
         !@flag_re.match(@flags_db[uid])
       }
+    end
+  end
+
+  class UidSearchKey < NullSearchKey
+    def initialize(uid)
+      @uid = uid
+    end
+
+    def to_query
+      if @uid == -1
+        return ""
+      else
+        return format("uid = %d", @uid)
+      end
+    end
+
+    def select(uids)
+      if @uid == -1
+        return [uids.sort.last]
+      else
+        return uids
+      end
+    end
+  end
+
+  class UidRangeSearchKey < NullSearchKey
+    def initialize(first, last)
+      @first = first
+      @last = last
+    end
+
+    def to_query
+      if @last == -1
+        return format("uid >= %d", @first)
+      else
+        return format("%d <= uid <= %d", @first, @last)
+      end
     end
   end
 

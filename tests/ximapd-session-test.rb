@@ -1070,6 +1070,9 @@ A011 UID SEARCH BODY hello UNSEEN\r
 A012 UID SEARCH CHARSET UTF-8 HEADER SUBJECT "こんにちは"\r
 A013 UID SEARCH CHARSET UTF-8 BODY "みなさん"\r
 A014 UID SEARCH BODY hello NOT SEEN\r
+A015 UID SEARCH 2\r
+A016 UID SEARCH 2:3\r
+A017 UID SEARCH 2:*\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
@@ -1110,6 +1113,15 @@ EOF
     assert_equal("A013 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
     assert_equal("A014 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n",
+                 sock.output.gets)
+    assert_equal("A015 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 3\r\n",
+                 sock.output.gets)
+    assert_equal("A016 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 3 4\r\n",
+                 sock.output.gets)
+    assert_equal("A017 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
