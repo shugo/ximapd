@@ -1591,12 +1591,30 @@ class Ximapd
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
         return HeaderSearchKey.new(header_name, s)
-      when "SEEN"
-        return SeenSearchKey.new(@session.mail_store.flags_db)
-      when "UNSEEN"
-        return UnseenSearchKey.new(@session.mail_store.flags_db)
+      when "ANSWERED"
+        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Answered")
       when "DELETED"
-        return DeletedSearchKey.new
+        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Deleted")
+      when "DRAFT"
+        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Draft")
+      when "FLAGGED"
+        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Flagged")
+      when "RECENT", "NEW"
+        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Recent")
+      when "SEEN"
+        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Seen")
+      when "UNANSWERED"
+        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Answered")
+      when "UNDELETED"
+        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Deleted")
+      when "UNDRAFT"
+        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Draft")
+      when "UNFLAGGED"
+        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Flagged")
+      when "UNSEEN"
+        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Seen")
+      when "OLD"
+        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Recent")
       else
         return NullSearchKey.new
       end
@@ -2414,29 +2432,24 @@ class Ximapd
     end
   end
 
-  class SeenSearchKey < NullSearchKey
-    def initialize(flags_db)
+  class FlagSearchKey < NullSearchKey
+    def initialize(flags_db, flag)
       @flags_db = flags_db
+      @flag_re = Regexp.new(Regexp.quote(flag) + "\\b", true, "n")
     end
 
     def select(uids)
       return uids.select { |uid|
-        /\\Seen\b/ni.match(@flags_db[uid])
+        @flag_re.match(@flags_db[uid])
       }
     end
   end
 
-  class UnseenSearchKey < SeenSearchKey
+  class NoFlagSearchKey < FlagSearchKey
     def select(uids)
       return uids.select { |uid|
-        !/\\Seen\b/ni.match(@flags_db[uid])
+        !@flag_re.match(@flags_db[uid])
       }
-    end
-  end
-
-  class DeletedSearchKey < NullSearchKey
-    def select(uids)
-      return []
     end
   end
 
