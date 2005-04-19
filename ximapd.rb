@@ -1595,6 +1595,8 @@ class Ximapd
         return SeenSearchKey.new(@session.mail_store.flags_db)
       when "UNSEEN"
         return UnseenSearchKey.new(@session.mail_store.flags_db)
+      when "DELETED"
+        return DeletedSearchKey.new
       else
         return NullSearchKey.new
       end
@@ -2429,6 +2431,12 @@ class Ximapd
       return uids.select { |uid|
         !/\\Seen\b/ni.match(@flags_db[uid])
       }
+    end
+  end
+
+  class DeletedSearchKey < NullSearchKey
+    def select(uids)
+      return []
     end
   end
 
