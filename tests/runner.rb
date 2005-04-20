@@ -9,3 +9,5 @@ if runner.pattern.empty?
 end
 runner.exclude.push(/\b.svn\b/)
 exit runner.run
+
+# vim: set filetype=ruby expandtab sw=2 :

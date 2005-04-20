@@ -34,7 +34,10 @@ require "tmpdir"
 require "fileutils"
 require "logger"
 
-require "ximapd"
+if !defined?(Ximapd::Session)
+  ximapd = File.expand_path("../ximapd", File.dirname(__FILE__))
+  load(ximapd)
+end
 
 Ximapd::Session.test = true
 
@@ -1520,3 +1523,5 @@ EOF
     end
   end
 end
+
+# vim: set filetype=ruby expandtab sw=2 :

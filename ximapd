@@ -2786,3 +2786,5 @@ if $0 == __FILE__
     exit(1)
   end
 end
+
+# vim: set filetype=ruby expandtab sw=2 :
