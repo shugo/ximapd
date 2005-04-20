@@ -95,7 +95,7 @@ class Ximapd
     @logger.info("started")
     daemon if !Ximapd.debug
     trap("TERM") do
-      @logger.debug("term caught")
+      @logger.debug("caught SIGTERM")
       exit # TODO: exit safely
     end
     begin
