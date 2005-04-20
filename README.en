@@ -23,7 +23,7 @@ You can get the latest source code from http://svn.shugo.net/ximapd/trunk.
 
 == Install
 
-Copy ximapd.rb under PATH.
+Copy ximapd under PATH.
 
 == Setup
 
@@ -39,16 +39,16 @@ Copy ximapd.rb under PATH.
 
 (3) Import old mails.
 
-      $ ximapd.rb --import /path/to/mail
-      $ ximapd.rb --import /path/to/dir
-      $ ximapd.rb --import-mbox /path/to/mbox
+      $ ximapd --import /path/to/mail
+      $ ximapd --import /path/to/dir
+      $ ximapd --import-mbox /path/to/mbox
 
 (4) Write ~/.forward to receive new mails. 
 
       $ cat ~/.forward
-      /home/username/mbox,"|/path/to/ximapd.rb --import"
+      /home/username/mbox,"|/path/to/ximapd --import"
 
-    ximapd.rb may lost mails, so you SHOULD copy mails to other places.
+    ximapd may lost mails, so you SHOULD copy mails to other places.
 
 == Usage
 

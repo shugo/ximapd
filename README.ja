@@ -23,7 +23,7 @@ http://svn.shugo.net/ximapd/trunkから最新のソースコードを取得できます。
 
 == インストール
 
-ximapd.rbをPATHにコピーしてください。
+ximapdをPATHにコピーしてください。
 
 == セットアップ
 
@@ -39,16 +39,16 @@ ximapd.rbをPATHにコピーしてください。
 
 (3) 古いメールを取り込んでください。
 
-      $ ximapd.rb --import /path/to/mail
-      $ ximapd.rb --import /path/to/dir
-      $ ximapd.rb --import-mbox /path/to/mbox
+      $ ximapd --import /path/to/mail
+      $ ximapd --import /path/to/dir
+      $ ximapd --import-mbox /path/to/mbox
 
 (4) 新しいメールを受信するために~/.forwardを書いてください。
 
       $ cat ~/.forward
-      /home/username/mbox,"|/path/to/ximapd.rb --import"
+      /home/username/mbox,"|/path/to/ximapd --import"
 
-    ximapd.rbはメールを失うかもしれません。
+    ximapdはメールを失うかもしれません。
     かならず、他の場所にメールをコピーするようにしてください。
 
 == 使い方
