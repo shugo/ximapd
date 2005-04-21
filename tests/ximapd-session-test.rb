@@ -280,7 +280,8 @@ EOF
                  sock.output.gets)
     assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("A004 NO no such mailbox\r\n", sock.output.gets)
-    assert_equal("A005 NO can't access mailbox\r\n", sock.output.gets)
+    assert_equal("A005 NO can't open ml: not a selectable mailbox\r\n",
+                 sock.output.gets)
     assert_equal(nil, sock.output.gets)
 
     mail4 = <<EOF.gsub(/\n/, "\r\n")

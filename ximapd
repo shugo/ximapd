@@ -425,7 +425,7 @@ class Ximapd
           raise NoMailboxError.new("no such mailbox")
         end
         if /\\Noselect/ni.match(mailbox["flags"])
-          raise MailboxAccessError.new("can't access mailbox")
+          raise NotSelectableMailboxError.new("can't open #{mailbox_name}: not a selectable mailbox")
         end
         open_index do |index|
           status = MailboxStatus.new
@@ -2700,6 +2700,7 @@ class Ximapd
   class MailboxExistError < MailboxError; end
   class NoMailboxError < MailboxError; end
   class MailboxAccessError < MailboxError; end
+  class NotSelectableMailboxError < MailboxError; end
 end
 
 if $0 == __FILE__
