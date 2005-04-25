@@ -75,6 +75,8 @@ class Ximapd
     check_config(config)
     @config = config
     @server = nil
+    mail_store = MailStore.new(config)
+    mail_store.close
     if Ximapd.debug
       @logger = Logger.new(STDERR)
       @logger.level = Logger::DEBUG
