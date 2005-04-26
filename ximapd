@@ -25,6 +25,7 @@
 # SUCH DAMAGE.
 
 require "socket"
+require "sync"
 require "net/imap"
 require "pstore"
 require "yaml/store"
@@ -38,6 +39,8 @@ require "date"
 require "logger"
 require "tmail"
 require "rast"
+
+Thread.abort_on_exception = true
 
 module TMail
   def Decoder.decode(str, encoding = nil)
@@ -90,26 +93,36 @@ class Ximapd
       @logger.level = Logger.const_get(log_level)
     end
     @config["logger"] = @logger
+    @threads = []
+    @sessions = {}
+    @sync = Sync.new
   end
 
   def start
     @server = TCPServer.new(@config["port"])
     @logger.info("started")
     daemon if !Ximapd.debug
-    trap("TERM") do
-      @logger.debug("caught SIGTERM")
-      exit # TODO: exit safely
-    end
+    @main_thread = Thread.current
+    Signal.trap("TERM", &method(:terminate))
+    Signal.trap("INT", &method(:terminate))
     begin
       loop do
         sock = @server.accept
         Thread.start(sock) do |socket|
-          service = Session.new(@config, sock)
-          service.start
+          session = Session.new(@config, sock, @sync)
+          @sessions[Thread.current] = session
+          begin
+            session.start
+          ensure
+            @sessions.delete(Thread.current)
+          end
         end
       end
-    ensure
+    rescue TerminateException
+      close_sessions
       @logger.info("terminated")
+    ensure
+      @server.close
       @logger.close
     end
   end
@@ -153,6 +166,28 @@ class Ximapd
     File.open(pid_file, mode) do |f|
       yield(f)
     end
+  end
+
+  def close_sessions
+    @sync.synchronize(Sync::EX) do
+      @logger.debug("close #{@sessions.length} sessions")
+      @sessions.each_key do |t|
+        @logger.debug("raise TerminateException")
+        t.raise(TerminateException.new)
+        @logger.debug("raised")
+        begin
+          t.join
+        rescue Exception
+          @logger.error($!)
+        end
+        @logger.debug("done")
+      end
+    end
+  end
+
+  def terminate(sig)
+    @logger.info("signal #{sig}")
+    @main_thread.raise(TerminateException.new)
   end
 
   INDEX_OPTIONS = {
@@ -1028,7 +1063,7 @@ class Ximapd
       @@test = test
     end
 
-    def initialize(config, sock)
+    def initialize(config, sock, sync = Sync.new)
       @config = config
       @sock = sock
       @logger = @config["logger"]
@@ -1038,6 +1073,7 @@ class Ximapd
       @state = NON_AUTHENTICATED_STATE
       @mail_store = nil
       @current_mailbox = nil
+      @sync = sync
     end
 
     def start
@@ -1046,21 +1082,30 @@ class Ximapd
       send_ok("ximapd version %s", VERSION)
       while !@logout
         begin
-          cmd = recv_cmd
-        rescue
-          send_bad("parse error: %s", $!)
-          next
-        end
-        break if cmd.nil?
-        begin
-          cmd.exec
-        rescue
-          raise if @@test
-          send_tagged_bad(cmd.tag, "%s failed - %s", cmd.name, $!)
-          @logger.error("#{$!.class}: #{$!}")
-          for line in $@
-            @logger.error("  #{line}")
+          begin
+            cmd = recv_cmd
+          rescue
+            send_bad("parse error: %s", $!)
+            next
           end
+          break if cmd.nil?
+          @sync.synchronize(Sync::SH) do
+            begin
+              @logger.debug("received #{cmd.name} command from #{@peeraddr}")
+              cmd.exec
+              @logger.debug("sent #{cmd.name} response to #{@peeraddr}")
+            rescue
+              raise if @@test
+              send_tagged_bad(cmd.tag, "%s failed - %s", cmd.name, $!)
+              @logger.error("#{$!.class}: #{$!}")
+              for line in $@
+                @logger.error("  #{line}")
+              end
+            end
+          end
+        rescue TerminateException
+          send_data("BYE IMAP server terminating connection")
+          break
         end
       end
       @mail_store.close if @mail_store
@@ -2698,6 +2743,7 @@ class Ximapd
     end
   end
 
+  class TerminateException < Exception; end
   class MailboxError < StandardError; end
   class MailboxExistError < MailboxError; end
   class NoMailboxError < MailboxError; end
