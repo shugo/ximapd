@@ -158,7 +158,8 @@ class Ximapd
     Dir.chdir("/")
     STDIN.reopen("/dev/null")
     STDOUT.reopen("/dev/null", "w")
-    STDERR.reopen("/dev/null", "w")
+    path = File.expand_path("stderr", @config["data_dir"])
+    STDERR.reopen(path, "w")
   end
 
   def open_pid_file(mode = "r")
