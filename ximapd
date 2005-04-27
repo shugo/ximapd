@@ -105,6 +105,15 @@ class Ximapd
     @main_thread = Thread.current
     Signal.trap("TERM", &method(:terminate))
     Signal.trap("INT", &method(:terminate))
+    if Ximapd.debug
+      Signal.trap("QUIT") do
+        owner = @monitor.instance_eval { @mon_owner }
+        p owner
+        if owner
+          owner.raise("quit")
+        end
+      end
+    end
     begin
       loop do
         sock = @server.accept
@@ -1093,20 +1102,21 @@ class Ximapd
             next
           end
           break if cmd.nil?
-          @monitor.synchronize do
-            begin
-              @logger.debug("received #{cmd.name} command from #{@peeraddr}")
-              cmd.exec
-              @logger.debug("sent #{cmd.name} response to #{@peeraddr}")
-            rescue
-              raise if @@test
-              send_tagged_bad(cmd.tag, "%s failed - %s", cmd.name, $!)
-              @logger.error("#{$!.class}: #{$!}")
-              for line in $@
-                @logger.error("  #{line}")
-              end
+          @logger.debug("received #{cmd.name} command from #{@peeraddr}")
+          @monitor.enter if cmd.name != "IDLE"
+          begin
+            cmd.exec
+          rescue
+            raise if @@test
+            send_tagged_bad(cmd.tag, "%s failed - %s", cmd.name, $!)
+            @logger.error("#{$!.class}: #{$!}")
+            for line in $@
+              @logger.error("  #{line}")
             end
+          ensure
+            @monitor.exit if cmd.name != "IDLE"
           end
+          @logger.debug("sent #{cmd.name} response to #{@peeraddr}")
         rescue TerminateException
           send_data("BYE IMAP server terminating connection")
           break
