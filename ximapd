@@ -25,7 +25,7 @@
 # SUCH DAMAGE.
 
 require "socket"
-require "sync"
+require "monitor"
 require "net/imap"
 require "pstore"
 require "yaml/store"
@@ -95,7 +95,7 @@ class Ximapd
     @config["logger"] = @logger
     @threads = []
     @sessions = {}
-    @sync = Sync.new
+    @monitor = Monitor.new
   end
 
   def start
@@ -109,18 +109,12 @@ class Ximapd
       loop do
         sock = @server.accept
         Thread.start(sock) do |socket|
-          session = Session.new(@config, sock, @sync)
+          session = Session.new(@config, sock, @monitor)
           @sessions[Thread.current] = session
-          begin
-            session.start
-          ensure
-            @sessions.delete(Thread.current)
-          end
+          session.start
+          @sessions.delete(Thread.current)
         end
       end
-    rescue TerminateException
-      close_sessions
-      @logger.info("terminated")
     ensure
       @logger.close
       @server.close
@@ -170,25 +164,34 @@ class Ximapd
   end
 
   def close_sessions
-    @sync.synchronize(Sync::EX) do
-      @logger.debug("close #{@sessions.length} sessions")
-      @sessions.each_key do |t|
-        @logger.debug("raise TerminateException")
+    @logger.debug("close #{@sessions.length} sessions")
+    i = 1
+    @sessions.each_key do |t|
+      @logger.debug("close session \##{i}")
+      @monitor.synchronize do
+        @logger.debug("raise TerminateException to #{t}")
         t.raise(TerminateException.new)
-        @logger.debug("raised")
-        begin
-          t.join
-        rescue Exception
-          @logger.error($!)
-        end
-        @logger.debug("done")
+        @logger.debug("raised TerminateException to #{t}")
       end
+      begin
+        @logger.debug("join #{t}")
+        t.join
+        @logger.debug("joined #{t}")
+      rescue Exception
+        @logger.error($!)
+      end
+      @logger.debug("closed session \##{i}")
+      i += 1
     end
   end
 
   def terminate(sig)
     @logger.info("signal #{sig}")
-    @main_thread.raise(TerminateException.new)
+    @logger.debug(@sessions.keys.inspect)
+    @logger.debug(@monitor.inspect)
+    close_sessions
+    @logger.info("terminated")
+    exit
   end
 
   INDEX_OPTIONS = {
@@ -1064,7 +1067,7 @@ class Ximapd
       @@test = test
     end
 
-    def initialize(config, sock, sync = Sync.new)
+    def initialize(config, sock, monitor = Monitor.new)
       @config = config
       @sock = sock
       @logger = @config["logger"]
@@ -1074,7 +1077,7 @@ class Ximapd
       @state = NON_AUTHENTICATED_STATE
       @mail_store = nil
       @current_mailbox = nil
-      @sync = sync
+      @monitor = monitor
     end
 
     def start
@@ -1090,7 +1093,7 @@ class Ximapd
             next
           end
           break if cmd.nil?
-          @sync.synchronize(Sync::SH) do
+          @monitor.synchronize do
             begin
               @logger.debug("received #{cmd.name} command from #{@peeraddr}")
               cmd.exec
