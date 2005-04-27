@@ -1094,7 +1094,6 @@ class Ximapd
           end
           break if cmd.nil?
           @logger.debug("received #{cmd.name} command from #{@peeraddr}")
-          @monitor.enter if cmd.name != "IDLE"
           begin
             cmd.exec
           rescue
@@ -1104,8 +1103,6 @@ class Ximapd
             for line in $@
               @logger.error("  #{line}")
             end
-          ensure
-            @monitor.exit if cmd.name != "IDLE"
           end
           @logger.debug("sent #{cmd.name} response to #{@peeraddr}")
         rescue TerminateException
@@ -1113,9 +1110,11 @@ class Ximapd
           break
         end
       end
-      @mail_store.close if @mail_store
-      @sock.close
-      @logger.info("disconnect from #{@peeraddr}")
+      synchronize do
+        @mail_store.close if @mail_store
+        @sock.close
+        @logger.info("disconnect from #{@peeraddr}")
+      end
     end
 
     def logout
@@ -1211,6 +1210,10 @@ class Ximapd
     def send_continue_req(fmt, *args)
       msg = format(fmt, *args)
       send_line("+ " + msg)
+    end
+
+    def synchronize(&block)
+      @monitor.synchronize(&block)
     end
   end
 
@@ -2183,7 +2186,9 @@ class Ximapd
 
   class NoopCommand < Command
     def exec
-      @session.sync
+      @session.synchronize do
+        @session.sync
+      end
       send_tagged_ok
     end
   end
@@ -2265,14 +2270,19 @@ class Ximapd
 
     def exec
       begin
-        status = @session.mail_store.get_mailbox_status(@mailbox_name)
+        status = nil
+        @session.synchronize do
+          status = @session.mail_store.get_mailbox_status(@mailbox_name)
+        end
         @session.send_data("%d EXISTS", status.messages)
         @session.send_data("%d RECENT", status.recent)
         @session.send_ok("[UIDVALIDITY %d] UIDs valid", status.uidvalidity)
         @session.send_ok("[UIDNEXT %d] Predicted next UID", status.uidnext)
         @session.send_data("FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
         @session.send_ok("[PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited")
-        @session.select(@mailbox_name)
+        @session.synchronize do
+          @session.select(@mailbox_name)
+        end
         send_tagged_ok("READ-WRITE")
       rescue MailboxError
         @session.send_tagged_no(@tag, "%s", $!)
@@ -2286,7 +2296,9 @@ class Ximapd
     end
 
     def exec
-      @session.mail_store.create_mailbox(@mailbox_name)
+      @session.synchronize do
+        @session.mail_store.create_mailbox(@mailbox_name)
+      end
       send_tagged_ok
     end
   end
@@ -2301,7 +2313,9 @@ class Ximapd
         @session.send_tagged_no(@tag, "can't delete %s", @mailbox_name)
         return
       end
-      @session.mail_store.delete_mailbox(@mailbox_name)
+      @session.synchronize do
+        @session.mail_store.delete_mailbox(@mailbox_name)
+      end
       send_tagged_ok
     end
   end
@@ -2317,7 +2331,9 @@ class Ximapd
         @session.send_tagged_no(@tag, "can't rename %s", @mailbox_name)
         return
       end
-      @session.mail_store.rename_mailbox(@mailbox_name, @new_mailbox_name)
+      @session.synchronize do
+        @session.mail_store.rename_mailbox(@mailbox_name, @new_mailbox_name)
+      end
       send_tagged_ok
     end
   end
@@ -2351,9 +2367,12 @@ class Ximapd
         end
       }
       re = Regexp.new("\\A" + pat + "\\z", nil, "n")
-      mailboxes = @session.mail_store.mailboxes.to_a.select { |mbox_name,|
-        re.match(mbox_name)
-      }
+      mailboxes = nil
+      @session.synchronize do
+        mailboxes = @session.mail_store.mailboxes.to_a.select { |mbox_name,|
+          re.match(mbox_name)
+        }
+      end
       mailboxes.sort_by { |i| i[0] }.each do |mbox_name, mbox|
         @session.send_data("%s (%s) \"/\" %s",
                            @name, mbox["flags"], quoted(mbox_name))
@@ -2371,7 +2390,10 @@ class Ximapd
     end
 
     def exec
-      status = @session.mail_store.get_mailbox_status(@mailbox_name)
+      status = nil
+      @session.synchronize do
+        status = @session.mail_store.get_mailbox_status(@mailbox_name)
+      end
       s = @atts.collect { |att|
         format("%s %d", att, status.send(att.downcase))
       }.join(" ")
@@ -2389,7 +2411,10 @@ class Ximapd
     end
 
     def exec
-      @session.mail_store.import_mail(@message, @mailbox_name, @flags.join(" "))
+      @session.synchronize do
+        @session.mail_store.import_mail(@message, @mailbox_name,
+                                        @flags.join(" "))
+      end
       send_tagged_ok
     end
   end
@@ -2419,7 +2444,10 @@ class Ximapd
       query = @keys.collect { |key| key.to_query }.reject { |q|
         q.empty?
       }.join(" ")
-      uids = @session.mail_store.uid_search(@session.current_mailbox, query)
+      uids = nil
+      @session.synchronize do
+        uids = @session.mail_store.uid_search(@session.current_mailbox, query)
+      end
       for key in @keys
         uids = key.select(uids)
       end
@@ -2557,8 +2585,11 @@ class Ximapd
     end
 
     def exec
-      mails = @session.mail_store.fetch(@session.current_mailbox,
-                                        @sequence_set)
+      mails = nil
+      @session.synchronize do
+        mails = @session.mail_store.fetch(@session.current_mailbox,
+                                          @sequence_set)
+      end
       for mail in mails
         data = @atts.collect { |att|
           att.fetch(mail)
@@ -2578,8 +2609,11 @@ class Ximapd
     end
 
     def exec
-      mails = @session.mail_store.uid_fetch(@session.current_mailbox,
-                                            @sequence_set)
+      mails = nil
+      @session.synchronize do
+        mails = @session.mail_store.uid_fetch(@session.current_mailbox,
+                                              @sequence_set)
+      end
       for mail in mails
         data = @atts.collect { |att|
           att.fetch(mail)
@@ -2702,10 +2736,15 @@ class Ximapd
     end
 
     def exec
-      mails = @session.mail_store.uid_fetch(@session.current_mailbox,
-                                            @sequence_set)
+      mails = nil
+      @session.synchronize do
+        mails = @session.mail_store.uid_fetch(@session.current_mailbox,
+                                              @sequence_set)
+      end
       for mail in mails
-        @att.store(mail)
+        @session.synchronize do
+          @att.store(mail)
+        end
         if !@att.silent?
           @session.send_data("%d FETCH (FLAGS (%s))", mail.uid, mail.flags)
         end
