@@ -122,8 +122,8 @@ class Ximapd
       close_sessions
       @logger.info("terminated")
     ensure
-      @server.close
       @logger.close
+      @server.close
     end
   end
 
@@ -1110,7 +1110,6 @@ class Ximapd
         end
       end
       @mail_store.close if @mail_store
-      @sock.shutdown
       @sock.close
       @logger.info("disconnect from #{@peeraddr}")
     end
