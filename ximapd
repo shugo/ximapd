@@ -105,15 +105,6 @@ class Ximapd
     @main_thread = Thread.current
     Signal.trap("TERM", &method(:terminate))
     Signal.trap("INT", &method(:terminate))
-    if Ximapd.debug
-      Signal.trap("QUIT") do
-        owner = @monitor.instance_eval { @mon_owner }
-        p owner
-        if owner
-          owner.raise("quit")
-        end
-      end
-    end
     begin
       loop do
         sock = @server.accept
