@@ -143,9 +143,9 @@ class Ximapd
   end
 
   def daemon
-    exit! if fork
+    exit!(0) if fork
     Process.setsid
-    exit! if fork
+    exit!(0) if fork
     open_pid_file("w") do |f|
       f.puts(Process.pid)
     end
