@@ -407,6 +407,8 @@ class Ximapd
       @ml_name_header_fields =
         @config["ml_name_header_fields"] || DEFAULT_ML_NAME_HEADER_FIELDS
       @last_peeked_uids = {}
+      @index = nil
+      @index_ref_count = 0
     end
 
     def close
@@ -466,9 +468,9 @@ class Ximapd
           @mailbox_db["mailboxes"].delete(k)
           @mailbox_db["mailboxes"][new_key] = v
         end
-        s = new_name.slice(/\Aqueries\/(.*)/, 1)
-        if s
-          @mailbox_db["mailboxes"][new_name]["query"] = Net::IMAP.decode_utf7(s)
+        query = extract_query(new_name)
+        if query
+          @mailbox_db["mailboxes"][new_name]["query"] = query
         end
       end
     end
@@ -667,12 +669,19 @@ class Ximapd
     private
 
     def open_index(flags = Rast::DB::RDWR)
-      index = Rast::DB.open(@index_path, flags,
-                            "sync_threshold_chars" => @sync_threshold_chars)
+      if @index_ref_count == 0
+        @index = Rast::DB.open(@index_path, flags,
+                               "sync_threshold_chars" => @sync_threshold_chars)
+      end
+      @index_ref_count += 1
       begin
-        yield(index)
+        yield(@index)
       ensure
-        index.close
+        @index_ref_count -= 1
+        if @index_ref_count == 0
+          @index.close
+          @index = nil
+        end
       end
     end
 
@@ -699,18 +708,30 @@ class Ximapd
         "last_peeked_uid" => 0
       }
       if query.nil?
-        s = name.slice(/\Aqueries\/(.*)/, 1)
-        if s.nil?
+        query = extract_query(name)
+        if query.nil?
           @mailbox_db["status"]["last_mailbox_id"] += 1
           query = format('mailbox-id = %d',
                          @mailbox_db["status"]["last_mailbox_id"])
           mailbox["id"] = @mailbox_db["status"]["last_mailbox_id"]
-        else
-          query = Net::IMAP.decode_utf7(s)
         end
       end
       mailbox["query"] = query
       @mailbox_db["mailboxes"][name] = mailbox
+    end
+
+    def extract_query(mailbox_name)
+      s = mailbox_name.slice(/\Aqueries\/(.*)/, 1)
+      return nil if s.nil?
+      query = Net::IMAP.decode_utf7(s)
+      begin
+        open_index do |index|
+          result = index.search(query, "num_items" => Rast::RESULT_MIN_ITEMS)
+        end
+        return query
+      rescue
+        raise InvalidQueryError.new("invalid query")
+      end
     end
 
     def import_mbox_internal(index, f)
@@ -2349,10 +2370,14 @@ class Ximapd
     end
 
     def exec
-      @session.synchronize do
-        @session.mail_store.create_mailbox(@mailbox_name)
+      begin
+        @session.synchronize do
+          @session.mail_store.create_mailbox(@mailbox_name)
+        end
+        send_tagged_ok
+      rescue InvalidQueryError
+        @session.send_tagged_no(@tag, "invalid query")
       end
-      send_tagged_ok
     end
   end
 
@@ -2384,10 +2409,14 @@ class Ximapd
         @session.send_tagged_no(@tag, "can't rename %s", @mailbox_name)
         return
       end
-      @session.synchronize do
-        @session.mail_store.rename_mailbox(@mailbox_name, @new_mailbox_name)
+      begin
+        @session.synchronize do
+          @session.mail_store.rename_mailbox(@mailbox_name, @new_mailbox_name)
+        end
+        send_tagged_ok
+      rescue InvalidQueryError
+        @session.send_tagged_no(@tag, "invalid query")
       end
-      send_tagged_ok
     end
   end
 
@@ -2866,6 +2895,7 @@ class Ximapd
   class NoMailboxError < MailboxError; end
   class MailboxAccessError < MailboxError; end
   class NotSelectableMailboxError < MailboxError; end
+  class InvalidQueryError < StandardError; end
 end
 
 if $0 == __FILE__

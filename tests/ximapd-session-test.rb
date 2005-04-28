@@ -541,6 +541,7 @@ A005 SELECT foo\r
 A006 CREATE bar/baz/quux\r
 A007 LIST "" "*"\r
 A008 CREATE queries/ruby\r
+A009 CREATE queries/&-\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
@@ -577,6 +578,7 @@ EOF
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
     assert_equal("A007 OK LIST completed\r\n", sock.output.gets)
     assert_equal("A008 OK CREATE completed\r\n", sock.output.gets)
+    assert_equal("A009 NO invalid query\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
     ruby = mail_store.mailboxes["queries/ruby"]
@@ -719,14 +721,16 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
-A002 RENAME ruby queries/perl\r
+A002 RENAME ruby queries/&-\r
+A003 RENAME ruby queries/perl\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
-    assert_equal("A002 OK RENAME completed\r\n", sock.output.gets)
+    assert_equal("A002 NO invalid query\r\n", sock.output.gets)
+    assert_equal("A003 OK RENAME completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
     perl = mail_store.mailboxes["queries/perl"]
