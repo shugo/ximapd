@@ -1098,7 +1098,7 @@ class Ximapd
             cmd.exec
           rescue
             raise if @@test
-            send_tagged_bad(cmd.tag, "%s failed - %s", cmd.name, $!)
+            send_tagged_no(cmd.tag, "%s failed - %s", cmd.name, $!)
             @logger.error("#{$!.class}: #{$!}")
             for line in $@
               @logger.error("  #{line}")
