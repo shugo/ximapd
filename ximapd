@@ -1311,6 +1311,7 @@ class Ximapd
     ]
     AUTHENTICATED_STATE_COMMANDS = UNIVERSAL_COMMANDS + [
       "SELECT",
+      "EXAMINE",
       "CREATE",
       "DELETE",
       "RENAME",
@@ -1407,6 +1408,12 @@ class Ximapd
       match(T_SPACE)
       mailbox_name = mailbox
       return SelectCommand.new(mailbox_name)
+    end
+
+    def examine
+      match(T_SPACE)
+      mailbox_name = mailbox
+      return ExamineCommand.new(mailbox_name)
     end
 
     def create
@@ -2272,27 +2279,46 @@ class Ximapd
     end
   end
 
-  class SelectCommand < Command
+  class MailboxCheckCommand < Command
     def initialize(mailbox_name)
       @mailbox_name = mailbox_name
     end
 
+    private
+
+    def send_status
+      status = nil
+      @session.synchronize do
+        status = @session.mail_store.get_mailbox_status(@mailbox_name)
+      end
+      @session.send_data("%d EXISTS", status.messages)
+      @session.send_data("%d RECENT", status.recent)
+      @session.send_ok("[UIDVALIDITY %d] UIDs valid", status.uidvalidity)
+      @session.send_ok("[UIDNEXT %d] Predicted next UID", status.uidnext)
+      @session.send_data("FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
+      @session.send_ok("[PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited")
+    end
+  end
+
+  class SelectCommand < MailboxCheckCommand
     def exec
       begin
-        status = nil
-        @session.synchronize do
-          status = @session.mail_store.get_mailbox_status(@mailbox_name)
-        end
-        @session.send_data("%d EXISTS", status.messages)
-        @session.send_data("%d RECENT", status.recent)
-        @session.send_ok("[UIDVALIDITY %d] UIDs valid", status.uidvalidity)
-        @session.send_ok("[UIDNEXT %d] Predicted next UID", status.uidnext)
-        @session.send_data("FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
-        @session.send_ok("[PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited")
+        send_status
         @session.synchronize do
           @session.select(@mailbox_name)
         end
         send_tagged_ok("READ-WRITE")
+      rescue MailboxError
+        @session.send_tagged_no(@tag, "%s", $!)
+      end
+    end
+  end
+
+  class ExamineCommand < MailboxCheckCommand
+    def exec
+      begin
+        send_status
+        send_tagged_ok("READ-ONLY")
       rescue MailboxError
         @session.send_tagged_no(@tag, "%s", $!)
       end

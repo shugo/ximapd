@@ -31,7 +31,6 @@ end
 require "test/unit"
 require "stringio"
 require "tmpdir"
-require "fileutils"
 require "logger"
 
 if !defined?(Ximapd::Session)
@@ -62,7 +61,7 @@ class XimapdSessionTest < Test::Unit::TestCase
     GC.enable
     Ximapd::AuthenticateCramMD5Command.challenge_generator =
       @challenge_generator
-    FileUtils.rm_rf(@tmpdir)
+    system("rm", "-rf", @tmpdir)
   end
 
   def test_capability
@@ -169,6 +168,7 @@ EOF
                  sock.output.gets)
     assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
 
     mail1 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
@@ -201,6 +201,7 @@ EOF
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
 
     mail2 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
@@ -283,6 +284,7 @@ EOF
     assert_equal("A005 NO can't open ml: not a selectable mailbox\r\n",
                  sock.output.gets)
     assert_equal(nil, sock.output.gets)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
 
     mail4 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
@@ -318,6 +320,204 @@ EOF
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
+  end
+
+  def test_examine
+    sock = SpoofSocket.new(<<EOF)
+A001 EXAMINE INBOX\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("A001 BAD Command unrecognized/login please\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 EXAMINE INBOX\r
+A003 EXAMINE inbox\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 0 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 0 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n", sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
+    assert_equal("* 0 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 0 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n", sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A003 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+
+    mail1 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+Subject: hello
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+
+Hello world
+EOF
+    mail_store = Ximapd::MailStore.new(@config)
+    uid1 = mail_store.import_mail(mail1)
+    mail_store.close
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 EXAMINE INBOX\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid1 + 1}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+
+    mail2 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+Subject: bye
+Date: Fri, 01 Apr 2005 11:47:10 +0900
+
+Goodbye world
+EOF
+    mail_store = Ximapd::MailStore.new(@config)
+    uid2 = mail_store.import_mail(mail2)
+    mail_store.close
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 EXAMINE INBOX\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 1}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+
+    mail3 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+Subject: [ximapd-users:00001] ximapd-0.0.0 released!
+X-ML-Name: ximapd-users
+X-Mail-Count: 1
+Date: Fri, 01 Apr 2005 11:47:10 +0900
+
+ximapd-0.0.0 is released!
+EOF
+    mail_store = Ximapd::MailStore.new(@config)
+    uid3 = mail_store.import_mail(mail3)
+    mail_store.close
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 EXAMINE INBOX\r
+A003 EXAMINE ml/ximapd-users\r
+A004 EXAMINE foo\r
+A005 EXAMINE ml\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 0 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid3 + 1}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
+    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid3 + 1}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A003 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
+    assert_equal("A004 NO no such mailbox\r\n", sock.output.gets)
+    assert_equal("A005 NO can't open ml: not a selectable mailbox\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+
+    mail4 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+Subject: support STARTTLS
+X-Trac-Project: ximapd
+Date: Fri, 01 Apr 2005 11:47:10 +0900
+
+support the STARTTLS command
+EOF
+    config = @config.dup
+    config["ml_name_header_fields"] = ["X-ML-Name", "X-Trac-Project"]
+    mail_store = Ximapd::MailStore.new(config)
+    uid4 = mail_store.import_mail(mail4)
+    mail_store.close
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 EXAMINE ml/ximapd\r
+EOF
+    session = Ximapd::Session.new(@config, sock)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid4 + 1}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
   end
 
   def test_create
