@@ -2526,19 +2526,32 @@ class Ximapd
 
   class CloseCommand < Command
     def exec
-      status = @session.close_mailbox
+      @session.synchronize do
+        mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
+        mails.each do |mail|
+          if /\\Deleted\b/ni.match(mail.flags(false))
+            mail.delete
+          end
+        end
+      end
+      @session.close_mailbox
       send_tagged_ok
     end
   end
 
   class ExpungeCommand < Command
     def exec
-      mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
+      mails = nil
+      @session.synchronize do
+        mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
+      end
       seqno = mails.length
       mails.reverse_each do |mail|
         mail = mails[seqno - 1]
         if /\\Deleted\b/ni.match(mail.flags(false))
-          mail.delete
+          @session.synchronize do
+            mail.delete
+          end
           @session.send_data("%d EXPUNGE", seqno)
         end
         seqno -= 1
