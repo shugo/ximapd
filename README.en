@@ -52,5 +52,17 @@ Copy ximapd under PATH.
 
 == Usage
 
-Connect to ximapd with an IMAP client such as Thunderbird.
+First, run ximapd as daemon.
+
+  $ ximapd
+
+-d option prevents ximapd to fork.
+
+  $ ximapd -d
+
+See help for more options.
+
+  $ ximapd --help
+
+Then, connect to ximapd with your IMAP client such as Thunderbird.
 If no error ocurred, you're lucky:)
