@@ -48,6 +48,21 @@ module TMail
   end
 end
 
+module Rast
+  if !defined?(RESULT_ALL_ITEMS)
+    if Rast::VERSION < "0.1.0"
+      RESULT_ALL_ITEMS = 0
+    else
+      RESULT_ALL_ITEMS = -1
+    end
+  end
+  if Rast::VERSION < "0.1.0"
+    RESULT_MIN_ITEMS = 1
+  else
+    RESULT_MIN_ITEMS = 0
+  end
+end
+
 class Ximapd
   VERSION = "0.0.0"
 
@@ -482,7 +497,7 @@ class Ximapd
           result = index.search(query,
                                 "properties" => ["uid"],
                                 "start_no" => 0,
-                                "num_items" => 1)
+                                "num_items" => Rast::RESULT_MIN_ITEMS)
           status.recent = result.hit_count
           status.uidnext = @mailbox_db["status"]["last_uid"] + 1
           status.uidvalidity = @mailbox_db["status"]["uidvalidity"]
@@ -556,7 +571,7 @@ class Ximapd
         options = {
           "properties" => ["uid"],
           "start_no" => 0,
-          "num_items" => 0,
+          "num_items" => Rast::RESULT_ALL_ITEMS,
           "sort_method" => Rast::SORT_METHOD_PROPERTY,
           "sort_property" => "uid",
           "sort_order" => Rast::SORT_ORDER_ASCENDING
@@ -576,7 +591,7 @@ class Ximapd
         result = index.search(mailbox["query"],
                               "properties" => ["uid"],
                               "start_no" => 0,
-                              "num_items" => 0,
+                              "num_items" => Rast::RESULT_ALL_ITEMS,
                               "sort_method" => Rast::SORT_METHOD_PROPERTY,
                               "sort_property" => "uid",
                               "sort_order" => Rast::SORT_ORDER_ASCENDING)
@@ -608,7 +623,7 @@ class Ximapd
         options = {
           "properties" => ["uid"],
           "start_no" => 0,
-          "num_items" => 0,
+          "num_items" => Rast::RESULT_ALL_ITEMS,
           "sort_method" => Rast::SORT_METHOD_PROPERTY,
           "sort_property" => "uid",
           "sort_order" => Rast::SORT_ORDER_ASCENDING
@@ -632,7 +647,7 @@ class Ximapd
           query = mailbox["query"]
         else
           query = mailbox["query"] +
-            " (" + additional_queries.join(" | ") + ")"
+            " ( " + additional_queries.join(" | ") + " )"
         end
         result = index.search(query, options)
         return result.items.collect { |i|
