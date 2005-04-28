@@ -1329,7 +1329,8 @@ class Ximapd
       "UID SEARCH",
       "FETCH",
       "UID FETCH",
-      "UID STORE"
+      "UID STORE",
+      "UID COPY"
     ]
     LOGOUT_STATE_COMMANDS = []
     COMMANDS = {
@@ -1888,6 +1889,14 @@ class Ximapd
       else
         return s.to_i
       end
+    end
+
+    def uid_copy
+      match(T_SPACE)
+      seq_set = sequence_set
+      match(T_SPACE)
+      mailbox_name = mailbox
+      return UidCopyCommand.new(seq_set, mailbox_name)
     end
 
     def astring
@@ -2783,6 +2792,27 @@ class Ximapd
       flags = mail.flags(false).split(/ /)
       flags -= @flags
       mail.flags = flags.join(" ")
+    end
+  end
+
+  class UidCopyCommand < Command
+    def initialize(sequence_set, mailbox_name)
+      @sequence_set = sequence_set
+      @mailbox_name = mailbox_name
+    end
+
+    def exec
+      mails = nil
+      @session.synchronize do
+        mails = @session.mail_store.uid_fetch(@session.current_mailbox,
+                                              @sequence_set)
+      end
+      for mail in mails
+        @session.synchronize do
+          @session.mail_store.import_mail(mail.to_s, @mailbox_name)
+        end
+      end
+      send_tagged_ok
     end
   end
 
