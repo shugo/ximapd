@@ -4,10 +4,6 @@
 
 ximapdは実験的なIMAPデーモンです。
 
-== 作者
-
-前田 修吾 <shugo@ruby-lang.org>
-
 == 動作環境
 
 * Ruby 1.8.2 以降
@@ -20,6 +16,10 @@ ximapdは実験的なIMAPデーモンです。
 http://svn.shugo.net/ximapd/trunkから最新のソースコードを取得できます。
 
   $ svn co http://svn.shugo.net/ximapd/trunk ximapd
+
+== 作者
+
+前田 修吾 <shugo@ruby-lang.org>
 
 == インストール
 

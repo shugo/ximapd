@@ -4,10 +4,6 @@
 
 ximapd is an eXperimental IMAP Daemon.
 
-== Author
-
-Shugo Maeda <shugo@ruby-lang.org>
-
 == Requirements
 
 * Ruby 1.8.2 or later
@@ -20,6 +16,10 @@ Shugo Maeda <shugo@ruby-lang.org>
 You can get the latest source code from http://svn.shugo.net/ximapd/trunk.
 
   $ svn co http://svn.shugo.net/ximapd/trunk ximapd
+
+== Author
+
+Shugo Maeda <shugo@ruby-lang.org>
 
 == Install
 
