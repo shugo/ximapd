@@ -1134,6 +1134,26 @@ EOF
   end
 
   def test_expunge
+    mail_store = Ximapd::MailStore.new(@config)
+    hello_mail = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: hello
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+
+hello, Foo
+EOF
+    bye_mail = hello_mail.gsub(/hello/, "bye")
+    10.times do |i|
+      if [2, 3, 4, 7].include?(i + 1)
+        mail = bye_mail
+      else
+        mail = hello_mail
+      end
+      mail_store.import_mail(mail)
+    end
+    mail_store.close
+
     sock = SpoofSocket.new(<<EOF)
 A001 UID EXPUNGE\r
 EOF
@@ -1162,24 +1182,44 @@ EOF
 A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
-A003 EXPUNGE\r
+A003 UID SEARCH HEADER SUBJECT bye\r
+A004 EXPUNGE\r
+A005 UID SEARCH HEADER SUBJECT bye\r
+A006 UID STORE 2:4,7 +FLAGS.SILENT (\\Deleted)\r
+A007 EXPUNGE\r
+A008 UID SEARCH HEADER SUBJECT bye\r
+A009 UID SEARCH HEADER SUBJECT hello\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
-    assert_equal("* 0 EXISTS\r\n", sock.output.gets)
-    assert_equal("* 0 RECENT\r\n", sock.output.gets)
+    assert_equal("* 10 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 10 RECENT\r\n", sock.output.gets)
     assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
-    assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n",
+    assert_equal("* OK [UIDNEXT 11] Predicted next UID\r\n",
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
     assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
-    assert_equal("A003 OK EXPUNGE completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 3 4 7\r\n", sock.output.gets)
+    assert_equal("A003 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("A004 OK EXPUNGE completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 3 4 7\r\n", sock.output.gets)
+    assert_equal("A005 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("A006 OK UID STORE completed\r\n", sock.output.gets)
+    assert_equal("* 7 EXPUNGE\r\n", sock.output.gets)
+    assert_equal("* 4 EXPUNGE\r\n", sock.output.gets)
+    assert_equal("* 3 EXPUNGE\r\n", sock.output.gets)
+    assert_equal("* 2 EXPUNGE\r\n", sock.output.gets)
+    assert_equal("A007 OK EXPUNGE completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH\r\n", sock.output.gets)
+    assert_equal("A008 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 5 6 8 9 10\r\n", sock.output.gets)
+    assert_equal("A009 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 

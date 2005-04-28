@@ -662,7 +662,16 @@ class Ximapd
     def get_mailbox(name)
       @mailbox_db.transaction do
         return Mailbox.new(@config, name,
-                           @mailbox_db["mailboxes"][name], @flags_db)
+                           @mailbox_db["mailboxes"][name], self)
+      end
+    end
+
+    def delete_from_index(uid)
+      open_index do |index|
+        result = index.search("uid = #{uid}")
+        result.items.each do |i|
+          index.delete(i.doc_id)
+        end
       end
     end
 
@@ -886,13 +895,13 @@ class Ximapd
   end
 
   class Mailbox
-    attr_reader :name, :flags_db
+    attr_reader :name, :mail_store
 
-    def initialize(config, name, data, flags_db)
+    def initialize(config, name, data, mail_store)
       @config = config
       @name = name
       @data = data
-      @flags_db = flags_db
+      @mail_store = mail_store
     end
 
     def [](key)
@@ -900,7 +909,7 @@ class Ximapd
     end
 
     def get_mail(seqno, uid)
-      return Mail.new(@config, self, seqno, uid, @flags_db)
+      return Mail.new(@config, self, seqno, uid)
     end
   end
 
@@ -909,12 +918,12 @@ class Ximapd
 
     attr_reader :mailbox, :seqno, :uid
 
-    def initialize(config, mailbox, seqno, uid, flags_db)
+    def initialize(config, mailbox, seqno, uid)
       @config = config
       @mailbox = mailbox
       @seqno = seqno
       @uid = uid
-      @flags_db = flags_db
+      @flags_db = @mailbox.mail_store.flags_db
       @parsed_mail = nil
     end
 
@@ -1000,6 +1009,11 @@ class Ximapd
     def multipart?
       mail = parsed_mail
       return mail.multipart?
+    end
+
+    def delete
+      @mailbox.mail_store.delete_from_index(@uid)
+      File.unlink(path)
     end
 
     private
@@ -1619,7 +1633,7 @@ class Ximapd
     end
 
     def expunge
-      return NoopCommand.new
+      return ExpungeCommand.new
     end
 
     def uid_search
@@ -2513,6 +2527,22 @@ class Ximapd
   class CloseCommand < Command
     def exec
       status = @session.close_mailbox
+      send_tagged_ok
+    end
+  end
+
+  class ExpungeCommand < Command
+    def exec
+      mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
+      seqno = mails.length
+      mails.reverse_each do |mail|
+        mail = mails[seqno - 1]
+        if /\\Deleted\b/ni.match(mail.flags(false))
+          mail.delete
+          @session.send_data("%d EXPUNGE", seqno)
+        end
+        seqno -= 1
+      end
       send_tagged_ok
     end
   end
