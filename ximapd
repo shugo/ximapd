@@ -2284,44 +2284,47 @@ class Ximapd
       @mailbox_name = mailbox_name
     end
 
+    def exec
+      begin
+        status = nil
+        @session.synchronize do
+          status = @session.mail_store.get_mailbox_status(@mailbox_name)
+        end
+        @session.send_data("%d EXISTS", status.messages)
+        @session.send_data("%d RECENT", status.recent)
+        @session.send_ok("[UIDVALIDITY %d] UIDs valid", status.uidvalidity)
+        @session.send_ok("[UIDNEXT %d] Predicted next UID", status.uidnext)
+        @session.send_data("FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
+        @session.send_ok("[PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited")
+        send_tagged_response
+      rescue MailboxError
+        @session.send_tagged_no(@tag, "%s", $!)
+      end
+    end
+
     private
 
-    def send_status
-      status = nil
-      @session.synchronize do
-        status = @session.mail_store.get_mailbox_status(@mailbox_name)
-      end
-      @session.send_data("%d EXISTS", status.messages)
-      @session.send_data("%d RECENT", status.recent)
-      @session.send_ok("[UIDVALIDITY %d] UIDs valid", status.uidvalidity)
-      @session.send_ok("[UIDNEXT %d] Predicted next UID", status.uidnext)
-      @session.send_data("FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
-      @session.send_ok("[PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited")
+    def send_tagged_response
+      raise ScriptError.new("subclass must override send_tagged_response")
     end
   end
 
   class SelectCommand < MailboxCheckCommand
-    def exec
-      begin
-        send_status
-        @session.synchronize do
-          @session.select(@mailbox_name)
-        end
-        send_tagged_ok("READ-WRITE")
-      rescue MailboxError
-        @session.send_tagged_no(@tag, "%s", $!)
+    private
+
+    def send_tagged_response
+      @session.synchronize do
+        @session.select(@mailbox_name)
       end
+      send_tagged_ok("READ-WRITE")
     end
   end
 
   class ExamineCommand < MailboxCheckCommand
-    def exec
-      begin
-        send_status
-        send_tagged_ok("READ-ONLY")
-      rescue MailboxError
-        @session.send_tagged_no(@tag, "%s", $!)
-      end
+    private
+
+    def send_tagged_response
+      send_tagged_ok("READ-ONLY")
     end
   end
 
