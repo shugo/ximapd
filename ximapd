@@ -113,8 +113,11 @@ class Ximapd
     @monitor = Monitor.new
   end
 
-  def start
+  def start(ssl_ctx = nil)
     @server = TCPServer.new(@config["port"])
+    if ssl_ctx
+      @server = OpenSSL::SSL::SSLServer.new(@server, ssl_ctx)
+    end
     @logger.info("started")
     daemon if !Ximapd.debug
     @main_thread = Thread.current
@@ -122,7 +125,15 @@ class Ximapd
     Signal.trap("INT", &method(:terminate))
     begin
       loop do
-        sock = @server.accept
+        begin
+          sock = @server.accept
+        rescue Exception
+          if ssl_ctx && $!.kind_of?(OpenSSL::SSL::SSLError)
+            retry
+          else
+            raise
+          end
+        end
         Thread.start(sock) do |socket|
           session = Session.new(@config, sock, @monitor)
           @sessions[Thread.current] = session
@@ -512,14 +523,14 @@ class Ximapd
     MailboxStatus = Struct.new(:messages, :recent, :uidnext, :uidvalidity,
                                :unseen)
 
-    def import(args)
+    def import(args, mailbox_name = nil)
       @mailbox_db.transaction do
         open_index do |index|
           for arg in args
             Find.find(arg) do |filename|
               if File.file?(filename)
                 open(filename) do |f|
-                  uid = import_mail_internal(index, f.read)
+                  uid = import_mail_internal(index, f.read, mailbox_name)
                   if Ximapd.verbose
                     printf("imported UID=%d filename=%s\n", uid, filename)
                   end
@@ -531,18 +542,18 @@ class Ximapd
       end
     end
 
-    def import_file(f)
-      return import_mail(f.read)
+    def import_file(f, mailbox_name = nil)
+      return import_mail(f.read, mailbox_name)
     end
 
-    def import_mbox(args)
+    def import_mbox(args, mailbox_name = nil)
       @mailbox_db.transaction do
         open_index do |index|
           for arg in args
             Find.find(arg) do |filename|
               if File.file?(filename)
                 open(filename) do |f|
-                  import_mbox_internal(index, f)
+                  import_mbox_internal(index, f, mailbox_name)
                 end
               end
             end
@@ -551,10 +562,71 @@ class Ximapd
       end
     end
 
-    def import_mbox_file(f)
+    def import_mbox_file(f, mailbox_name = nil)
       @mailbox_db.transaction do
         open_index do |index|
-          import_mbox_internal(index, f)
+          import_mbox_internal(index, f, mailbox_name)
+        end
+      end
+    end
+
+    def import_imap(host, port, ssl, auth, user, pass, folders, mailbox_name = nil)
+      if port.nil?
+        if ssl
+          port = 993
+        else
+          port = 143
+        end
+      end
+      if auth.nil?
+        auth = "CRAM-MD5"
+      end
+
+      imap = Net::IMAP.new(host, port, ssl)
+      imap.authenticate(auth, user, pass)
+
+      step = 25
+      @mailbox_db.transaction do
+        open_index do |index|
+          folders.each do |f|
+            imap.list('', f).each do |folder|
+              fname = folder.name
+              printf("importing %s ...\n", fname) if Ximapd.verbose
+              begin
+                n_mails = imap.status(fname, ["MESSAGES"])["MESSAGES"]
+                printf("  %d mails in %s\n", n_mails, fname) if Ximapd.verbose
+                imap.examine(fname)
+                (1 .. n_mails).step(step) do |i|
+                  e = i + step - 1
+                  mails =
+                      imap.fetch(i .. e, ["BODY[]", "FLAGS", "INTERNALDATE"])
+                  mails.each do |mail|
+                    next if mail.nil?
+                    indate = DateTime.strptime(mail.attr["INTERNALDATE"], 
+                                               "%d-%b-%Y %H:%M:%S %z")
+                    flags = []
+                    mail.attr["FLAGS"].each do |flag|
+                      if flag.kind_of?(Symbol)
+                        flags << '\\' + flag.to_s
+                      else
+                        flags << flag.to_s
+                      end
+                    end
+                    import_mail_internal(index,
+                                         mail.attr["BODY[]"], mailbox_name,
+                                         flags.join(" "), indate)
+                  end
+                  printf("  [%s] %5.1f%% [%5d/%5d]\n",
+                          Time.now.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                          e.to_f/n_mails.to_f*100, e, n_mails) if Ximapd.verbose
+                end
+              rescue Net::IMAP::NoResponseError
+                printf("%s: %s\n", $!.message, folder.name) if Ximapd.verbose
+              ensure
+                imap.close
+              end
+            end
+          end
         end
       end
     end
@@ -591,7 +663,7 @@ class Ximapd
       mailbox = get_mailbox(mailbox_name)
       open_index do |index|
         result = index.search(mailbox["query"],
-                              "properties" => ["uid"],
+                              "properties" => ["uid", "internal-date"],
                               "start_no" => 0,
                               "num_items" => Rast::RESULT_ALL_ITEMS,
                               "sort_method" => Rast::SORT_METHOD_PROPERTY,
@@ -605,6 +677,7 @@ class Ximapd
             last = seq_number.last == -1 ? result.items.length : seq_number.last
             for i in first .. last
               mail = mailbox.get_mail(i, result.items[i - 1].properties[0])
+              mail.internal_date = result.items[i - 1].properties[1]
               mails.push(mail)
             end
           else
@@ -612,6 +685,7 @@ class Ximapd
             next if item.nil?
             uid = item.properties[0]
             mail = mailbox.get_mail(seq_number, uid)
+            mail.internal_date = item.properties[1]
             mails.push(mail)
           end
         end
@@ -623,7 +697,7 @@ class Ximapd
       mailbox = get_mailbox(mailbox_name)
       open_index do |index|
         options = {
-          "properties" => ["uid"],
+          "properties" => ["uid", "internal-date"],
           "start_no" => 0,
           "num_items" => Rast::RESULT_ALL_ITEMS,
           "sort_method" => Rast::SORT_METHOD_PROPERTY,
@@ -654,7 +728,9 @@ class Ximapd
         result = index.search(query, options)
         return result.items.collect { |i|
           uid = i.properties[0]
-          mailbox.get_mail(uid, uid)
+          mail = mailbox.get_mail(uid, uid)
+          mail.internal_date = i.properties[1]
+          mail
         }
       end
     end
@@ -743,12 +819,12 @@ class Ximapd
       end
     end
 
-    def import_mbox_internal(index, f)
+    def import_mbox_internal(index, f, mailbox_name = nil)
       s = nil
       f.each_line do |line|
         if /\AFrom /.match(line)
           if s
-            uid = import_mail_internal(index, s)
+            uid = import_mail_internal(index, s, mailbox_name)
             printf("imported UID=%d\n", uid) if Ximapd.verbose
           end
           s = line
@@ -757,12 +833,12 @@ class Ximapd
         end
       end
       if s
-        uid = import_mail_internal(index, s)
+        uid = import_mail_internal(index, s, mailbox_name)
         printf("imported UID=%d\n", uid) if Ximapd.verbose
       end
     end
 
-    def import_mail_internal(index, str, mailbox_name = nil, flags = "")
+    def import_mail_internal(index, str, mailbox_name = nil, flags = "", indate = nil)
       if mailbox_name.nil?
         mailbox_id = 0
       else
@@ -785,7 +861,7 @@ class Ximapd
         f.print(s)
       end
       @flags_db[uid] = flags
-      index_mail(index, uid, s, mailbox_id)
+      index_mail(index, uid, s, mailbox_id, indate)
       return uid
     end
 
@@ -795,12 +871,12 @@ class Ximapd
       return File.expand_path(relpath, @mail_path)
     end
 
-    def index_mail(index, uid, mail, mailbox_id)
+    def index_mail(index, uid, mail, mailbox_id, indate = DateTime.now)
       properties = Hash.new("")
       properties["uid"] = uid
       properties["size"] = mail.size
       properties["flags"] = ""
-      properties["internal-date"] = DateTime.now.to_s
+      properties["internal-date"] = indate.to_s
       properties["date"] = properties["internal-date"]
       properties["x-mail-count"] = 0
       properties["mailbox-id"] = mailbox_id
@@ -808,7 +884,7 @@ class Ximapd
         m = TMail::Mail.parse(mail)
         text = extract_text(m)
         properties = extract_properties(m, properties)
-      rescue
+      rescue SyntaxError, RuntimeError
         header, body = *mail.split(/^\r\n/)
         text = to_utf8(body, @default_charset)
       end
@@ -917,6 +993,7 @@ class Ximapd
     include DataFormat
 
     attr_reader :mailbox, :seqno, :uid
+    attr_accessor :internal_date
 
     def initialize(config, mailbox, seqno, uid)
       @config = config
@@ -1802,6 +1879,8 @@ class Ximapd
         return BodyStructureFetchAtt.new
       when /\A(?:UID)\z/ni
         return UidFetchAtt.new
+      when /\A(?:INTERNALDATE)\z/ni
+        return InternalDateFetchAtt.new
       else
         parse_error("unknown attribute `%s'", token.value)
       end
@@ -2762,7 +2841,11 @@ class Ximapd
   end
 
   class InternalDateFetchAtt
+    include DataFormat
+
     def fetch(mail)
+      return format("INTERNALDATE \"%s\"", 
+          DateTime.strptime(mail.internal_date).strftime("%d-%b-%Y %H:%M:%S %z"))
     end
   end
 
@@ -2946,6 +3029,9 @@ if $0 == __FILE__
 
   config_file = File.expand_path("~/.ximapd")
   action = "start"
+  imap_auth = imap_user = imap_pass = imap_host = imap_port = imap_ssl = nil
+  mailbox_name = nil
+  ssl_ctx = nil
   opts = OptionParser.new { |opts|
     opts.banner = "usage: #{File.basename($0)} [options]"
 
@@ -2962,6 +3048,49 @@ if $0 == __FILE__
 
     opts.on("--import-mbox", "import mbox") do
       action = "import_mbox"
+    end
+
+    opts.on("--import-imap", "import from another imap server") do
+      action = "import_imap"
+    end
+    opts.on("--imap-host=HOST", "imap server") do |h|
+      host = h
+    end
+    opts.on("--imap-port=PORT", "imap port") do |p|
+      if /\A\d+\z/ =~ p
+        port = p.to_i
+      end
+    end
+    opts.on("--imap-auth=TYPE", "auth type of imap") do |a|
+      imap_auth = a
+    end
+    opts.on("--imap-user=USER", "user for imap") do |u|
+      imap_user = u
+    end
+    opts.on("--imap-pass=PASS", "passphrease for imap") do |p|
+      imap_pass = p
+    end
+    opts.on("--[no-]imap-ssl", "use ssl for imap") do |s|
+      imap_ssl = s
+    end
+
+    opts.on("--destination=MAILBOX", "import to mailbox") do |d|
+      mailbox_name = d
+    end
+
+    opts.on("--[no-]ssl", "use ssl") do |s|
+      require 'openssl'
+      ssl_ctx = OpenSSL::SSL::SSLContext.new
+    end
+    opts.on("--ssl-key=PATH", "SSL private key") do |p|
+      if ssl_ctx
+        ssl_ctx.key = open(p, 'r') {|i| OpenSSL::PKey::RSA.new(i)}
+      end
+    end
+    opts.on("--ssl-cert=PATH", "SSL certificate") do |p|
+      if ssl_ctx
+        ssl_ctx.cert = open(p, 'r') {|i| OpenSSL::X509::Certificate.new(i)}
+      end
     end
 
     opts.on("-s", "--stop", "stop ximapd") do
@@ -2982,6 +3111,9 @@ if $0 == __FILE__
   }
   begin
     opts.parse!(ARGV)
+    unless FileTest.file?(config_file)
+      raise format("no such file: %s", config_file)
+    end
     config = File.open(config_file) { |f|
       if f.stat.mode & 0004 != 0
         raise format("%s is world readable", config_file)
@@ -2992,22 +3124,58 @@ if $0 == __FILE__
     case action
     when "import"
       mail_store = Ximapd::MailStore.new(config)
+      if mailbox_name && !mail_store.mailboxes.include?(mailbox_name)
+        mail_store.create_mailbox(mailbox_name)
+      end
       begin
         if ARGV.empty?
-          mail_store.import_file(STDIN)
+          mail_store.import_file(STDIN, mailbox_name)
         else
-          mail_store.import(ARGV)
+          mail_store.import(ARGV, mailbox_name)
         end
       ensure
         mail_store.close
       end
     when "import_mbox"
       mail_store = Ximapd::MailStore.new(config)
+      if mailbox_name && !mail_store.mailboxes.include?(mailbox_name)
+        mail_store.create_mailbox(mailbox_name)
+      end
       begin
         if ARGV.empty?
-          mail_store.import_mbox_file(STDIN)
+          mail_store.import_mbox_file(STDIN, mailbox_name)
         else
-          mail_store.import_mbox(ARGV)
+          mail_store.import_mbox(ARGV, mailbox_name)
+        end
+      ensure
+        mail_store.close
+      end
+    when "import_imap"
+      unless user
+        print "user: "
+        user = $stdin.gets.chomp
+      end
+      unless pass
+        print "password: "
+        system("stty", "-echo")
+        begin
+          pass = $stdin.gets.chomp
+        ensure
+          system("stty", "echo")
+          print "\n"
+        end
+      end
+      mail_store = Ximapd::MailStore.new(config)
+      if mailbox_name && !mail_store.mailboxes.include?(mailbox_name)
+        mail_store.create_mailbox(mailbox_name)
+      end
+      begin
+        if ARGV.empty?
+          # noop
+        else
+          mail_store.import_imap(imap_host, imap_port, imap_ssl,
+                                 imap_auth, imap_user, imap_pass, 
+                                 ARGV, mailbox_name)
         end
       ensure
         mail_store.close
@@ -3017,7 +3185,13 @@ if $0 == __FILE__
     when "version"
       imapd.print_version
     else
-      imapd.start
+      if ssl_ctx && !ssl_ctx.key
+        require 'webrick/ssl'
+        cert, key = WEBrick::Utils::create_self_signed_cert(1024, [["CN", "Ximapd"]], "Generated by Ruby/OpenSSL")
+        ssl_ctx.cert = cert
+        ssl_ctx.key = key
+      end
+      imapd.start(ssl_ctx)
     end
   rescue
     raise if Ximapd.debug
