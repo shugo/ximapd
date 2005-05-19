@@ -2914,12 +2914,25 @@ class Ximapd
           part = @section.part
         end
         if @partial.nil?
-          return format("BODY[%s] %s", part, literal(mail.to_s))
+          result = format("BODY[%s] %s", part, literal(mail.to_s))
         else
           s = mail.to_s[@partial.offset, @partial.size] 
-          return format("BODY[%s]<%d> %s",
-                        part, @partial.offset, literal(s))
+          result = format("BODY[%s]<%d> %s",
+                          part, @partial.offset, literal(s))
         end
+        unless @peek
+          flags = mail.flags(false)
+          if !/\\Seen\b/ni.match(flags)
+            if flags.empty?
+              flags = "\\Seen"
+            else
+              flags += " \\Seen"
+            end
+            mail.flags = flags
+            result += format(" FLAGS (%s)", flags)
+          end
+        end
+        return result
       end
       case @section.text
       when "HEADER"
