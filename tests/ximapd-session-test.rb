@@ -1143,10 +1143,11 @@ From: shugo@ruby-lang.org
 To: foo@ruby-lang.org
 Subject: hello
 Date: Wed, 30 Mar 2005 17:34:46 +0900
+X-Mail-Count: 12345
 
 hello, Foo
 EOF
-    bye_mail = hello_mail.gsub(/hello/, "bye")
+    bye_mail = hello_mail.gsub(/hello/, "bye").gsub(/12345/, "54321")
     10.times do |i|
       if [2, 3, 4, 7].include?(i + 1)
         mail = bye_mail
@@ -1192,6 +1193,7 @@ A006 UID STORE 2:4,7 +FLAGS.SILENT (\\Deleted)\r
 A007 EXPUNGE\r
 A008 UID SEARCH HEADER SUBJECT bye\r
 A009 UID SEARCH HEADER SUBJECT hello\r
+A010 UID SEARCH HEADER "X-Mail-Count" "12345"\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
@@ -1223,6 +1225,8 @@ EOF
     assert_equal("A008 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH 1 5 6 8 9 10\r\n", sock.output.gets)
     assert_equal("A009 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 5 6 8 9 10\r\n", sock.output.gets)
+    assert_equal("A010 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 

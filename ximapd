@@ -1749,7 +1749,7 @@ class Ximapd
         return BodySearchKey.new(s)
       when "HEADER"
         match(T_SPACE)
-        header_name = atom.downcase
+        header_name = astring.downcase
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
         return HeaderSearchKey.new(header_name, s)
