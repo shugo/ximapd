@@ -141,6 +141,13 @@ class Ximapd
           @sessions.delete(Thread.current)
         end
       end
+    rescue SystemExit
+      raise
+    rescue Exception
+      @logger.error("#{$!.class}: #{$!}")
+      for line in $@
+        @logger.error("  #{line}")
+      end
     ensure
       @logger.close
       @server.close
@@ -203,6 +210,8 @@ class Ximapd
         @logger.debug("join #{t}")
         t.join
         @logger.debug("joined #{t}")
+      rescue SystemExit
+        raise
       rescue Exception
         @logger.error($!)
       end
