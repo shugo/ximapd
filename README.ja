@@ -13,9 +13,9 @@ ximapdは実験的なIMAPデーモンです。
 
 == Subversionレポジトリ
 
-http://svn.shugo.net/ximapd/trunkから最新のソースコードを取得できます。
+http://projects.netlab.jp/svn/ximapd/trunkから最新のソースコードを取得できます。
 
-  $ svn co http://svn.shugo.net/ximapd/trunk ximapd
+  $ svn co http://projects.netlab.jp/svn/ximapd/trunk ximapd
 
 == 作者
 

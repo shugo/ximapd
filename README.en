@@ -13,9 +13,10 @@ ximapd is an eXperimental IMAP Daemon.
 
 == Subversion Repository
 
-You can get the latest source code from http://svn.shugo.net/ximapd/trunk.
+You can get the latest source code from
+http://projects.netlab.jp/svn/ximapd/trunk.
 
-  $ svn co http://svn.shugo.net/ximapd/trunk ximapd
+  $ svn co http://projects.netlab.jp/svn/ximapd/trunk ximapd
 
 == Author
 
