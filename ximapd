@@ -531,6 +531,7 @@ class Ximapd
 
     def initialize(config)
       @config = config
+      @logger = @config["logger"]
       @path = File.expand_path(@config["data_dir"])
       @mail_path = File.expand_path("mail", @path)
       @db_path = File.expand_path("db", @path)
@@ -694,7 +695,7 @@ class Ximapd
               if File.file?(filename)
                 open(filename) do |f|
                   uid = import_mail_internal(index, f.read, mailbox_name)
-                  if Ximapd.verbose
+                  if @config["verbose"]
                     printf("imported UID=%d filename=%s\n", uid, filename)
                   end
                 end
@@ -748,26 +749,22 @@ class Ximapd
       imap = Net::IMAP.new(host, port, ssl)
       imap.authenticate(auth, user, pass)
 
-      step = 25
       @mailbox_db.transaction do
         open_index do |index|
           folders.each do |f|
             imap.list('', f).each do |folder|
               fname = folder.name
-              printf("importing %s ...\n", fname) if Ximapd.verbose
+              printf("importing %s ...\n", fname) if @config["verbose"]
               begin
-                n_mails = imap.status(fname, ["MESSAGES"])["MESSAGES"]
-                printf("  %d mails in %s\n", n_mails, fname) if Ximapd.verbose
                 imap.examine(fname)
-                (1 .. n_mails).step(step) do |i|
-                  e = i + step - 1
-                  if e > n_mails
-                    e = n_mails
-                  end
-                  mails =
-                      imap.fetch(i .. e, ["BODY[]", "FLAGS", "INTERNALDATE"])
-                  mails.each do |mail|
-                    next if mail.nil?
+                if @config["verbose"]
+                  printf("  %d mails in %s\n",
+                         imap.responses["EXISTS"][-1], fname)
+                end
+                next if imap.responses["EXISTS"][-1] == 0
+                handler = Proc.new { |resp|
+                  if resp.name == "FETCH"
+                    mail = resp.data
                     indate = DateTime.strptime(mail.attr["INTERNALDATE"], 
                                                "%d-%b-%Y %H:%M:%S %z")
                     flags = []
@@ -782,12 +779,16 @@ class Ximapd
                                          mail.attr["BODY[]"], mailbox_name,
                                          flags.join(" "), indate)
                   end
-                  printf("  [%s] %5.1f%% [%5d/%5d]\n",
-                          Time.now.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                          e.to_f/n_mails.to_f*100, e, n_mails) if Ximapd.verbose
+                  imap.responses["FETCH"].clear
+                }
+                imap.add_response_handler(handler)
+                begin
+                  imap.fetch(1 .. -1, ["BODY[]", "FLAGS", "INTERNALDATE"])
+                ensure
+                  imap.remove_response_handler(handler)
                 end
               rescue Net::IMAP::NoResponseError
-                printf("%s: %s\n", $!.message, folder.name) if Ximapd.verbose
+                @logger.warn("%s: %s\n", $!.message, folder.name)
               ensure
                 imap.close
               end
@@ -1028,7 +1029,8 @@ class Ximapd
       end
       @flags_db[uid] = flags
       @flags_db.sync
-      index_mail(index, uid, s, mailbox_id, indate)
+      properties = index_mail(index, uid, s, mailbox_id, indate)
+      @logger.info("imported: UID=#{uid} From=<#{properties['from']}> Subject=<#{properties['subject']}>")
       return uid
     end
 
@@ -1076,6 +1078,7 @@ class Ximapd
         rescue MailboxExistError
         end
       end
+      return properties
     end
 
     def extract_text(mail)
@@ -3300,157 +3303,6 @@ end
 if $0 == __FILE__
   imapd = Ximapd.new
   imapd.run(ARGV)
-end
-
-__END__
-  require "optparse"
-
-  config_file = File.expand_path("~/.ximapd")
-  action = "start"
-  imap_auth = imap_user = imap_pass = imap_host = imap_port = imap_ssl = nil
-  destination = nil
-  ssl_ctx = nil
-  opts = OptionParser.new { |opts|
-    opts.banner = "usage: #{File.basename($0)} [options]"
-
-    opts.separator("")
-    opts.separator("options:")
-
-    opts.on("-f", "--config-file=PATH", "path to .ximapd") do |arg|
-      config_file = File.expand_path(arg)
-    end
-
-    opts.on("-i", "--import", "import mail") do
-      action = "import"
-    end
-
-    opts.on("--import-mbox", "import mbox") do
-      action = "import_mbox"
-    end
-
-    opts.on("--import-imap", "import from another imap server") do
-      action = "import_imap"
-    end
-    opts.on("--imap-host=HOST", "imap server") do |h|
-      imap_host = h
-    end
-    opts.on("--imap-port=PORT", "imap port") do |p|
-      if /\A\d+\z/ =~ p
-        imap_port = p.to_i
-      end
-    end
-    opts.on("--imap-auth=TYPE", "auth type of imap") do |a|
-      imap_auth = a
-    end
-    opts.on("--imap-user=USER", "user for imap") do |u|
-      imap_user = u
-    end
-    opts.on("--imap-pass=PASS", "passphrease for imap") do |p|
-      imap_pass = p
-    end
-    opts.on("--[no-]imap-ssl", "use ssl for imap") do |s|
-      imap_ssl = s
-    end
-
-    opts.on("--destination=MAILBOX", "import to mailbox") do |d|
-      destination = d
-    end
-
-    opts.on("--[no-]ssl", "use ssl") do |s|
-      require 'openssl'
-      ssl_ctx = OpenSSL::SSL::SSLContext.new
-    end
-    opts.on("--ssl-key=PATH", "SSL private key") do |p|
-      if ssl_ctx
-        ssl_ctx.key = open(p, 'r') {|i| OpenSSL::PKey::RSA.new(i)}
-      end
-    end
-    opts.on("--ssl-cert=PATH", "SSL certificate") do |p|
-      if ssl_ctx
-        ssl_ctx.cert = open(p, 'r') {|i| OpenSSL::X509::Certificate.new(i)}
-      end
-    end
-
-    opts.on("-s", "--stop", "stop ximapd") do
-      action = "stop"
-    end
-
-    opts.on("-d", "--debug", "turn on debug mode") do
-      Ximapd.debug = true
-    end
-
-    opts.on("-v", "--verbose", "turn on verbose mode") do
-      Ximapd.verbose = true
-    end
-
-    opts.on("-V", "--version", "print version") do
-      action = "version"
-    end
-  }
-  begin
-    opts.parse!(ARGV)
-    unless FileTest.file?(config_file)
-      raise format("no such file: %s", config_file)
-    end
-    config = File.open(config_file) { |f|
-      if f.stat.mode & 0004 != 0
-        raise format("%s is world readable", config_file)
-      end
-      YAML.load(f)
-    }
-    imapd = Ximapd.new(config)
-    case action
-    when "import", "import_mbox"
-      imapd.send(action, ARGV)
-    when "import_imap"
-      unless imap_user
-        print "user: "
-        imap_user = STDIN.gets.chomp
-      end
-      unless imap_pass
-        print "password: "
-        system("stty", "-echo")
-        begin
-          imap_pass = STDIN.gets.chomp
-        ensure
-          system("stty", "echo")
-          print "\n"
-        end
-      end
-      mail_store = Ximapd::MailStore.new(config)
-      mail_store.lock
-      if destination && !mail_store.mailboxes.include?(destination)
-        mail_store.create_mailbox(destination)
-      end
-      begin
-        if ARGV.empty?
-          # noop
-        else
-          mail_store.import_imap(imap_host, imap_port, imap_ssl,
-                                 imap_auth, imap_user, imap_pass, 
-                                 ARGV, destination)
-        end
-      ensure
-        mail_store.close
-      end
-    when "stop"
-      imapd.stop
-    when "version"
-      imapd.version
-    else
-      if ssl_ctx && !ssl_ctx.key
-        require 'webrick/ssl'
-        cert, key = WEBrick::Utils::create_self_signed_cert(1024, [["CN", "Ximapd"]], "Generated by Ruby/OpenSSL")
-        ssl_ctx.cert = cert
-        ssl_ctx.key = key
-      end
-      imapd.start(ssl_ctx)
-    end
-  rescue
-    raise if Ximapd.debug
-    STDERR.printf("%s: %s\n", $0, $!)
-    exit(1)
-  end
 end
 
 # vim: set filetype=ruby expandtab sw=2 :
