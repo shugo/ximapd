@@ -413,8 +413,7 @@ class Ximapd
         @mailbox_db["mailing-lists"] ||= {}
       end
       @db_env = BDB::Env.new(@db_path,
-                             BDB::CREATE | BDB::INIT_MPOOL |
-                             BDB::INIT_LOCK | BDB::INIT_LOG)
+                             BDB::CREATE | BDB::INIT_MPOOL | BDB::INIT_LOG)
       @flags_db = BDB::Recno.open("flags.db", nil, BDB::CREATE,
                                   "env" => @db_env)
       @index_path = File.expand_path("index", @path)
@@ -429,6 +428,9 @@ class Ximapd
       @last_peeked_uids = {}
       @index = nil
       @index_ref_count = 0
+      lock_path = File.expand_path("lock", @path)
+      @lock = File.open(lock_path, "w+")
+      @lock_count = 0
     end
 
     def close
@@ -438,6 +440,21 @@ class Ximapd
         end
       end
       @flags_db.close
+      @lock.close
+    end
+
+    def lock
+      if @lock_count == 0
+        @lock.flock(File::LOCK_EX)
+      end
+      @lock_count += 1
+    end
+
+    def unlock
+      @lock_count -= 1
+      if @lock_count == 0 && !@lock.closed?
+        @lock.flock(File::LOCK_UN)
+      end
     end
 
     def sync
@@ -1348,8 +1365,18 @@ class Ximapd
       send_line("+ " + msg)
     end
 
-    def synchronize(&block)
-      @monitor.synchronize(&block)
+    def synchronize
+      @monitor.enter
+      if @mail_store
+        @mail_store.lock
+        mail_store_locked = true
+      end
+      begin
+        yield
+      ensure
+        mail_store.unlock if mail_store_locked
+        @monitor.exit
+      end
     end
   end
 
@@ -3146,6 +3173,7 @@ if $0 == __FILE__
     case action
     when "import"
       mail_store = Ximapd::MailStore.new(config)
+      mail_store.lock
       if mailbox_name && !mail_store.mailboxes.include?(mailbox_name)
         mail_store.create_mailbox(mailbox_name)
       end
@@ -3160,6 +3188,7 @@ if $0 == __FILE__
       end
     when "import_mbox"
       mail_store = Ximapd::MailStore.new(config)
+      mail_store.lock
       if mailbox_name && !mail_store.mailboxes.include?(mailbox_name)
         mail_store.create_mailbox(mailbox_name)
       end
@@ -3188,6 +3217,7 @@ if $0 == __FILE__
         end
       end
       mail_store = Ximapd::MailStore.new(config)
+      mail_store.lock
       if mailbox_name && !mail_store.mailboxes.include?(mailbox_name)
         mail_store.create_mailbox(mailbox_name)
       end
