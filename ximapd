@@ -887,6 +887,7 @@ class Ximapd
         f.print(s)
       end
       @flags_db[uid] = flags
+      @flags_db.sync
       index_mail(index, uid, s, mailbox_id, indate)
       return uid
     end
@@ -1071,6 +1072,7 @@ class Ximapd
 
     def flags=(s)
       @flags_db[@uid] = s
+      @flags_db.sync
     end
 
     def path
