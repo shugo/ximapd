@@ -522,7 +522,7 @@ class Ximapd
       @config = config
       @logger = @config["logger"]
       @path = File.expand_path(@config["data_dir"])
-      @mail_path = File.expand_path("mail", @path)
+      @mail_path = File.expand_path("mails", @path)
       @db_path = File.expand_path("db", @path)
       FileUtils.mkdir_p(@path)
       FileUtils.mkdir_p(@mail_path)
@@ -1002,7 +1002,8 @@ class Ximapd
       end
     end
 
-    def import_mail_internal(index, str, mailbox_name = nil, flags = "", indate = nil)
+    def import_mail_internal(index, str, mailbox_name = nil, flags = "",
+                             indate = nil)
       if mailbox_name.nil?
         mailbox_id = 0
       else
@@ -1015,10 +1016,13 @@ class Ximapd
           raise MailboxAccessError.new("can't import to virtual mailbox")
         end
       end
+      if indate.nil?
+        indate = DateTime.now
+      end
       s = str.gsub(/\r?\n/, "\r\n").sub(/\AFrom .*\r\n/, "")
       @mailbox_db["status"]["last_uid"] += 1
       uid = @mailbox_db["status"]["last_uid"]
-      path = get_mail_path(uid)
+      path = get_mail_path(uid, indate)
       FileUtils.mkdir_p(File.dirname(path))
       File.open(path, "w") do |f|
         f.flock(File::LOCK_EX)
@@ -1031,13 +1035,12 @@ class Ximapd
       return uid
     end
 
-    def get_mail_path(uid)
-      dir1, dir2 = *[uid].pack("v").unpack("H2H2")
-      relpath = format("%s/%s/%d", dir1, dir2, uid)
+    def get_mail_path(uid, indate)
+      relpath = format("%s/%d", indate.strftime("%Y/%m/%d"), uid)
       return File.expand_path(relpath, @mail_path)
     end
 
-    def index_mail(index, uid, mail, mailbox_id, indate = DateTime.now)
+    def index_mail(index, uid, mail, mailbox_id, indate)
       properties = Hash.new("")
       properties["uid"] = uid
       properties["size"] = mail.size
@@ -1216,24 +1219,33 @@ class Ximapd
     end
 
     def path
+      relpath = format("mails/%s/%d", internal_date[0, 10].tr("-", "/"), uid)
+      return File.expand_path(relpath, @config["data_dir"])
+    end
+
+    def old_path
       dir1, dir2 = *[@uid].pack("v").unpack("H2H2")
       relpath = format("mail/%s/%s/%d", dir1, dir2, uid)
       return File.expand_path(relpath, @config["data_dir"])
     end
 
     def size
-      return File.size(path)
+      begin
+        return File.size(path)
+      rescue Errno::ENOENT
+        return File.size(old_path)
+      end
     end
 
     def to_s
-      open(path) do |f|
+      open_file do |f|
         f.flock(File::LOCK_SH)
         return f.read
       end
     end
 
     def header
-      open(path) do |f|
+      open_file do |f|
         f.flock(File::LOCK_SH)
         return f.gets("\r\n\r\n")
       end
@@ -1258,10 +1270,26 @@ class Ximapd
 
     def delete
       @mailbox.mail_store.delete_from_index(@uid)
-      File.unlink(path)
+      begin
+        File.unlink(path)
+      rescue Errno::ENOENT
+        File.unlink(old_path)
+      end
     end
 
     private
+
+    def open_file(mode = "r")
+      begin
+        open(path, mode) do |f|
+          yield(f)
+        end
+      rescue Errno::ENOENT
+        open(old_path, mode) do |f|
+          yield(f)
+        end
+      end
+    end
 
     def parsed_mail
       if @parsed_mail.nil?
