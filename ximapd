@@ -776,8 +776,8 @@ class Ximapd
                   else
                     uids = imap.uid_search(["UNSEEN"])
                     @logger.info("#{uids.length} unseen messages in #{fname}")
-                    if uids.length > 0
-                      imap.uid_fetch(uids,
+                    while uids.length > 0
+                      imap.uid_fetch(uids.slice!(0, 100),
                                      ["UID", "BODY[]", "FLAGS", "INTERNALDATE"])
                     end
                   end
@@ -1050,7 +1050,7 @@ class Ximapd
         m = TMail::Mail.parse(mail)
         text = extract_text(m)
         properties = extract_properties(m, properties)
-      rescue SyntaxError, RuntimeError
+      rescue
         header, body = *mail.split(/^\r\n/)
         text = to_utf8(body, @default_charset)
       end
