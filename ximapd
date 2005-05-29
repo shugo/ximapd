@@ -746,7 +746,7 @@ class Ximapd
                 imap.select(fname)
                 mail_count = imap.responses["EXISTS"][-1]
                 next if mail_count == 0
-                imported_uids = []
+                #imported_uids = []
                 handler = Proc.new { |resp|
                   if resp.name == "FETCH"
                     mail = resp.data
@@ -763,7 +763,7 @@ class Ximapd
                     import_mail_internal(index,
                                          mail.attr["BODY[]"], mailbox_name,
                                          flags.join(" "), indate)
-                    imported_uids.push(mail.attr["UID"])
+                    #imported_uids.push(mail.attr["UID"])
                     imap.responses["FETCH"].clear
                   end
                 }
@@ -784,7 +784,10 @@ class Ximapd
                 ensure
                   imap.remove_response_handler(handler)
                 end
-                # imap.uid_store(imported_uids, "+FLAGS.SILENT", [:Seen])
+                #while imported_uids.length > 0
+                #  imap.uid_store(imported_uids.slice!(0, 100),
+                #                 "+FLAGS.SILENT", [:Seen])
+                #end
               rescue Net::IMAP::NoResponseError
                 @logger.warn("#{$!}: #{folder.name}")
               ensure
