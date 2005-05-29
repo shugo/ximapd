@@ -278,9 +278,9 @@ class Ximapd
       end
       mail_store.import_imap(@config["remote_host"], @config["remote_port"],
                              @config["remote_ssl"], @config["remote_auth"],
-                             @config["remote_user"],
-                             @config["remote_password"],
-                             args, @config["dest_mailbox"])
+                             @config["remote_user"], @config["remote_password"],
+                             args, @config["import_all"],
+                             @config["dest_mailbox"])
     end
   end
 
@@ -720,7 +720,8 @@ class Ximapd
       end
     end
 
-    def import_imap(host, port, ssl, auth, user, pass, folders, mailbox_name = nil)
+    def import_imap(host, port, ssl, auth, user, pass,
+                    folders, import_all, mailbox_name = nil)
       if port.nil?
         if ssl
           port = 993
@@ -742,10 +743,10 @@ class Ximapd
             imap.list('', f).each do |folder|
               fname = folder.name
               begin
-                imap.examine(fname)
+                imap.select(fname)
                 mail_count = imap.responses["EXISTS"][-1]
-                @logger.info("#{mail_count} mails in #{fname}")
                 next if mail_count == 0
+                imported_uids = []
                 handler = Proc.new { |resp|
                   if resp.name == "FETCH"
                     mail = resp.data
@@ -762,15 +763,28 @@ class Ximapd
                     import_mail_internal(index,
                                          mail.attr["BODY[]"], mailbox_name,
                                          flags.join(" "), indate)
+                    imported_uids.push(mail.attr["UID"])
+                    imap.responses["FETCH"].clear
                   end
-                  imap.responses["FETCH"].clear
                 }
                 imap.add_response_handler(handler)
                 begin
-                  imap.fetch(1 .. -1, ["BODY[]", "FLAGS", "INTERNALDATE"])
+                  if import_all
+                    @logger.info("#{mail_count} messages in #{fname}")
+                    imap.fetch(1 .. -1,
+                               ["UID", "BODY[]", "FLAGS", "INTERNALDATE"])
+                  else
+                    uids = imap.uid_search(["UNSEEN"])
+                    @logger.info("#{uids.length} unseen messages in #{fname}")
+                    if uids.length > 0
+                      imap.uid_fetch(uids,
+                                     ["UID", "BODY[]", "FLAGS", "INTERNALDATE"])
+                    end
+                  end
                 ensure
                   imap.remove_response_handler(handler)
                 end
+                # imap.uid_store(imported_uids, "+FLAGS.SILENT", [:Seen])
               rescue Net::IMAP::NoResponseError
                 @logger.warn("#{$!}: #{folder.name}")
               ensure
@@ -3269,6 +3283,7 @@ class Ximapd
     StringOption.new("remote_password", "password of remote IMAP server"),
     StringOption.new("remote_auth", "auth type of remote IMAP server"),
     BoolOption.new("remote_ssl", "use SSL for remote IMAP server"),
+    BoolOption.new("import_all", "import all mails by --import-imap"),
     StringOption.new("dest_mailbox", "destination mailbox name")
   ]
 
