@@ -109,8 +109,6 @@ class Ximapd
     @args = args
     parse_options(@args)
     @server = nil
-    #mail_store = MailStore.new(@config)
-    #mail_store.close
     @logger = open_logger
     @config["logger"] = @logger
     @threads = []
