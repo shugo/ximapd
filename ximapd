@@ -82,16 +82,6 @@ class Ximapd
     @@debug = debug
   end
 
-  @@verbose = false
-
-  def self.verbose
-    return @@verbose
-  end
-
-  def self.verbose=(verbose)
-    @@verbose = verbose
-  end
-
   def initialize
     @args = nil
     @config = {}
@@ -141,6 +131,7 @@ class Ximapd
         YAML.load(f)
       }
       @config = config.merge(@config)
+      check_config(@config)
     rescue
       raise if @config["debug"]
       STDERR.printf("%s: %s\n", $0, $!)
@@ -695,9 +686,6 @@ class Ximapd
               if File.file?(filename)
                 open(filename) do |f|
                   uid = import_mail_internal(index, f.read, mailbox_name)
-                  if @config["verbose"]
-                    printf("imported UID=%d filename=%s\n", uid, filename)
-                  end
                 end
               end
             end
@@ -746,6 +734,7 @@ class Ximapd
         auth = "CRAM-MD5"
       end
 
+      @logger.info("importing from #{host} via IMAP...")
       imap = Net::IMAP.new(host, port, ssl)
       imap.authenticate(auth, user, pass)
 
@@ -754,14 +743,11 @@ class Ximapd
           folders.each do |f|
             imap.list('', f).each do |folder|
               fname = folder.name
-              printf("importing %s ...\n", fname) if @config["verbose"]
               begin
                 imap.examine(fname)
-                if @config["verbose"]
-                  printf("  %d mails in %s\n",
-                         imap.responses["EXISTS"][-1], fname)
-                end
-                next if imap.responses["EXISTS"][-1] == 0
+                mail_count = imap.responses["EXISTS"][-1]
+                @logger.info("#{mail_count} mails in #{fname}")
+                next if mail_count == 0
                 handler = Proc.new { |resp|
                   if resp.name == "FETCH"
                     mail = resp.data
@@ -788,7 +774,7 @@ class Ximapd
                   imap.remove_response_handler(handler)
                 end
               rescue Net::IMAP::NoResponseError
-                @logger.warn("%s: %s\n", $!.message, folder.name)
+                @logger.warn("#{$!}: #{folder.name}")
               ensure
                 imap.close
               end
@@ -796,6 +782,7 @@ class Ximapd
           end
         end
       end
+      @logger.info("imported from #{host}")
     end
 
     def import_mail(str, mailbox_name = nil, flags = "")
@@ -992,7 +979,6 @@ class Ximapd
         if /\AFrom /.match(line)
           if s
             uid = import_mail_internal(index, s, mailbox_name)
-            printf("imported UID=%d\n", uid) if Ximapd.verbose
           end
           s = line
         else
@@ -1001,7 +987,6 @@ class Ximapd
       end
       if s
         uid = import_mail_internal(index, s, mailbox_name)
-        printf("imported UID=%d\n", uid) if Ximapd.verbose
       end
     end
 
@@ -1030,7 +1015,7 @@ class Ximapd
       @flags_db[uid] = flags
       @flags_db.sync
       properties = index_mail(index, uid, s, mailbox_id, indate)
-      @logger.info("imported: UID=#{uid} From=<#{properties['from']}> Subject=<#{properties['subject']}>")
+      @logger.info("imported: uid=#{uid} from=<#{properties['from']}> subject=<#{properties['subject']}> date=<#{properties['date']}>")
       return uid
     end
 
