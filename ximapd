@@ -36,6 +36,7 @@ require "digest/md5"
 require "iconv"
 require "nkf"
 require "date"
+require "set"
 require "logger"
 require "tmail"
 require "rast"
@@ -737,44 +738,48 @@ class Ximapd
       imap = Net::IMAP.new(host, port, ssl)
       imap.authenticate(auth, user, pass)
 
+      visited_folders = Set.new
       @mailbox_db.transaction do
         open_index do |index|
           folders.each do |f|
             imap.list('', f).each do |folder|
+              next if visited_folders.include?(folder.name)
               fname = folder.name
               begin
                 imap.select(fname)
                 mail_count = imap.responses["EXISTS"][-1]
                 next if mail_count == 0
                 #imported_uids = []
+                imported_uids = Set.new
                 handler = Proc.new { |resp|
-                  if resp.name == "FETCH"
+                  if resp.kind_of?(Net::IMAP::UntaggedResponse) &&
+                    resp.name == "FETCH"
                     mail = resp.data
-                    if mail.attr["INTERNALDATE"]
+                    # IMAP server may return only FLAGS if \Seen is set.
+                    if !imported_uids.include?(mail.attr["UID"]) &&
+                      mail.attr["BODY[]"]
                       indate = DateTime.strptime(mail.attr["INTERNALDATE"], 
                                                  "%d-%b-%Y %H:%M:%S %z")
-                    else
-                      indate = DateTime.now
+                      if @config["import_imap_flags"]
+                        flags = mail.attr["FLAGS"].collect { |flag|
+                          if flag.kind_of?(Symbol)
+                            '\\' + flag.to_s
+                          else
+                            flag.to_s
+                          end
+                        }.join(" ")
+                      else
+                        flags = ""
+                      end
+                      import_mail_internal(index,
+                                           mail.attr["BODY[]"], mailbox_name,
+                                           flags, indate)
+                      #imported_uids.push(mail.attr["UID"])
+                      imported_uids.add(mail.attr["UID"])
+                      imap.responses["FETCH"].clear
                     end
-                    if @config["import_imap_flags"]
-                      flags = mail.attr["FLAGS"].collect { |flag|
-                        if flag.kind_of?(Symbol)
-                          '\\' + flag.to_s
-                        else
-                          flag.to_s
-                        end
-                      }.join(" ")
-                    else
-                      flags = ""
-                    end
-                    import_mail_internal(index,
-                                         mail.attr["BODY[]"], mailbox_name,
-                                         flags, indate)
-                    #imported_uids.push(mail.attr["UID"])
-                    imap.responses["FETCH"].clear
                   end
                 }
-                imap.add_response_handler(handler)
                 begin
                   #fetch_attrs = ["UID", "BODY[]", "INTERNALDATE"]
                   fetch_attrs = ["BODY[]", "INTERNALDATE"]
@@ -783,10 +788,12 @@ class Ximapd
                   end
                   if import_all
                     @logger.info("#{mail_count} messages in #{fname}")
+                    imap.add_response_handler(handler)
                     imap.fetch(1 .. -1, fetch_attrs)
                   else
                     uids = imap.uid_search(["UNSEEN"])
                     @logger.info("#{uids.length} unseen messages in #{fname}")
+                    imap.add_response_handler(handler)
                     while uids.length > 0
                       imap.uid_fetch(uids.slice!(0, 100), fetch_attrs)
                     end
@@ -801,6 +808,7 @@ class Ximapd
               rescue Net::IMAP::NoResponseError
                 @logger.warn("#{$!}: #{folder.name}")
               ensure
+                visited_folders.add(folder.name)
                 imap.close
               end
             end
