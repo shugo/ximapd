@@ -750,35 +750,45 @@ class Ximapd
                 handler = Proc.new { |resp|
                   if resp.name == "FETCH"
                     mail = resp.data
-                    indate = DateTime.strptime(mail.attr["INTERNALDATE"], 
-                                               "%d-%b-%Y %H:%M:%S %z")
-                    flags = []
-                    mail.attr["FLAGS"].each do |flag|
-                      if flag.kind_of?(Symbol)
-                        flags << '\\' + flag.to_s
-                      else
-                        flags << flag.to_s
-                      end
+                    if mail.attr["INTERNALDATE"]
+                      indate = DateTime.strptime(mail.attr["INTERNALDATE"], 
+                                                 "%d-%b-%Y %H:%M:%S %z")
+                    else
+                      indate = DateTime.now
+                    end
+                    if @config["import_imap_flags"]
+                      flags = mail.attr["FLAGS"].collect { |flag|
+                        if flag.kind_of?(Symbol)
+                          '\\' + flag.to_s
+                        else
+                          flag.to_s
+                        end
+                      }.join(" ")
+                    else
+                      flags = ""
                     end
                     import_mail_internal(index,
                                          mail.attr["BODY[]"], mailbox_name,
-                                         flags.join(" "), indate)
+                                         flags, indate)
                     #imported_uids.push(mail.attr["UID"])
                     imap.responses["FETCH"].clear
                   end
                 }
                 imap.add_response_handler(handler)
                 begin
+                  #fetch_attrs = ["UID", "BODY[]", "INTERNALDATE"]
+                  fetch_attrs = ["BODY[]", "INTERNALDATE"]
+                  if @config["import_imap_flags"]
+                    fetch_attrs.push("FLAGS")
+                  end
                   if import_all
                     @logger.info("#{mail_count} messages in #{fname}")
-                    imap.fetch(1 .. -1,
-                               ["UID", "BODY[]", "FLAGS", "INTERNALDATE"])
+                    imap.fetch(1 .. -1, fetch_attrs)
                   else
                     uids = imap.uid_search(["UNSEEN"])
                     @logger.info("#{uids.length} unseen messages in #{fname}")
                     while uids.length > 0
-                      imap.uid_fetch(uids.slice!(0, 100),
-                                     ["UID", "BODY[]", "FLAGS", "INTERNALDATE"])
+                      imap.uid_fetch(uids.slice!(0, 100), fetch_attrs)
                     end
                   end
                 ensure
@@ -3315,6 +3325,7 @@ class Ximapd
     StringOption.new("remote_auth", "auth type of remote IMAP server"),
     BoolOption.new("remote_ssl", "use SSL for remote IMAP server"),
     BoolOption.new("import_all", "import all mails by --import-imap"),
+    BoolOption.new("import_imap_flags", "import IMAP flags by --import-imap"),
     StringOption.new("dest_mailbox", "destination mailbox name")
   ]
 
