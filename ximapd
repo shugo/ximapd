@@ -42,6 +42,25 @@ require "tmail"
 require "rast"
 require "optparse"
 
+class NullObject
+  def initialize(*args)
+  end
+
+  def method_missing(mid, *args)
+    return self
+  end
+
+  def self.method_missing(mid, *args)
+    return new
+  end
+end
+
+begin
+  require "progressbar"
+rescue LoadError
+  ProgressBar = NullObject
+end
+
 Thread.abort_on_exception = true
 
 module TMail
@@ -744,13 +763,13 @@ class Ximapd
           folders.each do |f|
             imap.list('', f).each do |folder|
               next if visited_folders.include?(folder.name)
-              fname = folder.name
               begin
-                imap.select(fname)
+                imap.select(folder.name)
                 mail_count = imap.responses["EXISTS"][-1]
                 next if mail_count == 0
                 #imported_uids = []
                 imported_uids = Set.new
+                progress_bar = nil
                 handler = Proc.new { |resp|
                   if resp.kind_of?(Net::IMAP::UntaggedResponse) &&
                     resp.name == "FETCH"
@@ -776,6 +795,7 @@ class Ximapd
                                            flags, indate)
                       #imported_uids.push(mail.attr["UID"])
                       imported_uids.add(mail.attr["UID"])
+                      progress_bar.inc
                       imap.responses["FETCH"].clear
                     end
                   end
@@ -787,11 +807,22 @@ class Ximapd
                     fetch_attrs.push("FLAGS")
                   end
                   if import_all
-                    @logger.info("#{mail_count} messages in #{fname}")
+                    @logger.info("#{mail_count} messages in #{folder.name}")
+                    if @config["verbose"]
+                      progress_bar = ProgressBar.new(folder.name, mail_count)
+                    else
+                      progress_bar = NullObject.new
+                    end
                     imap.fetch(1 .. -1, fetch_attrs)
                   else
                     uids = imap.uid_search(["UNSEEN"])
-                    @logger.info("#{uids.length} unseen messages in #{fname}")
+                    @logger.info("#{uids.length} unseen messages " + 
+                                 "in #{folder.name}")
+                    if @config["verbose"]
+                      progress_bar = ProgressBar.new(folder.name, uids.length)
+                    else
+                      progress_bar = NullObject.new
+                    end
                     while uids.length > 0
                       imap.uid_fetch(uids.slice!(0, 100), fetch_attrs)
                     end
