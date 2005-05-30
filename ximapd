@@ -780,20 +780,18 @@ class Ximapd
                     end
                   end
                 }
+                imap.add_response_handler(handler)
                 begin
-                  #fetch_attrs = ["UID", "BODY[]", "INTERNALDATE"]
-                  fetch_attrs = ["BODY[]", "INTERNALDATE"]
+                  fetch_attrs = ["UID", "BODY[]", "INTERNALDATE"]
                   if @config["import_imap_flags"]
                     fetch_attrs.push("FLAGS")
                   end
                   if import_all
                     @logger.info("#{mail_count} messages in #{fname}")
-                    imap.add_response_handler(handler)
                     imap.fetch(1 .. -1, fetch_attrs)
                   else
                     uids = imap.uid_search(["UNSEEN"])
                     @logger.info("#{uids.length} unseen messages in #{fname}")
-                    imap.add_response_handler(handler)
                     while uids.length > 0
                       imap.uid_fetch(uids.slice!(0, 100), fetch_attrs)
                     end
