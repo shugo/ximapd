@@ -35,7 +35,7 @@ ximapdをPATHにコピーしてください。
 
       $ vi ~/.ximapd
 
-    Do not forget to change `user' and `password'!
+    `user'と`password'を変更するのを忘れないでください!
 
 (3) 古いメールを取り込んでください。
 
@@ -55,11 +55,11 @@ ximapdをPATHにコピーしてください。
 
 まず、以下のようにximapdをデーモンとして実行します。
 
-  $ ximapd
+  $ ximapd --start
 
 次のようにデバッグモードで起動すると、バックグラウンドに移行しません。
 
-  $ ximapd -d
+  $ ximapd --start --debug
 
 その他のオプションについては、ヘルプで確認してください。
 
