@@ -172,6 +172,14 @@ class Ximapd
       log_level = (@config["log_level"] || "INFO").upcase
       logger.level = Logger.const_get(log_level)
     end
+    if @config["action"] != "start"
+      for m in [:fatal, :error, :warn]
+        class << logger; self; end.send(:define_method, m) do |s|
+          STDERR.printf("%s: %s\n", $0, s)
+          super(s)
+        end
+      end
+    end
     return logger
   end
 
@@ -760,7 +768,12 @@ class Ximapd
       visited_folders = Set.new
       open_index do |index|
         folders.each do |f|
-          imap.list('', f).each do |folder|
+          folders = imap.list('', f)
+          if folders.nil?
+            @logger.warn("no folder matches: #{f}")
+            next
+          end
+          folders.each do |folder|
             next if visited_folders.include?(folder.name)
             begin
               imap.select(folder.name)
@@ -833,8 +846,8 @@ class Ximapd
               #  imap.uid_store(imported_uids.slice!(0, 100),
               #                 "+FLAGS.SILENT", [:Seen])
               #end
-            rescue Net::IMAP::NoResponseError
-              @logger.warn("#{$!}: #{folder.name}")
+            rescue
+              @logger.error("#{$!}: #{folder.name}")
             ensure
               visited_folders.add(folder.name)
               imap.close
