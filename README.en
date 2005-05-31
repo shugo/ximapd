@@ -55,11 +55,11 @@ Copy ximapd under PATH.
 
 First, run ximapd as daemon.
 
-  $ ximapd
+  $ ximapd --start
 
 -d option prevents ximapd to fork.
 
-  $ ximapd -d
+  $ ximapd --start --debug
 
 See help for more options.
 
