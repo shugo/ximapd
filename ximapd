@@ -1080,10 +1080,16 @@ class Ximapd
             raise MailboxAccessError.new("can't import to mailbox without id")
           end
         end
+        s = str.gsub(/\r?\n/, "\r\n").sub(/\AFrom\s+\S+\s+(.*)\r\n/) {
+          if indate.nil?
+            indate = DateTime.strptime($1 + " " + Time.now.strftime("%z"),
+                                       "%a %b %d %H:%M:%S %Y %z")
+          end
+          ""
+        }
         if indate.nil?
           indate = DateTime.now
         end
-        s = str.gsub(/\r?\n/, "\r\n").sub(/\AFrom .*\r\n/, "")
         @mailbox_db["status"]["last_uid"] += 1
         uid = @mailbox_db["status"]["last_uid"]
         path = get_mail_path(uid, indate)
@@ -3132,8 +3138,9 @@ class Ximapd
     include DataFormat
 
     def fetch(mail)
-      return format("INTERNALDATE \"%s\"", 
-          DateTime.strptime(mail.internal_date).strftime("%d-%b-%Y %H:%M:%S %z"))
+      datetime = DateTime.strptime(mail.internal_date)
+      return format("INTERNALDATE %s",
+                    quoted(datetime.strftime("%d-%b-%Y %H:%M:%S %z")))
     end
   end
 
