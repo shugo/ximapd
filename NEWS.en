@@ -1,0 +1,12 @@
+= ximapd NEWS
+
+== Major changes in release 0.0.1 (2005-05-31)
+
+* Added the --import-imap option. [Akira Yamada]
+* Supported SSL. [Akira Yamada]
+* Supported the internal date. [Akira Yamada]
+* Do not use the the locking subsystem of Berkeley DB.
+* Changed the paths of mails to <ximapd_dir>/YY/MM/DD/UID.
+* The --start option is required to start daemon.
+* All configuration entries can be overridden by command line options.
+* Fixed a bug of EXAMINE.

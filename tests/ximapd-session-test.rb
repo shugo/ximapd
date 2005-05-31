@@ -54,11 +54,11 @@ class XimapdSessionTest < Test::Unit::TestCase
     Ximapd::AuthenticateCramMD5Command.challenge_generator = Proc.new {
       "<12345@localhost>"
     }
-    GC.disable # to avoid `BDB::Fatal: BUG : current_env not set'
+    #GC.disable # to avoid `BDB::Fatal: BUG : current_env not set'
   end
 
   def teardown
-    GC.enable
+    #GC.enable
     Ximapd::AuthenticateCramMD5Command.challenge_generator =
       @challenge_generator
     system("rm", "-rf", @tmpdir)
@@ -295,7 +295,7 @@ Date: Fri, 01 Apr 2005 11:47:10 +0900
 support the STARTTLS command
 EOF
     config = @config.dup
-    config["ml_name_header_fields"] = ["X-ML-Name", "X-Trac-Project"]
+    config["ml_header_fields"] = ["X-ML-Name", "X-Trac-Project"]
     mail_store = Ximapd::MailStore.new(config)
     uid4 = mail_store.import_mail(mail4)
     mail_store.close
@@ -364,7 +364,7 @@ EOF
                  sock.output.gets)
     assert_equal("A003 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
-    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
 
     mail1 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
@@ -397,7 +397,7 @@ EOF
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
-    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
 
     mail2 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
@@ -430,7 +430,7 @@ EOF
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
-    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
 
     mail3 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
@@ -481,7 +481,7 @@ EOF
     assert_equal("A005 NO can't open ml: not a selectable mailbox\r\n",
                  sock.output.gets)
     assert_equal(nil, sock.output.gets)
-    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
 
     mail4 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
@@ -492,7 +492,7 @@ Date: Fri, 01 Apr 2005 11:47:10 +0900
 support the STARTTLS command
 EOF
     config = @config.dup
-    config["ml_name_header_fields"] = ["X-ML-Name", "X-Trac-Project"]
+    config["ml_header_fields"] = ["X-ML-Name", "X-Trac-Project"]
     mail_store = Ximapd::MailStore.new(config)
     uid4 = mail_store.import_mail(mail4)
     mail_store.close
@@ -517,7 +517,7 @@ EOF
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
-    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
   end
 
   def test_create
@@ -981,7 +981,10 @@ EOF
     assert_equal("* 1 FETCH (BODY[] {#{mail.length}}\r\n",
                  sock.output.gets)
     assert_equal(mail, sock.output.read(mail.length))
-    assert_equal(" FLAGS (\\Recent))\r\n", sock.output.gets)
+    # TODO: remove duplicate FLAGS
+    # assert_equal(" FLAGS (\\Seen))\r\n", sock.output.gets)
+    assert_equal(" FLAGS (\\Seen) FLAGS (\\Recent \\Seen))\r\n",
+                 sock.output.gets)
     assert_equal("A004 OK FETCH completed\r\n", sock.output.gets)
     assert_equal("A005 OK CREATE completed\r\n", sock.output.gets)
     assert_equal("+ Ready for additional command text\r\n",
@@ -1140,10 +1143,11 @@ From: shugo@ruby-lang.org
 To: foo@ruby-lang.org
 Subject: hello
 Date: Wed, 30 Mar 2005 17:34:46 +0900
+X-Mail-Count: 12345
 
 hello, Foo
 EOF
-    bye_mail = hello_mail.gsub(/hello/, "bye")
+    bye_mail = hello_mail.gsub(/hello/, "bye").gsub(/12345/, "54321")
     10.times do |i|
       if [2, 3, 4, 7].include?(i + 1)
         mail = bye_mail
@@ -1189,6 +1193,7 @@ A006 UID STORE 2:4,7 +FLAGS.SILENT (\\Deleted)\r
 A007 EXPUNGE\r
 A008 UID SEARCH HEADER SUBJECT bye\r
 A009 UID SEARCH HEADER SUBJECT hello\r
+A010 UID SEARCH HEADER "X-Mail-Count" "12345"\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
@@ -1220,6 +1225,8 @@ EOF
     assert_equal("A008 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH 1 5 6 8 9 10\r\n", sock.output.gets)
     assert_equal("A009 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 5 6 8 9 10\r\n", sock.output.gets)
+    assert_equal("A010 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
@@ -1458,6 +1465,7 @@ EOF
   def test_uid_fetch
     mail_store = Ximapd::MailStore.new(@config)
     mail1 = <<EOF.gsub(/\n/, "\r\n")
+From foobar@ruby-lang.org  Sat Apr  2 00:07:54 2005
 Date: Wed, 30 Mar 2005 17:34:46 +0900
 Message-ID: <41ECC569.8000603@ruby-lang.org>
 From: Shugo Maeda <shugo@ruby-lang.org>
@@ -1471,6 +1479,7 @@ Content-Type: text/plain; charset=US-ASCII
 Hello world
 EOF
     uid1 = mail_store.import_mail(mail1)
+    mail1_without_unix_from = mail1.sub(/\AFrom.*\n/, "")
     mail2= <<EOF.gsub(/\n/, "\r\n")
 Message-ID: <4263685A.6090203@ruby-lang.org>
 Date: Mon, 18 Apr 2005 16:57:14 +0900
@@ -1536,11 +1545,12 @@ A005 UID FETCH 1 RFC822\r
 A006 UID FETCH 1 BODY\r
 A007 UID FETCH 1 BODYSTRUCTURE\r
 A008 UID FETCH 1 BODY.PEEK[HEADER.FIELDS (From To)]\r
-A009 UID FETCH 1 BODY[]\r
+A009 UID FETCH 1 BODY.PEEK[]\r
 A010 UID FETCH 1 BODY[]<5.10>\r
 A011 UID FETCH 1 ENVELOPE\r
 A012 UID FETCH 1 BODY[1]\r
 A013 UID FETCH 1 BODY.PEEK[HEADER]\r
+A014 UID FETCH 1 INTERNALDATE\r
 EOF
     session = Ximapd::Session.new(@config, sock)
     session.start
@@ -1557,7 +1567,7 @@ EOF
     assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (UID 1 FLAGS (\\Recent) RFC822.SIZE #{mail1.length})\r\n",
+    assert_equal("* 1 FETCH (UID 1 FLAGS (\\Recent) RFC822.SIZE #{mail1_without_unix_from.length})\r\n",
                  sock.output.gets)
     assert_equal("A003 OK UID FETCH completed\r\n", sock.output.gets)
     header = <<EOF.gsub(/\n/, "\r\n")
@@ -1577,9 +1587,10 @@ EOF
     assert_equal(header, sock.output.read(header.length))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A004 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (UID 1 RFC822 {#{mail1.length}}\r\n",
+    assert_equal("* 1 FETCH (UID 1 RFC822 {#{mail1_without_unix_from.length}}\r\n",
                  sock.output.gets)
-    assert_equal(mail1, sock.output.read(mail1.length))
+    assert_equal(mail1_without_unix_from,
+                 sock.output.read(mail1_without_unix_from.length))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A005 OK UID FETCH completed\r\n", sock.output.gets)
     body = <<EOF.gsub(/\n/, "\r\n")
@@ -1602,22 +1613,24 @@ EOF
     assert_equal(header_fields, sock.output.read(header_fields.length))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A008 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (UID 1 BODY[] {#{mail1.length}}\r\n",
+    assert_equal("* 1 FETCH (UID 1 BODY[] {#{mail1_without_unix_from.length}}\r\n",
                  sock.output.gets)
-    assert_equal(mail1, sock.output.read(mail1.length))
+    assert_equal(mail1_without_unix_from,
+                 sock.output.read(mail1_without_unix_from.length))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A009 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID 1 BODY[]<5> {10}\r\n",
                  sock.output.gets)
-    assert_equal(mail1[5, 10], sock.output.read(10))
-    assert_equal(")\r\n", sock.output.gets)
+    assert_equal(mail1_without_unix_from[5, 10], sock.output.read(10))
+    assert_equal(" FLAGS (\\Seen))\r\n", sock.output.gets)
     assert_equal("A010 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID 1 ENVELOPE (\"Wed, 30 Mar 2005 17:34:46 +0900\" \"=?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=\" ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Foo\" NIL \"foo\" \"ruby-lang.org\") (NIL NIL \"bar\" \"ruby-lang.org\")) ((\"Baz\" NIL \"baz..\" \"ruby-lang.org\")) NIL \"<41C448BF.7080605@ruby-lang.org>\" \"<41ECC569.8000603@ruby-lang.org>\"))\r\n",
                  sock.output.gets)
     assert_equal("A011 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (UID 1 BODY[1] {#{mail1.length}}\r\n",
+    assert_equal("* 1 FETCH (UID 1 BODY[1] {#{mail1_without_unix_from.length}}\r\n",
                  sock.output.gets)
-    assert_equal(mail1, sock.output.read(mail1.length))
+    assert_equal(mail1_without_unix_from,
+                 sock.output.read(mail1_without_unix_from.length))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A012 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID 1 BODY[HEADER] {#{header.length}}\r\n",
@@ -1625,6 +1638,9 @@ EOF
     assert_equal(header, sock.output.read(header.length))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A013 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (UID 1 INTERNALDATE \"02-Apr-2005 00:07:54 +0900\")\r\n",
+                 sock.output.gets)
+    assert_equal("A014 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
@@ -1802,11 +1818,17 @@ EOF
     assert_equal("* 1 FETCH (UID #{uid2 + 1} BODY[] {#{mail1.length}}\r\n",
                  sock.output.gets)
     assert_equal(mail1, sock.output.read(mail1.length))
-    assert_equal(" FLAGS (\\Recent))\r\n", sock.output.gets)
+    # TODO: remove duplicate FLAGS
+    # assert_equal(" FLAGS (\\Seen))\r\n", sock.output.gets)
+    assert_equal(" FLAGS (\\Seen) FLAGS (\\Recent \\Seen))\r\n",
+                 sock.output.gets)
     assert_equal("* 2 FETCH (UID #{uid2 + 2} BODY[] {#{mail2.length}}\r\n",
                  sock.output.gets)
     assert_equal(mail2, sock.output.read(mail2.length))
-    assert_equal(" FLAGS (\\Recent))\r\n", sock.output.gets)
+    # TODO: remove duplicate FLAGS
+    # assert_equal(" FLAGS (\\Seen))\r\n", sock.output.gets)
+    assert_equal(" FLAGS (\\Seen) FLAGS (\\Recent \\Seen))\r\n",
+                 sock.output.gets)
     assert_equal("A005 OK FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end

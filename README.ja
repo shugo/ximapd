@@ -13,9 +13,9 @@ ximapdは実験的なIMAPデーモンです。
 
 == Subversionレポジトリ
 
-http://svn.shugo.net/ximapd/trunkから最新のソースコードを取得できます。
+http://projects.netlab.jp/svn/ximapd/trunkから最新のソースコードを取得できます。
 
-  $ svn co http://svn.shugo.net/ximapd/trunk ximapd
+  $ svn co http://projects.netlab.jp/svn/ximapd/trunk ximapd
 
 == 作者
 
@@ -35,7 +35,7 @@ ximapdをPATHにコピーしてください。
 
       $ vi ~/.ximapd
 
-    Do not forget to change `user' and `password'!
+    `user'と`password'を変更するのを忘れないでください!
 
 (3) 古いメールを取り込んでください。
 
@@ -55,11 +55,11 @@ ximapdをPATHにコピーしてください。
 
 まず、以下のようにximapdをデーモンとして実行します。
 
-  $ ximapd
+  $ ximapd --start
 
 次のようにデバッグモードで起動すると、バックグラウンドに移行しません。
 
-  $ ximapd -d
+  $ ximapd --start --debug
 
 その他のオプションについては、ヘルプで確認してください。
 
