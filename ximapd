@@ -1064,7 +1064,7 @@ class Ximapd
         end
         mailbox_id = mailbox["id"]
         if mailbox_id.nil?
-          raise MailboxAccessError.new("can't import to virtual mailbox")
+          raise MailboxAccessError.new("can't import to mailbox without id")
         end
       end
       if indate.nil?
