@@ -297,11 +297,7 @@ class Ximapd
       else
         args = @args
       end
-      mail_store.import_imap(@config["remote_host"], @config["remote_port"],
-                             @config["remote_ssl"], @config["remote_auth"],
-                             @config["remote_user"], @config["remote_password"],
-                             args, @config["import_all"],
-                             @config["dest_mailbox"])
+      mail_store.import_imap(args, @config["dest_mailbox"])
     end
   end
 
@@ -738,8 +734,9 @@ class Ximapd
       end
     end
 
-    def import_imap(host, port, ssl, auth, user, pass,
-                    folders, import_all, mailbox_name = nil)
+    def import_imap(folders, mailbox_name = nil)
+      host = @config["remote_host"]
+      port = @config["remote_port"]
       if port.nil?
         if ssl
           port = 993
@@ -747,9 +744,14 @@ class Ximapd
           port = 143
         end
       end
+      ssl = @config["remote_ssl"]
+      auth = @config["remote_auth"]
       if auth.nil?
         auth = "CRAM-MD5"
       end
+      user = @config["remote_user"]
+      pass = @config["remote_password"]
+      import_all = @config["import_all"]
 
       @logger.info("importing from #{host} via IMAP...")
       imap = Net::IMAP.new(host, port, ssl)
