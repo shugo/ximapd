@@ -90,7 +90,7 @@ class Ximapd
   VERSION = "0.0.0"
 
   LOG_SHIFT_AGE = 10
-  LOG_SHIFT_SIZE = 10 * 1024 * 1024
+  LOG_SHIFT_SIZE = 1 * 1024 * 1024
 
   @@debug = false
 
