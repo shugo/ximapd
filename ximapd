@@ -42,6 +42,20 @@ require "tmail"
 require "rast"
 require "optparse"
 
+now = DateTime.now
+unless defined?(now.to_time)
+  class DateTime
+    def to_time
+      d = new_offset(0)
+      d.instance_eval do
+        Time.utc(year, mon, mday, hour, min, sec,
+                 (sec_fraction * 86400000000).to_i)
+      end.
+          getlocal
+    end
+  end
+end
+
 class NullObject
   def initialize(*args)
   end
@@ -1098,6 +1112,8 @@ class Ximapd
           f.flock(File::LOCK_EX)
           f.print(s)
         end
+        time = indate.to_time
+        File.utime(time, time, path)
         @flags_db[uid] = flags
         @flags_db.sync
         properties = index_mail(index, uid, s, mailbox_id, indate)
