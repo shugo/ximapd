@@ -749,6 +749,7 @@ class Ximapd
     def import_imap(folders, mailbox_name = nil)
       host = @config["remote_host"]
       port = @config["remote_port"]
+      ssl = @config["remote_ssl"]
       if port.nil?
         if ssl
           port = 993
@@ -756,7 +757,6 @@ class Ximapd
           port = 143
         end
       end
-      ssl = @config["remote_ssl"]
       auth = @config["remote_auth"]
       if auth.nil?
         auth = "CRAM-MD5"
