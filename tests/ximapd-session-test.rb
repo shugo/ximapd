@@ -295,7 +295,7 @@ Date: Fri, 01 Apr 2005 11:47:10 +0900
 support the STARTTLS command
 EOF
     config = @config.dup
-    config["ml_name_header_fields"] = ["X-ML-Name", "X-Trac-Project"]
+    config["ml_header_fields"] = ["X-ML-Name", "X-Trac-Project"]
     mail_store = Ximapd::MailStore.new(config)
     uid4 = mail_store.import_mail(mail4)
     mail_store.close
@@ -492,7 +492,7 @@ Date: Fri, 01 Apr 2005 11:47:10 +0900
 support the STARTTLS command
 EOF
     config = @config.dup
-    config["ml_name_header_fields"] = ["X-ML-Name", "X-Trac-Project"]
+    config["ml_header_fields"] = ["X-ML-Name", "X-Trac-Project"]
     mail_store = Ximapd::MailStore.new(config)
     uid4 = mail_store.import_mail(mail4)
     mail_store.close
