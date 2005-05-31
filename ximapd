@@ -661,36 +661,39 @@ class Ximapd
     end
 
     def get_mailbox_status(mailbox_name)
+      mailbox = nil
+      status = nil
       @mailbox_db.transaction do
         mailboxes = @mailbox_db["mailboxes"]
         mailbox = mailboxes[mailbox_name]
-        if mailbox.nil?
-          raise NoMailboxError.new("no such mailbox")
-        end
-        if /\\Noselect/ni.match(mailbox["flags"])
-          raise NotSelectableMailboxError.new("can't open #{mailbox_name}: not a selectable mailbox")
-        end
-        open_index do |index|
-          status = MailboxStatus.new
-          result = index.search(mailbox["query"],
-                                "properties" => ["uid"],
-                                "start_no" => 0)
-          status.messages = result.hit_count
-          status.unseen = result.items.select { |i|
-            !/\\Seen\b/ni.match(@flags_db[i.properties[0]])
-          }.length
-          query = format("%s uid > %d",
-                         mailbox["query"], mailbox["last_peeked_uid"])
-          result = index.search(query,
-                                "properties" => ["uid"],
-                                "start_no" => 0,
-                                "num_items" => Rast::RESULT_MIN_ITEMS)
-          status.recent = result.hit_count
-          status.uidnext = @mailbox_db["status"]["last_uid"] + 1
-          status.uidvalidity = @mailbox_db["status"]["uidvalidity"]
-          @last_peeked_uids[mailbox_name] = @mailbox_db["status"]["last_uid"]
-          return status
-        end
+        status = @mailbox_db["status"]
+      end
+      if mailbox.nil?
+        raise NoMailboxError.new("no such mailbox")
+      end
+      if /\\Noselect/ni.match(mailbox["flags"])
+        raise NotSelectableMailboxError.new("can't open #{mailbox_name}: not a selectable mailbox")
+      end
+      open_index do |index|
+        mailbox_status = MailboxStatus.new
+        result = index.search(mailbox["query"],
+                              "properties" => ["uid"],
+                              "start_no" => 0)
+        mailbox_status.messages = result.hit_count
+        mailbox_status.unseen = result.items.select { |i|
+          !/\\Seen\b/ni.match(@flags_db[i.properties[0]])
+        }.length
+        query = format("%s uid > %d",
+                       mailbox["query"], mailbox["last_peeked_uid"])
+        result = index.search(query,
+                              "properties" => ["uid"],
+                              "start_no" => 0,
+                              "num_items" => Rast::RESULT_MIN_ITEMS)
+        mailbox_status.recent = result.hit_count
+        mailbox_status.uidnext = status["last_uid"] + 1
+        mailbox_status.uidvalidity = status["uidvalidity"]
+        @last_peeked_uids[mailbox_name] = status["last_uid"]
+        return mailbox_status
       end
     end
 
@@ -698,14 +701,12 @@ class Ximapd
                                :unseen)
 
     def import(args, mailbox_name = nil)
-      @mailbox_db.transaction do
-        open_index do |index|
-          for arg in args
-            Find.find(arg) do |filename|
-              if File.file?(filename)
-                open(filename) do |f|
-                  uid = import_mail_internal(index, f.read, mailbox_name)
-                end
+      open_index do |index|
+        for arg in args
+          Find.find(arg) do |filename|
+            if File.file?(filename)
+              open(filename) do |f|
+                uid = import_mail_internal(index, f.read, mailbox_name)
               end
             end
           end
@@ -718,14 +719,12 @@ class Ximapd
     end
 
     def import_mbox(args, mailbox_name = nil)
-      @mailbox_db.transaction do
-        open_index do |index|
-          for arg in args
-            Find.find(arg) do |filename|
-              if File.file?(filename)
-                open(filename) do |f|
-                  import_mbox_internal(index, f, mailbox_name)
-                end
+      open_index do |index|
+        for arg in args
+          Find.find(arg) do |filename|
+            if File.file?(filename)
+              open(filename) do |f|
+                import_mbox_internal(index, f, mailbox_name)
               end
             end
           end
@@ -734,10 +733,8 @@ class Ximapd
     end
 
     def import_mbox_file(f, mailbox_name = nil)
-      @mailbox_db.transaction do
-        open_index do |index|
-          import_mbox_internal(index, f, mailbox_name)
-        end
+      open_index do |index|
+        import_mbox_internal(index, f, mailbox_name)
       end
     end
 
@@ -759,88 +756,86 @@ class Ximapd
       imap.authenticate(auth, user, pass)
 
       visited_folders = Set.new
-      @mailbox_db.transaction do
-        open_index do |index|
-          folders.each do |f|
-            imap.list('', f).each do |folder|
-              next if visited_folders.include?(folder.name)
-              begin
-                imap.select(folder.name)
-                mail_count = imap.responses["EXISTS"][-1]
-                next if mail_count == 0
-                #imported_uids = []
-                imported_uids = Set.new
-                progress_bar = nil
-                handler = Proc.new { |resp|
-                  if resp.kind_of?(Net::IMAP::UntaggedResponse) &&
-                    resp.name == "FETCH"
-                    mail = resp.data
-                    # IMAP server may return only FLAGS if \Seen is set.
-                    if !imported_uids.include?(mail.attr["UID"]) &&
-                      mail.attr["BODY[]"]
-                      indate = DateTime.strptime(mail.attr["INTERNALDATE"], 
-                                                 "%d-%b-%Y %H:%M:%S %z")
-                      if @config["import_imap_flags"]
-                        flags = mail.attr["FLAGS"].collect { |flag|
-                          if flag.kind_of?(Symbol)
-                            '\\' + flag.to_s
-                          else
-                            flag.to_s
-                          end
-                        }.join(" ")
-                      else
-                        flags = ""
-                      end
-                      import_mail_internal(index,
-                                           mail.attr["BODY[]"], mailbox_name,
-                                           flags, indate)
-                      #imported_uids.push(mail.attr["UID"])
-                      imported_uids.add(mail.attr["UID"])
-                      progress_bar.inc
-                      imap.responses["FETCH"].clear
-                    end
-                  end
-                }
-                imap.add_response_handler(handler)
-                begin
-                  fetch_attrs = ["UID", "BODY[]", "INTERNALDATE"]
-                  if @config["import_imap_flags"]
-                    fetch_attrs.push("FLAGS")
-                  end
-                  if import_all
-                    @logger.info("#{mail_count} messages in #{folder.name}")
-                    if @config["verbose"]
-                      progress_bar = ProgressBar.new(folder.name, mail_count)
+      open_index do |index|
+        folders.each do |f|
+          imap.list('', f).each do |folder|
+            next if visited_folders.include?(folder.name)
+            begin
+              imap.select(folder.name)
+              mail_count = imap.responses["EXISTS"][-1]
+              next if mail_count == 0
+              #imported_uids = []
+              imported_uids = Set.new
+              progress_bar = nil
+              handler = Proc.new { |resp|
+                if resp.kind_of?(Net::IMAP::UntaggedResponse) &&
+                  resp.name == "FETCH"
+                  mail = resp.data
+                  # IMAP server may return only FLAGS if \Seen is set.
+                  if !imported_uids.include?(mail.attr["UID"]) &&
+                    mail.attr["BODY[]"]
+                    indate = DateTime.strptime(mail.attr["INTERNALDATE"], 
+                                               "%d-%b-%Y %H:%M:%S %z")
+                    if @config["import_imap_flags"]
+                      flags = mail.attr["FLAGS"].collect { |flag|
+                        if flag.kind_of?(Symbol)
+                          '\\' + flag.to_s
+                        else
+                          flag.to_s
+                        end
+                      }.join(" ")
                     else
-                      progress_bar = NullObject.new
+                      flags = ""
                     end
-                    imap.fetch(1 .. -1, fetch_attrs)
-                  else
-                    uids = imap.uid_search(["UNSEEN"])
-                    @logger.info("#{uids.length} unseen messages " + 
-                                 "in #{folder.name}")
-                    if @config["verbose"]
-                      progress_bar = ProgressBar.new(folder.name, uids.length)
-                    else
-                      progress_bar = NullObject.new
-                    end
-                    while uids.length > 0
-                      imap.uid_fetch(uids.slice!(0, 100), fetch_attrs)
-                    end
+                    import_mail_internal(index,
+                                         mail.attr["BODY[]"], mailbox_name,
+                                         flags, indate)
+                    #imported_uids.push(mail.attr["UID"])
+                    imported_uids.add(mail.attr["UID"])
+                    progress_bar.inc
+                    imap.responses["FETCH"].clear
                   end
-                ensure
-                  imap.remove_response_handler(handler)
                 end
-                #while imported_uids.length > 0
-                #  imap.uid_store(imported_uids.slice!(0, 100),
-                #                 "+FLAGS.SILENT", [:Seen])
-                #end
-              rescue Net::IMAP::NoResponseError
-                @logger.warn("#{$!}: #{folder.name}")
+              }
+              imap.add_response_handler(handler)
+              begin
+                fetch_attrs = ["UID", "BODY[]", "INTERNALDATE"]
+                if @config["import_imap_flags"]
+                  fetch_attrs.push("FLAGS")
+                end
+                if import_all
+                  @logger.info("#{mail_count} messages in #{folder.name}")
+                  if @config["verbose"]
+                    progress_bar = ProgressBar.new(folder.name, mail_count)
+                  else
+                    progress_bar = NullObject.new
+                  end
+                  imap.fetch(1 .. -1, fetch_attrs)
+                else
+                  uids = imap.uid_search(["UNSEEN"])
+                  @logger.info("#{uids.length} unseen messages " + 
+                               "in #{folder.name}")
+                  if @config["verbose"]
+                    progress_bar = ProgressBar.new(folder.name, uids.length)
+                  else
+                    progress_bar = NullObject.new
+                  end
+                  while uids.length > 0
+                    imap.uid_fetch(uids.slice!(0, 100), fetch_attrs)
+                  end
+                end
               ensure
-                visited_folders.add(folder.name)
-                imap.close
+                imap.remove_response_handler(handler)
               end
+              #while imported_uids.length > 0
+              #  imap.uid_store(imported_uids.slice!(0, 100),
+              #                 "+FLAGS.SILENT", [:Seen])
+              #end
+            rescue Net::IMAP::NoResponseError
+              @logger.warn("#{$!}: #{folder.name}")
+            ensure
+              visited_folders.add(folder.name)
+              imap.close
             end
           end
         end
@@ -849,10 +844,8 @@ class Ximapd
     end
 
     def import_mail(str, mailbox_name = nil, flags = "")
-      @mailbox_db.transaction do
-        open_index do |index|
-          return import_mail_internal(index, str, mailbox_name, flags)
-        end
+      open_index do |index|
+        return import_mail_internal(index, str, mailbox_name, flags)
       end
     end
 
@@ -1055,35 +1048,37 @@ class Ximapd
 
     def import_mail_internal(index, str, mailbox_name = nil, flags = "",
                              indate = nil)
-      if mailbox_name.nil?
-        mailbox_id = 0
-      else
-        mailbox = @mailbox_db["mailboxes"][mailbox_name]
-        if mailbox.nil?
-          raise NoMailboxError.new("no such mailbox")
+      @mailbox_db.transaction do
+        if mailbox_name.nil?
+          mailbox_id = 0
+        else
+          mailbox = @mailbox_db["mailboxes"][mailbox_name]
+          if mailbox.nil?
+            raise NoMailboxError.new("no such mailbox")
+          end
+          mailbox_id = mailbox["id"]
+          if mailbox_id.nil?
+            raise MailboxAccessError.new("can't import to mailbox without id")
+          end
         end
-        mailbox_id = mailbox["id"]
-        if mailbox_id.nil?
-          raise MailboxAccessError.new("can't import to mailbox without id")
+        if indate.nil?
+          indate = DateTime.now
         end
+        s = str.gsub(/\r?\n/, "\r\n").sub(/\AFrom .*\r\n/, "")
+        @mailbox_db["status"]["last_uid"] += 1
+        uid = @mailbox_db["status"]["last_uid"]
+        path = get_mail_path(uid, indate)
+        FileUtils.mkdir_p(File.dirname(path))
+        File.open(path, "w") do |f|
+          f.flock(File::LOCK_EX)
+          f.print(s)
+        end
+        @flags_db[uid] = flags
+        @flags_db.sync
+        properties = index_mail(index, uid, s, mailbox_id, indate)
+        @logger.info("imported: uid=#{uid} from=<#{properties['from']}> subject=<#{properties['subject']}> date=<#{properties['date']}>")
+        return uid
       end
-      if indate.nil?
-        indate = DateTime.now
-      end
-      s = str.gsub(/\r?\n/, "\r\n").sub(/\AFrom .*\r\n/, "")
-      @mailbox_db["status"]["last_uid"] += 1
-      uid = @mailbox_db["status"]["last_uid"]
-      path = get_mail_path(uid, indate)
-      FileUtils.mkdir_p(File.dirname(path))
-      File.open(path, "w") do |f|
-        f.flock(File::LOCK_EX)
-        f.print(s)
-      end
-      @flags_db[uid] = flags
-      @flags_db.sync
-      properties = index_mail(index, uid, s, mailbox_id, indate)
-      @logger.info("imported: uid=#{uid} from=<#{properties['from']}> subject=<#{properties['subject']}> date=<#{properties['date']}>")
-      return uid
     end
 
     def get_mail_path(uid, indate)
