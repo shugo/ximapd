@@ -364,7 +364,7 @@ EOF
                  sock.output.gets)
     assert_equal("A003 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
-    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
 
     mail1 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
@@ -397,7 +397,7 @@ EOF
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
-    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
 
     mail2 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
@@ -430,7 +430,7 @@ EOF
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
-    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
 
     mail3 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
@@ -481,7 +481,7 @@ EOF
     assert_equal("A005 NO can't open ml: not a selectable mailbox\r\n",
                  sock.output.gets)
     assert_equal(nil, sock.output.gets)
-    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
 
     mail4 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
@@ -517,7 +517,7 @@ EOF
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
-    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+    assert_equal(Ximapd::SELECTED_STATE, session.state)
   end
 
   def test_create

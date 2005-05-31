@@ -542,6 +542,7 @@ class Ximapd
     include QueryFormat
 
     attr_reader :flags_db
+    attr_accessor :read_only
 
     def initialize(config)
       @config = config
@@ -583,6 +584,7 @@ class Ximapd
       lock_path = File.expand_path("lock", @path)
       @lock = File.open(lock_path, "w+")
       @lock_count = 0
+      @read_only = false
     end
 
     def close
@@ -696,7 +698,9 @@ class Ximapd
         mailbox_status.recent = result.hit_count
         mailbox_status.uidnext = status["last_uid"] + 1
         mailbox_status.uidvalidity = status["uidvalidity"]
-        @last_peeked_uids[mailbox_name] = status["last_uid"]
+        if !@read_only
+          @last_peeked_uids[mailbox_name] = status["last_uid"]
+        end
         return mailbox_status
       end
     end
@@ -1461,6 +1465,7 @@ class Ximapd
       @state = NON_AUTHENTICATED_STATE
       @mail_store = nil
       @current_mailbox = nil
+      @examine = false
       @monitor = monitor
     end
 
@@ -1513,7 +1518,20 @@ class Ximapd
 
     def select(mailbox)
       @current_mailbox = mailbox
+      @examine = false
+      @mail_store.read_only = false
       @state = SELECTED_STATE
+    end
+
+    def examine(mailbox)
+      @current_mailbox = mailbox
+      @examine = true
+      @mail_store.read_only = true
+      @state = SELECTED_STATE
+    end
+
+    def examine?
+      return @examine
     end
 
     def close_mailbox
@@ -2720,6 +2738,9 @@ class Ximapd
     private
 
     def send_tagged_response
+      @session.synchronize do
+        @session.examine(@mailbox_name)
+      end
       send_tagged_ok("READ-ONLY")
     end
   end
@@ -3229,12 +3250,14 @@ class Ximapd
         mails = @session.mail_store.uid_fetch(@session.current_mailbox,
                                               @sequence_set)
       end
-      for mail in mails
-        @session.synchronize do
-          @att.store(mail)
-        end
-        if !@att.silent?
-          @session.send_data("%d FETCH (FLAGS (%s))", mail.uid, mail.flags)
+      if !@session.examine?
+        for mail in mails
+          @session.synchronize do
+            @att.store(mail)
+          end
+          if !@att.silent?
+            @session.send_data("%d FETCH (FLAGS (%s))", mail.uid, mail.flags)
+          end
         end
       end
       send_tagged_ok
