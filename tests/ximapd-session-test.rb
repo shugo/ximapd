@@ -23,20 +23,7 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-dir = File.expand_path("..", File.dirname(__FILE__))
-if !$:.include?(dir)
-  $:.unshift(File.expand_path("..", File.dirname(__FILE__)))
-end
-
-require "test/unit"
-require "stringio"
-require "tmpdir"
-require "logger"
-
-if !defined?(Ximapd::Session)
-  ximapd = File.expand_path("../ximapd", File.dirname(__FILE__))
-  load(ximapd)
-end
+require File.expand_path("ximapd-test-helper", File.dirname(__FILE__))
 
 Ximapd::Session.test = true
 
@@ -47,7 +34,7 @@ class XimapdSessionTest < Test::Unit::TestCase
       "user" => "foo",
       "password" => "bar",
       "data_dir" => File.expand_path("data", @tmpdir),
-      "logger" => Logger.new("/dev/null")
+      "logger" => NullObject.new
     }
     @challenge_generator =
       Ximapd::AuthenticateCramMD5Command.challenge_generator
@@ -1831,25 +1818,6 @@ EOF
                  sock.output.gets)
     assert_equal("A005 OK FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
-  end
-
-  private
-
-  def mkdtemp(prefix, mode = 0700)
-    retry_count = 0
-    begin
-      dir = File.join(Dir.tmpdir, 
-                      "#{prefix}-#{$$}.#{rand(10000)}")
-      Dir.mkdir(dir, mode)
-      return dir
-    rescue Errno::EEXIST
-      if retry_count < 3
-        retry_count += 1
-        retry
-      else
-        raise "can't create #{dir}"
-      end
-    end
   end
 
   class SpoofSocket

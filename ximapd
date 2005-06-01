@@ -194,6 +194,16 @@ class Ximapd
         end
       end
     end
+    def logger.log_exception(e, msg = nil, severity = Logger::ERROR)
+      if msg
+        add(severity, "#{msg}: #{e.class}: #{e.message}")
+      else
+        add(severity, "#{e.class}: #{e.message}")
+      end
+      for line in e.backtrace
+        debug("  #{line}")
+      end
+    end
     return logger
   end
 
@@ -224,11 +234,8 @@ class Ximapd
       end
     rescue SystemExit
       raise
-    rescue Exception
-      @logger.error("#{$!.class}: #{$!}")
-      for line in $@
-        @logger.error("  #{line}")
-      end
+    rescue Exception => e
+      @logger.log_exception(e)
     ensure
       @logger.close
       @server.close
@@ -366,8 +373,8 @@ class Ximapd
         @logger.debug("joined #{t}")
       rescue SystemExit
         raise
-      rescue Exception
-        @logger.error($!)
+      rescue Exception => e
+        @logger.log_exception(e)
       end
       @logger.debug("closed session \##{i}")
       i += 1
@@ -864,8 +871,8 @@ class Ximapd
               #  imap.uid_store(imported_uids.slice!(0, 100),
               #                 "+FLAGS.SILENT", [:Seen])
               #end
-            rescue
-              @logger.error("#{$!}: #{folder.name}")
+            rescue StandardError => e
+              @logger.log_exception(e, folder.name)
             ensure
               visited_folders.add(folder.name)
               imap.close
@@ -1140,9 +1147,14 @@ class Ximapd
         m = TMail::Mail.parse(mail)
         text = extract_text(m)
         properties = extract_properties(m, properties)
-      rescue
+      rescue Exception => e
+        @logger.log_exception(e, "failed to parse mail uid=#{uid}",
+                              Logger::WARN)
         header, body = *mail.split(/^\r\n/)
         text = to_utf8(body, @default_charset)
+      end
+      if properties["mailbox-id"] == 0 && properties["x-ml-name"].empty?
+        properties["mailbox-id"] = 1
       end
       index.register(text, properties)
       s = properties["x-ml-name"]
@@ -1204,7 +1216,8 @@ class Ximapd
       end
       begin
         properties["date"] = DateTime.parse(mail["date"].to_s).to_s
-      rescue
+      rescue Exception => e
+        @logger.log_exception(e, nil, Logger::WARN)
       end
       s = nil
       @ml_header_fields.each do |field_name|
@@ -1212,9 +1225,6 @@ class Ximapd
       end
       properties["x-ml-name"] = decode_encoded_word(s.to_s)
       properties["x-mail-count"] = mail["x-mail-count"].to_s.to_i
-      if properties["mailbox-id"] == 0 && properties["x-ml-name"].empty?
-        properties["mailbox-id"] = 1
-      end
       return properties
     end
 
