@@ -193,6 +193,12 @@ class Ximapd
           super(s)
         end
       end
+      if @config["verbose"]
+        def logger.info(s)
+          puts(s)
+          super(s)
+        end
+      end
     end
     def logger.log_exception(e, msg = nil, severity = Logger::ERROR)
       if msg
@@ -806,7 +812,7 @@ class Ximapd
               next if mail_count == 0
               #imported_uids = []
               imported_uids = Set.new
-              progress_bar = nil
+              progress_bar = NullObject.new
               handler = Proc.new { |resp|
                 if resp.kind_of?(Net::IMAP::UntaggedResponse) &&
                   resp.name == "FETCH"
@@ -847,8 +853,6 @@ class Ximapd
                   @logger.info("#{mail_count} messages in #{folder.name}")
                   if @config["verbose"]
                     progress_bar = ProgressBar.new(folder.name, mail_count)
-                  else
-                    progress_bar = NullObject.new
                   end
                   imap.fetch(1 .. -1, fetch_attrs)
                 else
@@ -857,13 +861,12 @@ class Ximapd
                                "in #{folder.name}")
                   if @config["verbose"]
                     progress_bar = ProgressBar.new(folder.name, uids.length)
-                  else
-                    progress_bar = NullObject.new
                   end
                   while uids.length > 0
                     imap.uid_fetch(uids.slice!(0, 100), fetch_attrs)
                   end
                 end
+                progress_bar.finish
               ensure
                 imap.remove_response_handler(handler)
               end
@@ -1124,7 +1127,7 @@ class Ximapd
         @flags_db[uid] = flags
         @flags_db.sync
         properties = index_mail(index, uid, s, mailbox_id, indate)
-        @logger.info("imported: uid=#{uid} from=<#{properties['from']}> subject=<#{properties['subject']}> date=<#{properties['date']}>")
+        @logger.add(Logger::INFO, "imported: uid=#{uid} from=<#{properties['from']}> subject=<#{properties['subject']}> date=<#{properties['date']}>")
         return uid
       end
     end
