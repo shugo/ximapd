@@ -102,8 +102,8 @@ class Ximapd
   attr_accessor :destination
 
   VERSION = "0.0.1"
-  REVISION = "$Revision$"
-  DATE = "$Date$"
+  REVISION = "$Revision$".slice(/\A\$Revision: (.*) \$\z/, 1)
+  DATE = "$Date$".slice(/\d\d\d\d-\d\d-\d\d/)
 
   LOG_SHIFT_AGE = 10
   LOG_SHIFT_SIZE = 1 * 1024 * 1024
@@ -1526,7 +1526,7 @@ class Ximapd
     def start
       @peeraddr = @sock.peeraddr[3]
       @logger.info("connect from #{@peeraddr}")
-      send_ok("ximapd version %s", VERSION)
+      send_ok("ximapd version %s (r%s %s)", VERSION, REVISION, DATE)
       while !@logout
         begin
           begin
