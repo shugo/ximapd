@@ -102,6 +102,8 @@ class Ximapd
   attr_accessor :destination
 
   VERSION = "0.0.1"
+  REVISION = "$Revision$"
+  DATE = "$Date$"
 
   LOG_SHIFT_AGE = 10
   LOG_SHIFT_SIZE = 1 * 1024 * 1024
@@ -135,14 +137,18 @@ class Ximapd
   end
 
   def run(args)
-    @args = args
-    parse_options(@args)
-    @server = nil
-    @logger = open_logger
-    @config["logger"] = @logger
-    @threads = []
-    @sessions = {}
-    send(@config["action"] || "help")
+    begin
+      @args = args
+      parse_options(@args)
+      @server = nil
+      @logger = open_logger
+      @config["logger"] = @logger
+      @threads = []
+      @sessions = {}
+      send(@config["action"])
+    rescue StandardError => e
+      STDERR.printf("%s: %s\n", $0, e)
+    end
   end
 
   private
@@ -156,15 +162,18 @@ class Ximapd
   def parse_options(args)
     begin
       @option_parser.parse!(args)
-      config_file = File.expand_path(@config["config_file"] || "~/.ximapd")
-      config = File.open(config_file) { |f|
-        if f.stat.mode & 0004 != 0
-          raise format("%s is world readable", config_file)
-        end
-        YAML.load(f)
-      }
-      @config = config.merge(@config)
-      check_config(@config)
+      @config["action"] ||= "help"
+      if @config["action"] != "help" && @config["action"] != "version"
+        config_file = File.expand_path(@config["config_file"] || "~/.ximapd")
+        config = File.open(config_file) { |f|
+          if f.stat.mode & 0004 != 0
+            raise format("%s is world readable", config_file)
+          end
+          YAML.load(f)
+        }
+        @config = config.merge(@config)
+        check_config(@config)
+      end
     rescue
       raise if @config["debug"]
       STDERR.printf("%s: %s\n", $0, $!)
@@ -284,7 +293,17 @@ class Ximapd
   end
 
   def version
-    printf("ximapd version %s\n", VERSION)
+    printf("ximapd version %s (r%s %s)\n", VERSION, REVISION, DATE)
+    puts
+    printf("  Platform    : %s\n", RUBY_PLATFORM)
+    printf("  Ruby        : %s (%s)\n", RUBY_VERSION, RUBY_RELEASE_DATE)
+    printf("  Berkeley DB : %s\n", BDB::VERSION)
+    printf("  Rast        : %s\n", Rast::VERSION)
+    begin
+      require "openssl"
+      printf("  OpenSSL     : %s\n", OpenSSL::VERSION)
+    rescue LoadError
+    end
   end
 
   def help
