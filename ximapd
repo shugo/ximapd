@@ -72,7 +72,9 @@ end
 begin
   require "progressbar"
 rescue LoadError
-  ProgressBar = NullObject
+  class ProgressBar < NullObject
+    VERSION = "not available"
+  end
 end
 
 Thread.abort_on_exception = true
@@ -260,7 +262,7 @@ class Ximapd
   def open_server
     server = TCPServer.new(@config["port"])
     if @config["ssl"]
-      require 'openssl'
+      require "openssl"
       ssl_ctx = OpenSSL::SSL::SSLContext.new
       if @config.key?("ssl_key") && @config.key?("ssl_cert")
       ssl_ctx.key = File.open(@config["ssl_key"], 'r') { |f|
@@ -303,7 +305,9 @@ class Ximapd
       require "openssl"
       printf("  OpenSSL     : %s\n", OpenSSL::VERSION)
     rescue LoadError
+      printf("  OpenSSL     : not available\n")
     end
+    printf("  ProgressBar : %s\n", ProgressBar::VERSION)
   end
 
   def help
@@ -1094,7 +1098,8 @@ class Ximapd
     def import_mbox_internal(index, f, mailbox_name = nil)
       s = nil
       f.each_line do |line|
-        if /\AFrom /.match(line)
+        if /\AFrom\s+\S+\s+[A-Z][a-z]{2} [A-Z][a-z]{2}\s+\d+ \d\d:\d\d:\d\d \d+/.match(line)
+#        if /\AFrom\s/.match(line)
           if s
             uid = import_mail_internal(index, s, mailbox_name)
           end
@@ -1125,8 +1130,11 @@ class Ximapd
         end
         s = str.gsub(/\r?\n/, "\r\n").sub(/\AFrom\s+\S+\s+(.*)\r\n/) {
           if indate.nil?
-            indate = DateTime.strptime($1 + " " + Time.now.strftime("%z"),
-                                       "%a %b %d %H:%M:%S %Y %z")
+            begin
+              indate = DateTime.strptime($1 + " " + Time.now.strftime("%z"),
+                                         "%a %b %d %H:%M:%S %Y %z")
+            rescue
+            end
           end
           ""
         }
