@@ -1099,7 +1099,6 @@ class Ximapd
       s = nil
       f.each_line do |line|
         if /\AFrom\s+\S+\s+[A-Z][a-z]{2} [A-Z][a-z]{2}\s+\d+ \d\d:\d\d:\d\d \d+/.match(line)
-#        if /\AFrom\s/.match(line)
           if s
             uid = import_mail_internal(index, s, mailbox_name)
           end
