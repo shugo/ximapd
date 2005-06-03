@@ -952,15 +952,15 @@ class Ximapd
             first = seq_number.first
             last = seq_number.last == -1 ? result.items.length : seq_number.last
             for i in first .. last
-              mail = mailbox.get_mail(i, result.items[i - 1].properties[0])
-              mail.internal_date = result.items[i - 1].properties[1]
+              item = result.items[i - 1]
+              mail = mailbox.get_mail(i, item.properties[0], item.doc_id)
+              mail.internal_date = item.properties[1]
               mails.push(mail)
             end
           else
             item = result.items[seq_number - 1]
             next if item.nil?
-            uid = item.properties[0]
-            mail = mailbox.get_mail(seq_number, uid)
+            mail = mailbox.get_mail(seq_number, item.properties[0], item.doc_id)
             mail.internal_date = item.properties[1]
             mails.push(mail)
           end
@@ -1004,7 +1004,7 @@ class Ximapd
         result = index.search(query, options)
         return result.items.collect { |i|
           uid = i.properties[0]
-          mail = mailbox.get_mail(uid, uid)
+          mail = mailbox.get_mail(uid, uid, i.doc_id)
           mail.internal_date = i.properties[1]
           mail
         }
@@ -1018,11 +1018,11 @@ class Ximapd
       end
     end
 
-    def delete_from_index(uid)
+    def delete_mails(mails)
       open_index do |index|
-        result = index.search("uid = #{uid}")
-        result.items.each do |i|
-          index.delete(i.doc_id)
+        for mail in mails
+          index.delete(mail.doc_id)
+          mail.delete
         end
       end
     end
@@ -1280,22 +1280,23 @@ class Ximapd
       return @data[key]
     end
 
-    def get_mail(seqno, uid)
-      return Mail.new(@config, self, seqno, uid)
+    def get_mail(seqno, uid, doc_id)
+      return Mail.new(@config, self, seqno, uid, doc_id)
     end
   end
 
   class Mail
     include DataFormat
 
-    attr_reader :mailbox, :seqno, :uid
+    attr_reader :mailbox, :seqno, :uid, :doc_id
     attr_accessor :internal_date
 
-    def initialize(config, mailbox, seqno, uid)
+    def initialize(config, mailbox, seqno, uid, doc_id)
       @config = config
       @mailbox = mailbox
       @seqno = seqno
       @uid = uid
+      @doc_id = doc_id
       @flags_db = @mailbox.mail_store.flags_db
       @parsed_mail = nil
     end
@@ -1395,7 +1396,6 @@ class Ximapd
     end
 
     def delete
-      @mailbox.mail_store.delete_from_index(@uid)
       begin
         File.unlink(path)
       rescue Errno::ENOENT
@@ -2956,11 +2956,10 @@ class Ximapd
     def exec
       @session.synchronize do
         mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
-        mails.each do |mail|
-          if /\\Deleted\b/ni.match(mail.flags(false))
-            mail.delete
-          end
-        end
+        deleted_mails = mails.select { |mail|
+          /\\Deleted\b/ni.match(mail.flags(false))
+        }
+        @session.mail_store.delete_mails(deleted_mails)
       end
       @session.close_mailbox
       send_tagged_ok
@@ -2969,20 +2968,19 @@ class Ximapd
 
   class ExpungeCommand < Command
     def exec
-      mails = nil
+      deleted_seqnos = nil
       @session.synchronize do
         mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
+        deleted_mails = mails.select { |mail|
+          /\\Deleted\b/ni.match(mail.flags(false))
+        }.reverse
+        deleted_seqnos = deleted_mails.collect { |mail|
+          mail.seqno
+        }
+        @session.mail_store.delete_mails(deleted_mails)
       end
-      seqno = mails.length
-      mails.reverse_each do |mail|
-        mail = mails[seqno - 1]
-        if /\\Deleted\b/ni.match(mail.flags(false))
-          @session.synchronize do
-            mail.delete
-          end
-          @session.send_data("%d EXPUNGE", seqno)
-        end
-        seqno -= 1
+      for seqno in deleted_seqnos
+        @session.send_data("%d EXPUNGE", seqno)
       end
       send_tagged_ok
     end
