@@ -129,7 +129,7 @@ class Ximapd
     @sessions = {}
     @monitor = Monitor.new
     @option_parser = OptionParser.new { |opts|
-      opts.banner = "usage: #{File.basename($0)} [options]"
+      opts.banner = "usage: ximapd [options]"
       opts.separator("")
       opts.separator("options:")
       define_options(opts, @config, OPTIONS)
@@ -149,7 +149,7 @@ class Ximapd
       @sessions = {}
       send(@config["action"])
     rescue StandardError => e
-      STDERR.printf("%s: %s\n", $0, e)
+      STDERR.printf("ximapd: %s\n", e)
     end
   end
 
@@ -176,9 +176,9 @@ class Ximapd
         @config = config.merge(@config)
         check_config(@config)
       end
-    rescue
+    rescue StandardError => e
       raise if @config["debug"]
-      STDERR.printf("%s: %s\n", $0, $!)
+      STDERR.printf("ximapd: %s\n", e)
       exit(1)
     end
   end
@@ -200,7 +200,7 @@ class Ximapd
     if @config["action"] != "start"
       for m in [:fatal, :error, :warn]
         class << logger; self; end.send(:define_method, m) do |s|
-          STDERR.printf("%s: %s\n", $0, s)
+          STDERR.printf("ximapd: %s\n", s)
           super(s)
         end
       end
@@ -235,8 +235,8 @@ class Ximapd
       loop do
         begin
           sock = @server.accept
-        rescue Exception
-          if @config["ssl"] && $!.kind_of?(OpenSSL::SSL::SSLError)
+        rescue Exception => e
+          if @config["ssl"] && e.kind_of?(OpenSSL::SSL::SSLError)
             retry
           else
             raise
@@ -1538,21 +1538,18 @@ class Ximapd
         begin
           begin
             cmd = recv_cmd
-          rescue
-            send_bad("parse error: %s", $!)
+          rescue StandardError => e
+            send_bad("parse error: %s", e)
             next
           end
           break if cmd.nil?
           @logger.debug("received #{cmd.name} command from #{@peeraddr}")
           begin
             cmd.exec
-          rescue
+          rescue StandardError => e
             raise if @@test
-            send_tagged_no(cmd.tag, "%s failed - %s", cmd.name, $!)
-            @logger.error("#{$!.class}: #{$!}")
-            for line in $@
-              @logger.error("  #{line}")
-            end
+            send_tagged_no(cmd.tag, "%s failed - %s", cmd.name, e)
+            @logger.log_exception(e)
           end
           @logger.debug("sent #{cmd.name} response to #{@peeraddr}")
         rescue TerminateException
@@ -2772,8 +2769,8 @@ class Ximapd
         @session.send_data("FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
         @session.send_ok("[PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited")
         send_tagged_response
-      rescue MailboxError
-        @session.send_tagged_no(@tag, "%s", $!)
+      rescue MailboxError => e
+        @session.send_tagged_no(@tag, "%s", e)
       end
     end
 
