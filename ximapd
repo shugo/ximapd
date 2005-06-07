@@ -615,10 +615,8 @@ class Ximapd
         @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
         @mailbox_db["mailing-lists"] ||= {}
       end
-      @db_env = BDB::Env.new(@db_path,
-                             BDB::CREATE | BDB::INIT_MPOOL | BDB::INIT_LOG)
-      @flags_db = BDB::Recno.open("flags.db", nil, BDB::CREATE,
-                                  "env" => @db_env)
+      flags_db_path = File.expand_path("flags.db", @db_path)
+      @flags_db = BDB::Recno.open(flags_db_path, nil, BDB::CREATE)
       @index_path = File.expand_path("index", @path)
       if !File.exist?(@index_path)
         Rast::DB.create(@index_path, INDEX_OPTIONS)
@@ -1531,31 +1529,32 @@ class Ximapd
     end
 
     def start
-      @peeraddr = @sock.peeraddr[3]
-      @logger.info("connect from #{@peeraddr}")
-      send_ok("ximapd version %s (r%s %s)", VERSION, REVISION, DATE)
-      while !@logout
-        begin
-          begin
-            cmd = recv_cmd
-          rescue StandardError => e
-            send_bad("parse error: %s", e)
-            next
-          end
-          break if cmd.nil?
-          @logger.debug("received #{cmd.name} command from #{@peeraddr}")
-          begin
-            cmd.exec
-          rescue StandardError => e
-            raise if @@test
-            send_tagged_no(cmd.tag, "%s failed - %s", cmd.name, e)
-            @logger.log_exception(e)
-          end
-          @logger.debug("sent #{cmd.name} response to #{@peeraddr}")
-        rescue TerminateException
-          send_data("BYE IMAP server terminating connection")
-          break
+      synchronize do
+        @peeraddr = @sock.peeraddr[3]
+        @logger.info("connect from #{@peeraddr}")
+        send_ok("ximapd version %s (r%s %s)", VERSION, REVISION, DATE)
+      end
+      begin
+        while !@logout
+            begin
+              cmd = recv_cmd
+            rescue StandardError => e
+              send_bad("parse error: %s", e)
+              next
+            end
+            break if cmd.nil?
+            @logger.debug("received #{cmd.name} command from #{@peeraddr}")
+            begin
+              cmd.exec
+            rescue StandardError => e
+              raise if @@test
+              send_tagged_no(cmd.tag, "%s failed - %s", cmd.name, e)
+              @logger.log_exception(e)
+            end
+            @logger.debug("sent #{cmd.name} response to #{@peeraddr}")
         end
+      rescue TerminateException
+        send_data("BYE IMAP server terminating connection")
       end
       synchronize do
         @mail_store.close if @mail_store
