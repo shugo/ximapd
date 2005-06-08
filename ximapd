@@ -636,11 +636,7 @@ class Ximapd
     end
 
     def close
-      @mailbox_db.transaction do
-        @last_peeked_uids.each do |name, uid|
-          @mailbox_db["mailboxes"][name]["last_peeked_uid"] = uid
-        end
-      end
+      sync
       @flags_db.close
       @lock.close
     end
@@ -660,6 +656,11 @@ class Ximapd
     end
 
     def sync
+      @mailbox_db.transaction do
+        @last_peeked_uids.each do |name, uid|
+          @mailbox_db["mailboxes"][name]["last_peeked_uid"] = uid
+        end
+      end
       @flags_db.sync
     end
 
