@@ -45,8 +45,8 @@ bdb_free(DB *db)
     }
 }
 
-static
-VALUE bdb_alloc(VALUE klass)
+static VALUE
+bdb_alloc(VALUE klass)
 {
     return Data_Wrap_Struct(klass, NULL, bdb_free, NULL);
 }
@@ -70,8 +70,8 @@ bdb_close(VALUE self)
     return Qnil;
 }
 
-static
-VALUE bdb_s_open(int argc, VALUE *argv, VALUE klass)
+static VALUE
+bdb_s_open(int argc, VALUE *argv, VALUE klass)
 {
     VALUE db = rb_class_new_instance(argc, argv, klass);
     if (rb_block_given_p()) {

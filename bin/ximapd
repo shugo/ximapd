@@ -77,8 +77,6 @@ rescue LoadError
   end
 end
 
-Thread.abort_on_exception = true
-
 module TMail
   def Decoder.decode(str, encoding = nil)
     return str
