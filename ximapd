@@ -31,7 +31,6 @@ require "pstore"
 require "yaml/store"
 require "find"
 require "fileutils"
-require "bdb"
 require "digest/md5"
 require "iconv"
 require "nkf"
@@ -41,6 +40,7 @@ require "logger"
 require "tmail"
 require "rast"
 require "optparse"
+require "ximapd_bdb"
 
 now = DateTime.now
 unless defined?(now.to_time)
@@ -299,7 +299,7 @@ class Ximapd
     puts
     printf("  Platform    : %s\n", RUBY_PLATFORM)
     printf("  Ruby        : %s (%s)\n", RUBY_VERSION, RUBY_RELEASE_DATE)
-    printf("  Berkeley DB : %s\n", BDB::VERSION)
+    printf("  Berkeley DB : %s\n", XimapdBDB::VERSION)
     printf("  Rast        : %s\n", Rast::VERSION)
     begin
       require "openssl"
@@ -372,11 +372,11 @@ class Ximapd
     open_pid_file("w") do |f|
       f.puts(Process.pid)
     end
-    Dir.chdir("/")
+    Dir.chdir(File.expand_path(@config["data_dir"]))
     STDIN.reopen("/dev/null")
     STDOUT.reopen("/dev/null", "w")
     path = File.expand_path("stderr", @config["data_dir"])
-    STDERR.reopen(path, "w")
+    STDERR.reopen(path, "a")
   end
 
   def open_pid_file(mode = "r")
@@ -616,7 +616,7 @@ class Ximapd
         @mailbox_db["mailing-lists"] ||= {}
       end
       flags_db_path = File.expand_path("flags.db", @db_path)
-      @flags_db = BDB::Recno.open(flags_db_path, nil, BDB::CREATE)
+      @flags_db = XimapdBDB::Recno.open(flags_db_path, nil, XimapdBDB::CREATE)
       @index_path = File.expand_path("index", @path)
       if !File.exist?(@index_path)
         Rast::DB.create(@index_path, INDEX_OPTIONS)
