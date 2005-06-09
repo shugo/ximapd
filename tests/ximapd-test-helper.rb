@@ -23,8 +23,8 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-dir = File.expand_path("..", File.dirname(__FILE__))
-$:.unshift(File.expand_path("..", File.dirname(__FILE__)))
+dir = File.expand_path("../ext/ximapd_bdb", File.dirname(__FILE__))
+$:.unshift(dir)
 
 require "test/unit"
 require "stringio"
@@ -49,7 +49,7 @@ def mkdtemp(prefix, mode = 0700)
   end
 end
 
-ximapd = File.expand_path("../ximapd", File.dirname(__FILE__))
+ximapd = File.expand_path("../bin/ximapd", File.dirname(__FILE__))
 load(ximapd)
 
 # vim: set filetype=ruby expandtab sw=2 :
