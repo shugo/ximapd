@@ -40,7 +40,7 @@ require "logger"
 require "tmail"
 require "rast"
 require "optparse"
-require "ximapd_bdb"
+require "sdbm"
 
 now = DateTime.now
 unless defined?(now.to_time)
@@ -297,7 +297,7 @@ class Ximapd
     puts
     printf("  Platform    : %s\n", RUBY_PLATFORM)
     printf("  Ruby        : %s (%s)\n", RUBY_VERSION, RUBY_RELEASE_DATE)
-    printf("  Berkeley DB : %s\n", XimapdBDB::VERSION)
+    #printf("  Berkeley DB : %s\n", XimapdBDB::VERSION)
     printf("  Rast        : %s\n", Rast::VERSION)
     begin
       require "openssl"
@@ -396,12 +396,16 @@ class Ximapd
       end
       begin
         @logger.debug("join #{t}")
-        t.join
-        @logger.debug("joined #{t}")
+        begin
+          t.join
+        rescue TerminateException
+        end
       rescue SystemExit
         raise
       rescue Exception => e
         @logger.log_exception(e)
+      ensure
+        @logger.debug("joined #{t}")
       end
       @logger.debug("closed session \##{i}")
       i += 1
@@ -613,8 +617,8 @@ class Ximapd
         @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
         @mailbox_db["mailing-lists"] ||= {}
       end
-      flags_db_path = File.expand_path("flags.db", @db_path)
-      @flags_db = XimapdBDB::Recno.open(flags_db_path, nil, XimapdBDB::CREATE)
+      flags_db_path = File.expand_path("flags.sdbm", @path)
+      @flags_db = SDBM.open(flags_db_path)
       @index_path = File.expand_path("index", @path)
       if !File.exist?(@index_path)
         Rast::DB.create(@index_path, INDEX_OPTIONS)
@@ -659,7 +663,6 @@ class Ximapd
           @mailbox_db["mailboxes"][name]["last_peeked_uid"] = uid
         end
       end
-      @flags_db.sync
     end
 
     def mailboxes
@@ -734,7 +737,7 @@ class Ximapd
                               "start_no" => 0)
         mailbox_status.messages = result.hit_count
         mailbox_status.unseen = result.items.select { |i|
-          !/\\Seen\b/ni.match(@flags_db[i.properties[0]])
+          !/\\Seen\b/ni.match(@flags_db[i.properties[0].to_s])
         }.length
         query = format("%s uid > %d",
                        mailbox["query"], mailbox["last_peeked_uid"])
@@ -1147,8 +1150,7 @@ class Ximapd
         end
         time = indate.to_time
         File.utime(time, time, path)
-        @flags_db[uid] = flags
-        @flags_db.sync
+        @flags_db[uid.to_s] = flags
         properties = index_mail(index, uid, s, mailbox_id, indate)
         @logger.add(Logger::INFO, "imported: uid=#{uid} from=<#{properties['from']}> subject=<#{properties['subject']}> date=<#{properties['date']}>")
         return uid
@@ -1325,7 +1327,7 @@ class Ximapd
     end
 
     def flags(get_recent = true)
-      s = @flags_db[@uid].to_s
+      s = @flags_db[@uid.to_s].to_s
       if get_recent && uid > @mailbox["last_peeked_uid"]
         if s.empty?
           return "\\Recent"
@@ -1338,8 +1340,7 @@ class Ximapd
     end
 
     def flags=(s)
-      @flags_db[@uid] = s
-      @flags_db.sync
+      @flags_db[@uid.to_s] = s
     end
 
     def path
@@ -3054,7 +3055,7 @@ class Ximapd
 
     def select(uids)
       return uids.select { |uid|
-        @flag_re.match(@flags_db[uid])
+        @flag_re.match(@flags_db[uid.to_s])
       }
     end
   end
@@ -3062,7 +3063,7 @@ class Ximapd
   class NoFlagSearchKey < FlagSearchKey
     def select(uids)
       return uids.select { |uid|
-        !@flag_re.match(@flags_db[uid])
+        !@flag_re.match(@flags_db[uid.to_s])
       }
     end
   end

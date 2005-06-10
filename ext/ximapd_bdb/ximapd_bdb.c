@@ -85,7 +85,7 @@ bdb_s_open(int argc, VALUE *argv, VALUE klass)
 static VALUE
 bdb_initialize(int argc, VALUE *argv, VALUE self)
 {
-    rb_raise(eBDBError, "BDB::DB is an abstract class");
+    rb_raise(eBDBError, "XimapdBDB::DB is an abstract class");
     return Qnil;
 }
 
@@ -103,7 +103,7 @@ bdb_aref(VALUE self, VALUE key)
     db_value.flags = DB_DBT_MALLOC;
     db = get_db(self);
     dberr = db->get(db, NULL, &db_key, &db_value, 0);
-    if (dberr == DB_NOTFOUND)
+    if (dberr == DB_NOTFOUND || dberr == DB_KEYEMPTY)
 	return Qnil;
     check_bdb_error(dberr);
     result = rb_tainted_str_new(db_value.data, db_value.size);
@@ -143,7 +143,7 @@ bdb_has_key(VALUE self, VALUE key)
     db_value.flags = DB_DBT_MALLOC;
     db = get_db(self);
     dberr = db->get(db, NULL, &db_key, &db_value, 0);
-    if (dberr == DB_NOTFOUND)
+    if (dberr == DB_NOTFOUND || dberr == DB_KEYEMPTY)
 	return Qfalse;
     check_bdb_error(dberr);
     free(db_value.data);
@@ -219,7 +219,7 @@ recno_aref(VALUE self, VALUE key)
     db_value.flags = DB_DBT_MALLOC;
     db = get_db(self);
     dberr = db->get(db, NULL, &db_key, &db_value, 0);
-    if (dberr == DB_NOTFOUND)
+    if (dberr == DB_NOTFOUND || dberr == DB_KEYEMPTY)
 	return Qnil;
     check_bdb_error(dberr);
     result = rb_tainted_str_new(db_value.data, db_value.size);
@@ -260,7 +260,7 @@ recno_has_key(VALUE self, VALUE key)
     db_value.flags = DB_DBT_MALLOC;
     db = get_db(self);
     dberr = db->get(db, NULL, &db_key, &db_value, 0);
-    if (dberr == DB_NOTFOUND)
+    if (dberr == DB_NOTFOUND || dberr == DB_KEYEMPTY)
 	return Qfalse;
     check_bdb_error(dberr);
     free(db_value.data);
