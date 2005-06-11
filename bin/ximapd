@@ -1114,6 +1114,8 @@ class Ximapd
 
     def import_mail_internal(index, str, mailbox_name = nil, flags = "",
                              indate = nil)
+      mailbox_id = nil
+      uid = nil
       @mailbox_db.transaction do
         if mailbox_name.nil?
           mailbox_id = 0
@@ -1127,34 +1129,34 @@ class Ximapd
             raise MailboxAccessError.new("can't import to mailbox without id")
           end
         end
-        s = str.gsub(/\r?\n/, "\r\n").sub(/\AFrom\s+\S+\s+(.*)\r\n/) {
-          if indate.nil?
-            begin
-              indate = DateTime.strptime($1 + " " + Time.now.strftime("%z"),
-                                         "%a %b %d %H:%M:%S %Y %z")
-            rescue
-            end
-          end
-          ""
-        }
-        if indate.nil?
-          indate = DateTime.now
-        end
         @mailbox_db["status"]["last_uid"] += 1
         uid = @mailbox_db["status"]["last_uid"]
-        path = get_mail_path(uid, indate)
-        FileUtils.mkdir_p(File.dirname(path))
-        File.open(path, "w") do |f|
-          f.flock(File::LOCK_EX)
-          f.print(s)
-        end
-        time = indate.to_time
-        File.utime(time, time, path)
-        @flags_db[uid.to_s] = flags
-        properties = index_mail(index, uid, s, mailbox_id, indate)
-        @logger.add(Logger::INFO, "imported: uid=#{uid} from=<#{properties['from']}> subject=<#{properties['subject']}> date=<#{properties['date']}>")
-        return uid
       end
+      s = str.gsub(/\r?\n/, "\r\n").sub(/\AFrom\s+\S+\s+(.*)\r\n/) {
+        if indate.nil?
+          begin
+            indate = DateTime.strptime($1 + " " + Time.now.strftime("%z"),
+                                       "%a %b %d %H:%M:%S %Y %z")
+          rescue
+          end
+        end
+        ""
+      }
+      if indate.nil?
+        indate = DateTime.now
+      end
+      path = get_mail_path(uid, indate)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.open(path, "w") do |f|
+        f.flock(File::LOCK_EX)
+        f.print(s)
+      end
+      time = indate.to_time
+      File.utime(time, time, path)
+      @flags_db[uid.to_s] = flags
+      properties = index_mail(index, uid, s, mailbox_id, indate)
+      @logger.add(Logger::INFO, "imported: uid=#{uid} from=<#{properties['from']}> subject=<#{properties['subject']}> date=<#{properties['date']}>")
+      return uid
     end
 
     def get_mail_path(uid, indate)
@@ -1186,23 +1188,27 @@ class Ximapd
       end
       index.register(text, properties)
       s = properties["x-ml-name"]
-      if !s.empty? && !@mailbox_db["mailing-lists"].key?(s)
-        mbox = s.slice(/(.*) <.*>/u, 1) 
-        if mbox.nil?
-          mbox = s.slice(/<(.*)>/u, 1) 
-          if mbox.nil?
-            mbox = s.slice(/\S+@[^ \t;]+/u) 
+      if !s.empty?
+        @mailbox_db.transaction do
+          if !@mailbox_db["mailing-lists"].key?(s)
+            mbox = s.slice(/(.*) <.*>/u, 1) 
             if mbox.nil?
-              mbox = s
+              mbox = s.slice(/<(.*)>/u, 1) 
+              if mbox.nil?
+                mbox = s.slice(/\S+@[^ \t;]+/u) 
+                if mbox.nil?
+                  mbox = s
+                end
+              end
+            end
+            @mailbox_db["mailing-lists"][s] = uid
+            mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox))
+            query = format("x-ml-name = %s", quote_query(properties["x-ml-name"]))
+            begin
+              create_mailbox_internal(mailbox_name, query)
+            rescue MailboxExistError
             end
           end
-        end
-        @mailbox_db["mailing-lists"][s] = uid
-        mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox))
-        query = format("x-ml-name = %s", quote_query(properties["x-ml-name"]))
-        begin
-          create_mailbox_internal(mailbox_name, query)
-        rescue MailboxExistError
         end
       end
       return properties
