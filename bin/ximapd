@@ -125,7 +125,6 @@ class Ximapd
     @logger = nil
     @threads = []
     @sessions = {}
-    @monitor = Monitor.new
     @option_parser = OptionParser.new { |opts|
       opts.banner = "usage: ximapd [options]"
       opts.separator("")
@@ -230,22 +229,27 @@ class Ximapd
     Signal.trap("TERM", &method(:terminate))
     Signal.trap("INT", &method(:terminate))
     begin
-      loop do
-        begin
-          sock = @server.accept
-        rescue Exception => e
-          if @config["ssl"] && e.kind_of?(OpenSSL::SSL::SSLError)
-            retry
-          else
-            raise
+      mail_store = Ximapd::MailStore.new(@config)
+      begin
+        loop do
+          begin
+            sock = @server.accept
+          rescue Exception => e
+            if @config["ssl"] && e.kind_of?(OpenSSL::SSL::SSLError)
+              retry
+            else
+              raise
+            end
+          end
+          Thread.start(sock) do |socket|
+            session = Session.new(@config, sock, mail_store)
+            @sessions[Thread.current] = session
+            session.start
+            @sessions.delete(Thread.current)
           end
         end
-        Thread.start(sock) do |socket|
-          session = Session.new(@config, sock, @monitor)
-          @sessions[Thread.current] = session
-          session.start
-          @sessions.delete(Thread.current)
-        end
+      ensure
+        mail_store.close
       end
     rescue SystemExit
       raise
@@ -422,13 +426,14 @@ class Ximapd
 
   def open_mail_store
     mail_store = Ximapd::MailStore.new(@config)
-    mail_store.lock
-    if @config["dest_mailbox"] &&
-      !mail_store.mailboxes.include?(@config["dest_mailbox"])
-      mail_store.create_mailbox(@config["dest_mailbox"])
-    end
     begin
-      yield(mail_store)
+      mail_store.synchronize do
+        if @config["dest_mailbox"] &&
+          !mail_store.mailboxes.include?(@config["dest_mailbox"])
+          mail_store.create_mailbox(@config["dest_mailbox"])
+        end
+        yield(mail_store)
+      end
     ensure
       mail_store.close
     end
@@ -591,11 +596,12 @@ class Ximapd
 
   class MailStore
     include QueryFormat
+    include MonitorMixin
 
     attr_reader :flags_db
-    attr_accessor :read_only
 
     def initialize(config)
+      super()
       @config = config
       @logger = @config["logger"]
       @path = File.expand_path(@config["data_dir"])
@@ -633,16 +639,15 @@ class Ximapd
       lock_path = File.expand_path("lock", @path)
       @lock = File.open(lock_path, "w+")
       @lock_count = 0
-      @read_only = false
     end
 
     def close
-      sync
       @flags_db.close
       @lock.close
     end
 
     def lock
+      mon_enter
       if @lock_count == 0
         @lock.flock(File::LOCK_EX)
       end
@@ -654,13 +659,28 @@ class Ximapd
       if @lock_count == 0 && !@lock.closed?
         @lock.flock(File::LOCK_UN)
       end
+      mon_exit
     end
 
-    def sync
+    def synchronize
+      lock
+      begin
+        yield
+      ensure
+        unlock
+      end
+    end
+
+    def write_last_peeked_uids
+      return if @last_peeked_uids.empty?
       @mailbox_db.transaction do
         @last_peeked_uids.each do |name, uid|
-          @mailbox_db["mailboxes"][name]["last_peeked_uid"] = uid
+          mailbox = @mailbox_db["mailboxes"][name]
+          if mailbox && mailbox["last_peeked_uid"] < uid
+            mailbox["last_peeked_uid"] = uid
+          end
         end
+        @last_peeked_uids.clear
       end
     end
 
@@ -715,7 +735,7 @@ class Ximapd
       end
     end
 
-    def get_mailbox_status(mailbox_name)
+    def get_mailbox_status(mailbox_name, read_only)
       mailbox = nil
       status = nil
       @mailbox_db.transaction do
@@ -747,7 +767,7 @@ class Ximapd
         mailbox_status.recent = result.hit_count
         mailbox_status.uidnext = status["last_uid"] + 1
         mailbox_status.uidvalidity = status["uidvalidity"]
-        if !@read_only
+        unless read_only
           @last_peeked_uids[mailbox_name] = status["last_uid"]
         end
         return mailbox_status
@@ -1519,18 +1539,17 @@ class Ximapd
       @@test = test
     end
 
-    def initialize(config, sock, monitor = Monitor.new)
+    def initialize(config, sock, mail_store)
       @config = config
       @sock = sock
+      @mail_store = mail_store
       @logger = @config["logger"]
       @parser = CommandParser.new(self, @logger)
       @logout = false
       @peeraddr = nil
       @state = NON_AUTHENTICATED_STATE
-      @mail_store = nil
       @current_mailbox = nil
-      @examine = false
-      @monitor = monitor
+      @read_only = false
     end
 
     def start
@@ -1562,7 +1581,7 @@ class Ximapd
         send_data("BYE IMAP server terminating connection")
       end
       synchronize do
-        @mail_store.close if @mail_store
+        sync
         @sock.close
         @logger.info("disconnect from #{@peeraddr}")
       end
@@ -1574,26 +1593,23 @@ class Ximapd
     end
 
     def login
-      @mail_store = MailStore.new(@config)
       @state = AUTHENTICATED_STATE
     end
 
     def select(mailbox)
       @current_mailbox = mailbox
-      @examine = false
-      @mail_store.read_only = false
+      @read_only = false
       @state = SELECTED_STATE
     end
 
     def examine(mailbox)
       @current_mailbox = mailbox
-      @examine = true
-      @mail_store.read_only = true
+      @read_only = true
       @state = SELECTED_STATE
     end
 
-    def examine?
-      return @examine
+    def read_only?
+      return @read_only
     end
 
     def close_mailbox
@@ -1602,7 +1618,7 @@ class Ximapd
     end
 
     def sync
-      @mail_store.sync if @mail_store
+      @mail_store.write_last_peeked_uids
     end
 
     def recv_line
@@ -1676,18 +1692,8 @@ class Ximapd
       send_line("+ " + msg)
     end
 
-    def synchronize
-      @monitor.enter
-      if @mail_store
-        @mail_store.lock
-        mail_store_locked = true
-      end
-      begin
-        yield
-      ensure
-        mail_store.unlock if mail_store_locked
-        @monitor.exit
-      end
+    def synchronize(&block)
+      @mail_store.synchronize(&block)
     end
   end
 
@@ -2687,6 +2693,9 @@ class Ximapd
 
   class LogoutCommand < Command
     def exec
+      @session.synchronize do
+        @session.sync
+      end
       @session.send_data("BYE IMAP server terminating connection")
       send_tagged_ok
       @session.logout
@@ -2764,7 +2773,8 @@ class Ximapd
       begin
         status = nil
         @session.synchronize do
-          status = @session.mail_store.get_mailbox_status(@mailbox_name)
+          status = @session.mail_store.get_mailbox_status(@mailbox_name,
+                                                          @session.read_only?)
         end
         @session.send_data("%d EXISTS", status.messages)
         @session.send_data("%d RECENT", status.recent)
@@ -2790,6 +2800,7 @@ class Ximapd
 
     def send_tagged_response
       @session.synchronize do
+        #@session.sync
         @session.select(@mailbox_name)
       end
       send_tagged_ok("READ-WRITE")
@@ -2801,6 +2812,7 @@ class Ximapd
 
     def send_tagged_response
       @session.synchronize do
+        #@session.sync
         @session.examine(@mailbox_name)
       end
       send_tagged_ok("READ-ONLY")
@@ -2917,7 +2929,8 @@ class Ximapd
     def exec
       status = nil
       @session.synchronize do
-        status = @session.mail_store.get_mailbox_status(@mailbox_name)
+        status = @session.mail_store.get_mailbox_status(@mailbox_name,
+                                                        @session.read_only?)
       end
       s = @atts.collect { |att|
         format("%s %d", att, status.send(att.downcase))
@@ -2946,7 +2959,9 @@ class Ximapd
 
   class IdleCommand < Command
     def exec
-      @session.sync
+      @session.synchronize do
+        @session.sync
+      end
       @session.send_continue_req("Waiting for DONE")
       line = @session.recv_line
       send_tagged_ok
@@ -2956,6 +2971,7 @@ class Ximapd
   class CloseCommand < Command
     def exec
       @session.synchronize do
+        @session.sync
         mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
@@ -2971,6 +2987,7 @@ class Ximapd
     def exec
       deleted_seqnos = nil
       @session.synchronize do
+        @session.sync
         mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
@@ -3311,7 +3328,7 @@ class Ximapd
         mails = @session.mail_store.uid_fetch(@session.current_mailbox,
                                               @sequence_set)
       end
-      if !@session.examine?
+      unless @session.read_only?
         for mail in mails
           @session.synchronize do
             @att.store(mail)

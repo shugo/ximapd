@@ -41,11 +41,11 @@ class XimapdSessionTest < Test::Unit::TestCase
     Ximapd::AuthenticateCramMD5Command.challenge_generator = Proc.new {
       "<12345@localhost>"
     }
-    #GC.disable # to avoid `BDB::Fatal: BUG : current_env not set'
+    @mail_store = Ximapd::MailStore.new(@config)
   end
 
   def teardown
-    #GC.enable
+    @mail_store.close
     Ximapd::AuthenticateCramMD5Command.challenge_generator =
       @challenge_generator
     system("rm", "-rf", @tmpdir)
@@ -55,7 +55,7 @@ class XimapdSessionTest < Test::Unit::TestCase
     sock = SpoofSocket.new(<<EOF)
 A001 CAPABILITY\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_match("* CAPABILITY IMAP4REV1 IDLE LOGINDISABLED AUTH=CRAM-MD5\r\n",
@@ -68,7 +68,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 NOOP\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 OK NOOP completed\r\n", sock.output.gets)
@@ -79,7 +79,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 LOGOUT\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_match(/\A\* BYE /, sock.output.gets)
@@ -93,7 +93,7 @@ EOF
 A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -106,7 +106,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 LOGIN foo bar\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 NO LOGIN failed\r\n", sock.output.gets)
@@ -118,7 +118,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 SELECT INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -131,7 +131,7 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 A003 SELECT inbox\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -172,7 +172,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -205,7 +205,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -242,7 +242,7 @@ A003 SELECT ml/ximapd-users\r
 A004 SELECT foo\r
 A005 SELECT ml\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -291,7 +291,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT ml/ximapd\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -314,7 +314,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 EXAMINE INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -327,7 +327,7 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 EXAMINE INBOX\r
 A003 EXAMINE inbox\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -368,7 +368,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 EXAMINE INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -401,7 +401,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 EXAMINE INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -439,7 +439,7 @@ A003 EXAMINE ml/ximapd-users\r
 A004 EXAMINE foo\r
 A005 EXAMINE ml\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -488,7 +488,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 EXAMINE ml/ximapd\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -511,7 +511,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 CREATE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -530,7 +530,7 @@ A007 LIST "" "*"\r
 A008 CREATE queries/ruby\r
 A009 CREATE queries/&-\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -577,7 +577,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 DELETE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -594,7 +594,7 @@ A005 DELETE foo\r
 A006 LIST "" "*"\r
 A007 DELETE inbox\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -622,7 +622,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 RENAME foo bar\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -640,7 +640,7 @@ A006 LIST "" "*"\r
 A007 RENAME bar baz/quux/quuux\r
 A008 LIST "" "*"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -676,7 +676,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 CREATE queries/ruby\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -693,7 +693,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 RENAME queries/ruby ruby\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -711,7 +711,7 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 RENAME ruby queries/&-\r
 A003 RENAME ruby queries/perl\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -729,7 +729,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 SUBSCRIBE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -741,7 +741,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SUBSCRIBE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -753,7 +753,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UNSUBSCRIBE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -765,7 +765,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UNSUBSCRIBE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -777,7 +777,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 LIST "" ""\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -793,7 +793,7 @@ A004 LIST "" %\r
 A005 LIST "" "INBOX"\r
 A006 LIST "" "InBox"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -819,7 +819,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 LSUB "" ""\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -833,7 +833,7 @@ A002 LSUB "" ""\r
 A003 LSUB "" "*"\r
 A004 LSUB "" "%"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -867,7 +867,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 STATUS "INBOX" (MESSAGES UNSEEN UIDNEXT)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -882,7 +882,7 @@ A003 SELECT "INBOX"\r
 A004 UID STORE #{uid1} FLAGS (\\Seen)\r
 A005 STATUS "INBOX" (MESSAGES UNSEEN UIDNEXT)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -926,7 +926,7 @@ EOF
 A001 APPEND INBOX {#{mail.length}}\r
 #{mail}\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ Ready for additional command text\r\n",
@@ -948,7 +948,7 @@ A006 APPEND foo (\\Seen) {#{mail.length}}\r
 A007 SELECT foo\r
 A008 FETCH 1 (BODY[] FLAGS)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1000,7 +1000,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 IDLE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1013,7 +1013,7 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 IDLE\r
 DONE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1027,7 +1027,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID CHECK\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1039,7 +1039,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID CHECK\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1054,7 +1054,7 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 A003 CHECK\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1077,7 +1077,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID CLOSE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1089,7 +1089,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID CLOSE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1104,7 +1104,7 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 A003 CLOSE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1149,7 +1149,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID EXPUNGE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1161,7 +1161,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID EXPUNGE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1183,7 +1183,7 @@ A008 UID SEARCH HEADER SUBJECT bye\r
 A009 UID SEARCH HEADER SUBJECT hello\r
 A010 UID SEARCH HEADER "X-Mail-Count" "12345"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1262,7 +1262,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID SEARCH BODY "hello world"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1274,7 +1274,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID SEARCH BODY "hello world"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1303,7 +1303,7 @@ A015 UID SEARCH 2\r
 A016 UID SEARCH 2:3\r
 A017 UID SEARCH 2:*\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1395,7 +1395,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 FETCH 1:* (UID FLAGS RFC822.SIZE)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1407,7 +1407,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 FETCH 1:* (UID FLAGS RFC822.SIZE)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1423,7 +1423,7 @@ A002 SELECT INBOX\r
 A003 FETCH 1:* (UID FLAGS RFC822.SIZE)\r
 A004 FETCH 1,2 (UID FLAGS RFC822.SIZE)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1503,7 +1503,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID FETCH 1 (FLAGS)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1515,7 +1515,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID FETCH 1 (FLAGS)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1541,7 +1541,7 @@ A012 UID FETCH 1 BODY[1]\r
 A013 UID FETCH 1 BODY.PEEK[HEADER]\r
 A014 UID FETCH 1 INTERNALDATE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1648,7 +1648,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID STORE 1 FLAGS (\\Seen NonJunk)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1660,7 +1660,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID STORE 1 FLAGS (\\Seen NonJunk)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1683,7 +1683,7 @@ A009 UID FETCH 1 (FLAGS)\r
 A010 UID STORE 1 -FLAGS.SILENT (NonJunk)\r
 A011 UID FETCH 1 (FLAGS)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1749,7 +1749,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID COPY 1:2 Trash\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1761,7 +1761,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID COPY 1:2 Trash\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1778,7 +1778,7 @@ A003 UID COPY 1:2 Trash\r
 A004 SELECT Trash\r
 A005 FETCH 1:* (UID BODY[] FLAGS)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
