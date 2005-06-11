@@ -24,7 +24,7 @@ Shugo Maeda <shugo@ruby-lang.org>
 
 == Install
 
-Copy ximapd under PATH.
+Copy bin/ximapd under PATH.
 
 == Setup
 

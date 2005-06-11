@@ -23,7 +23,7 @@ http://projects.netlab.jp/svn/ximapd/trunkから最新のソースコードを取得できます。
 
 == インストール
 
-ximapdをPATHにコピーしてください。
+bin/ximapdをPATHにコピーしてください。
 
 == セットアップ
 
