@@ -297,7 +297,6 @@ class Ximapd
     puts
     printf("  Platform    : %s\n", RUBY_PLATFORM)
     printf("  Ruby        : %s (%s)\n", RUBY_VERSION, RUBY_RELEASE_DATE)
-    #printf("  Berkeley DB : %s\n", XimapdBDB::VERSION)
     printf("  Rast        : %s\n", Rast::VERSION)
     begin
       require "openssl"
