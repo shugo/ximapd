@@ -3312,7 +3312,8 @@ class Ximapd
             @att.store(mail)
           end
           if !@att.silent?
-            @session.send_data("%d FETCH (FLAGS (%s))", mail.uid, mail.flags)
+            @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
+                               mail.uid, mail.flags, mail.uid)
           end
         end
       end

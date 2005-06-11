@@ -900,7 +900,8 @@ EOF
     assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen) UID #{uid1})\r\n",
+                 sock.output.gets)
     assert_equal("A004 OK UID STORE completed\r\n", sock.output.gets)
     assert_equal("* STATUS \"INBOX\" (MESSAGES 1 UNSEEN 0 UIDNEXT 2)\r\n",
                  sock.output.gets)
@@ -1329,7 +1330,8 @@ EOF
     assert_equal("A007 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1} #{uid3}\r\n", sock.output.gets)
     assert_equal("A008 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("* #{uid1} FETCH (FLAGS (\\Recent \\Seen) UID #{uid1})\r\n",
+                 sock.output.gets)
     assert_equal("A009 OK UID STORE completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
     assert_equal("A010 OK UID SEARCH completed\r\n", sock.output.gets)
@@ -1696,13 +1698,13 @@ EOF
     assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk))\r\n",
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk) UID 1)\r\n",
                  sock.output.gets)
     assert_equal("A003 OK UID STORE completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk \\Deleted))\r\n",
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk \\Deleted) UID 1)\r\n",
                  sock.output.gets)
     assert_equal("A004 OK UID STORE completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen \\Deleted))\r\n",
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen \\Deleted) UID 1)\r\n",
                  sock.output.gets)
     assert_equal("A005 OK UID STORE completed\r\n", sock.output.gets)
     assert_equal("A006 OK UID STORE completed\r\n", sock.output.gets)
