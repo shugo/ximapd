@@ -122,6 +122,7 @@ class Ximapd
     @args = nil
     @config = {}
     @server = nil
+    @mail_store = nil
     @logger = nil
     @threads = []
     @sessions = {}
@@ -229,7 +230,7 @@ class Ximapd
     Signal.trap("TERM", &method(:terminate))
     Signal.trap("INT", &method(:terminate))
     begin
-      mail_store = Ximapd::MailStore.new(@config)
+      @mail_store = Ximapd::MailStore.new(@config)
       begin
         loop do
           begin
@@ -242,14 +243,14 @@ class Ximapd
             end
           end
           Thread.start(sock) do |socket|
-            session = Session.new(@config, sock, mail_store)
+            session = Session.new(@config, sock, @mail_store)
             @sessions[Thread.current] = session
             session.start
             @sessions.delete(Thread.current)
           end
         end
       ensure
-        mail_store.close
+        @mail_store.close
       end
     rescue SystemExit
       raise
@@ -392,7 +393,7 @@ class Ximapd
     i = 1
     @sessions.each_key do |t|
       @logger.debug("close session \##{i}")
-      @monitor.synchronize do
+      @mail_store.synchronize do
         @logger.debug("raise TerminateException to #{t}")
         t.raise(TerminateException.new)
         @logger.debug("raised TerminateException to #{t}")
@@ -417,8 +418,7 @@ class Ximapd
 
   def terminate(sig)
     @logger.info("signal #{sig}")
-    @logger.debug(@sessions.keys.inspect)
-    @logger.debug(@monitor.inspect)
+    @logger.debug("sessions: #{@sessions.keys.inspect}")
     close_sessions
     @logger.info("terminated")
     exit
