@@ -3405,6 +3405,18 @@ class Ximapd
   class NotSelectableMailboxError < MailboxError; end
   class InvalidQueryError < StandardError; end
 
+  class Plugin
+    @@plugin_classes = []
+
+    def self.inherited(plugin_class)
+      @@plugin_classes.push(plugin_class)
+    end
+
+    def self.plugin_classes
+      return @@plugin_classes
+    end
+  end
+
   class Option
     def initialize(name, description)
       @name = name
