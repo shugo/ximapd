@@ -622,8 +622,8 @@ class Ximapd
         @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
         @mailbox_db["mailing-lists"] ||= {}
       end
-      flags_db_path = File.expand_path("flags.sdbm", @path)
-      @flags_db = SDBM.open(flags_db_path)
+      @flags_db_path = File.expand_path("flags.sdbm", @path)
+      @flags_db = nil
       @index_path = File.expand_path("index", @path)
       if !File.exist?(@index_path)
         Rast::DB.create(@index_path, INDEX_OPTIONS)
@@ -642,7 +642,6 @@ class Ximapd
     end
 
     def close
-      @flags_db.close
       @lock.close
     end
 
@@ -650,6 +649,7 @@ class Ximapd
       mon_enter
       if @lock_count == 0
         @lock.flock(File::LOCK_EX)
+        @flags_db = SDBM.open(@flags_db_path)
       end
       @lock_count += 1
     end
@@ -657,6 +657,8 @@ class Ximapd
     def unlock
       @lock_count -= 1
       if @lock_count == 0 && !@lock.closed?
+        @flags_db.close
+        @flags_db = nil
         @lock.flock(File::LOCK_UN)
       end
       mon_exit
@@ -929,8 +931,10 @@ class Ximapd
     end
 
     def import_mail(str, mailbox_name = nil, flags = "")
-      open_index do |index|
-        return import_mail_internal(index, str, mailbox_name, flags)
+      synchronize do
+        open_index do |index|
+          return import_mail_internal(index, str, mailbox_name, flags)
+        end
       end
     end
 
@@ -1321,7 +1325,7 @@ class Ximapd
       @seqno = seqno
       @uid = uid
       @doc_id = doc_id
-      @flags_db = @mailbox.mail_store.flags_db
+      @mail_store = @mailbox.mail_store
       @parsed_mail = nil
     end
 
@@ -1352,7 +1356,7 @@ class Ximapd
     end
 
     def flags(get_recent = true)
-      s = @flags_db[@uid.to_s].to_s
+      s = @mail_store.flags_db[@uid.to_s].to_s
       if get_recent && uid > @mailbox["last_peeked_uid"]
         if s.empty?
           return "\\Recent"
@@ -1365,7 +1369,7 @@ class Ximapd
     end
 
     def flags=(s)
-      @flags_db[@uid.to_s] = s
+      @mail_store.flags_db[@uid.to_s] = s
     end
 
     def path
@@ -2107,29 +2111,29 @@ class Ximapd
         s = Iconv.conv("utf-8", charset, astring)
         return HeaderSearchKey.new(header_name, s)
       when "ANSWERED"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Answered")
+        return FlagSearchKey.new(@session.mail_store, "\\Answered")
       when "DELETED"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Deleted")
+        return FlagSearchKey.new(@session.mail_store, "\\Deleted")
       when "DRAFT"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Draft")
+        return FlagSearchKey.new(@session.mail_store, "\\Draft")
       when "FLAGGED"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Flagged")
+        return FlagSearchKey.new(@session.mail_store, "\\Flagged")
       when "RECENT", "NEW"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Recent")
+        return FlagSearchKey.new(@session.mail_store, "\\Recent")
       when "SEEN"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Seen")
+        return FlagSearchKey.new(@session.mail_store, "\\Seen")
       when "UNANSWERED"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Answered")
+        return NoFlagSearchKey.new(@session.mail_store, "\\Answered")
       when "UNDELETED"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Deleted")
+        return NoFlagSearchKey.new(@session.mail_store, "\\Deleted")
       when "UNDRAFT"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Draft")
+        return NoFlagSearchKey.new(@session.mail_store, "\\Draft")
       when "UNFLAGGED"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Flagged")
+        return NoFlagSearchKey.new(@session.mail_store, "\\Flagged")
       when "UNSEEN"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Seen")
+        return NoFlagSearchKey.new(@session.mail_store, "\\Seen")
       when "OLD"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Recent")
+        return NoFlagSearchKey.new(@session.mail_store, "\\Recent")
       when /\A(\d+|\*)\z/
         return UidSearchKey.new(parse_seq_number($1))
       when /\A(\d+|\*):(\d+|\*)\z/
@@ -3016,9 +3020,9 @@ class Ximapd
       uids = nil
       @session.synchronize do
         uids = @session.mail_store.uid_search(@session.current_mailbox, query)
-      end
-      for key in @keys
-        uids = key.select(uids)
+        for key in @keys
+          uids = key.select(uids)
+        end
       end
       if uids.empty?
         @session.send_data("SEARCH")
@@ -3070,14 +3074,14 @@ class Ximapd
   end
 
   class FlagSearchKey < NullSearchKey
-    def initialize(flags_db, flag)
-      @flags_db = flags_db
+    def initialize(mail_store, flag)
+      @mail_store = mail_store
       @flag_re = Regexp.new(Regexp.quote(flag) + "\\b", true, "n")
     end
 
     def select(uids)
       return uids.select { |uid|
-        @flag_re.match(@flags_db[uid.to_s])
+        @flag_re.match(@mail_store.flags_db[uid.to_s])
       }
     end
   end
@@ -3085,7 +3089,7 @@ class Ximapd
   class NoFlagSearchKey < FlagSearchKey
     def select(uids)
       return uids.select { |uid|
-        !@flag_re.match(@flags_db[uid.to_s])
+        !@flag_re.match(@mail_store.flags_db[uid.to_s])
       }
     end
   end
@@ -3336,12 +3340,14 @@ class Ximapd
       end
       unless @session.read_only?
         for mail in mails
+          flags = nil
           @session.synchronize do
             @att.store(mail)
+            flags = mail.flags
           end
           if !@att.silent?
             @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
-                               mail.uid, mail.flags, mail.uid)
+                               mail.uid, flags, mail.uid)
           end
         end
       end
