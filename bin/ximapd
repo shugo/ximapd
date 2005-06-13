@@ -3160,9 +3160,12 @@ class Ximapd
                                           @sequence_set)
       end
       for mail in mails
-        data = @atts.collect { |att|
-          att.fetch(mail)
-        }.join(" ")
+        data = nil
+        @session.synchronize do
+          data = @atts.collect { |att|
+            att.fetch(mail)
+          }.join(" ")
+        end
         @session.send_data("%d FETCH (%s)", mail.seqno, data)
       end
       send_tagged_ok
@@ -3184,9 +3187,12 @@ class Ximapd
                                               @sequence_set)
       end
       for mail in mails
-        data = @atts.collect { |att|
-          att.fetch(mail)
-        }.join(" ")
+        data = nil
+        @session.synchronize do
+          data = @atts.collect { |att|
+            att.fetch(mail)
+          }.join(" ")
+        end
         @session.send_data("%d FETCH (%s)", mail.uid, data)
       end
       send_tagged_ok
