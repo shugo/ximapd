@@ -1639,9 +1639,9 @@ class Ximapd
         s = @sock.gets("\r\n")
         break unless s
         buf.concat(s)
-        if /\{(\d+)\}\r\n/n =~ s
+        if len = s.slice(/\{(\d+)\}\r\n/n, 1)
           send_continue_req("Ready for additional command text")
-          s = @sock.read($1.to_i)
+          s = @sock.read(len.to_i)
           buf.concat(s)
         else
           break
@@ -2540,7 +2540,7 @@ class Ximapd
           elsif $16
             return Token.new(T_EOF, $+)
           else
-            parse_error("[Net::IMAP BUG] BEG_REGEXP is invalid")
+            parse_error("[ximapd BUG] BEG_REGEXP is invalid")
           end
         else
           @str.index(/\S*/n, @pos)
@@ -2568,7 +2568,7 @@ class Ximapd
           elsif $7
             return Token.new(T_RPAR, $+)
           else
-            parse_error("[Net::IMAP BUG] BEG_REGEXP is invalid")
+            parse_error("[ximapd BUG] BEG_REGEXP is invalid")
           end
         else
           @str.index(/\S*/n, @pos)
@@ -2580,7 +2580,7 @@ class Ximapd
           if $1
             return Token.new(T_TEXT, $+)
           else
-            parse_error("[Net::IMAP BUG] TEXT_REGEXP is invalid")
+            parse_error("[ximapd BUG] TEXT_REGEXP is invalid")
           end
         else
           @str.index(/\S*/n, @pos)
@@ -2594,7 +2594,7 @@ class Ximapd
           elsif $2
             return Token.new(T_TEXT, $+)
           else
-            parse_error("[Net::IMAP BUG] RTEXT_REGEXP is invalid")
+            parse_error("[ximapd BUG] RTEXT_REGEXP is invalid")
           end
         else
           @str.index(/\S*/n, @pos)
@@ -2606,7 +2606,7 @@ class Ximapd
           if $1
             return Token.new(T_TEXT, $+)
           else
-            parse_error("[Net::IMAP BUG] CTEXT_REGEXP is invalid")
+            parse_error("[ximapd BUG] CTEXT_REGEXP is invalid")
           end
         else
           @str.index(/\S*/n, @pos) #/
