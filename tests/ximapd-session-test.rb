@@ -1551,6 +1551,7 @@ A011 UID FETCH 1 ENVELOPE\r
 A012 UID FETCH 1 BODY[1]\r
 A013 UID FETCH 1 BODY.PEEK[HEADER]\r
 A014 UID FETCH 1 INTERNALDATE\r
+A015 UID FETCH 2 BODY\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
@@ -1641,6 +1642,9 @@ EOF
     assert_equal("* 1 FETCH (UID 1 INTERNALDATE \"02-Apr-2005 00:07:54 +0900\")\r\n",
                  sock.output.gets)
     assert_equal("A014 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" 18 2)(\"TEXT\" \"PLAIN\" (\"NAME\" \"HELLO.TXT\") NIL NIL \"BASE64\" 16 1) \"MIXED\"))\r\n",
+                 sock.output.gets)
+    assert_equal("A015 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 

@@ -1476,7 +1476,7 @@ class Ximapd
 
     def body_internal(mail)
       if mail.multipart?
-        parts = mail.parts.collect { |part|
+        parts = mail.body.collect { |part|
           body_internal(part)
         }.join
         return format("(%s %s)", parts, quoted(upcase(mail.header.subtype)))
