@@ -78,7 +78,7 @@ rescue LoadError
 end
 
 module Rast
-  if !defined?(RESULT_ALL_ITEMS)
+  unless defined?(RESULT_ALL_ITEMS)
     if Rast::VERSION < "0.1.0"
       RESULT_ALL_ITEMS = 0
     else
@@ -167,6 +167,8 @@ class Ximapd
         }
         @config = config.merge(@config)
         check_config(@config)
+        dir = @config["filter_dir"] || File.join(@config["data_dir"], "filters")
+        Filter.directory = File.expand_path(dir)
       end
     rescue StandardError => e
       raise if @config["debug"]
@@ -219,7 +221,7 @@ class Ximapd
   def start
     @server = open_server
     @logger.info("started")
-    daemon if !@config["debug"]
+    daemon unless @config["debug"]
     @main_thread = Thread.current
     Signal.trap("TERM", &method(:terminate))
     Signal.trap("INT", &method(:terminate))
@@ -620,7 +622,7 @@ class Ximapd
       @flags_db_path = File.expand_path("flags.sdbm", @path)
       @flags_db = nil
       @index_path = File.expand_path("index", @path)
-      if !File.exist?(@index_path)
+      unless File.exist?(@index_path)
         Rast::DB.create(@index_path, INDEX_OPTIONS)
       end
       @default_charset = @config["default_charset"] || DEFAULT_CHARSET
@@ -634,6 +636,7 @@ class Ximapd
       lock_path = File.expand_path("lock", @path)
       @lock = File.open(lock_path, "w+")
       @lock_count = 0
+      @filters = Filter.create_filters(@config, self)
     end
 
     def close
@@ -1206,9 +1209,9 @@ class Ximapd
       end
       index.register(text, properties)
       s = properties["x-ml-name"]
-      if !s.empty?
+      unless s.empty?
         @mailbox_db.transaction do
-          if !@mailbox_db["mailing-lists"].key?(s)
+          unless @mailbox_db["mailing-lists"].key?(s)
             mbox = s.slice(/(.*) <.*>/u, 1) 
             if mbox.nil?
               mbox = s.slice(/<(.*)>/u, 1) 
@@ -2000,7 +2003,7 @@ class Ximapd
 
     def status_att
       att = atom.upcase
-      if !/\A(MESSAGES|RECENT|UIDNEXT|UIDVALIDITY|UNSEEN)\z/.match(att)
+      unless /\A(MESSAGES|RECENT|UIDNEXT|UIDVALIDITY|UNSEEN)\z/.match(att)
         parse_error("unknown att `%s'", att)
       end
       return att
@@ -2337,7 +2340,7 @@ class Ximapd
 
     def flag
       result = atom
-      if !EXACT_FLAG_REGEXP.match(s)
+      unless EXACT_FLAG_REGEXP.match(s)
         parse_error("invalid flag")
       end
       return result
@@ -2873,7 +2876,7 @@ class Ximapd
     end
 
     def exec
-      if !@reference_name.empty?
+      unless @reference_name.empty?
         @session.send_tagged_no(@tag, "%s failed", @name)
         return
       end
@@ -3164,7 +3167,7 @@ class Ximapd
   class UidFetchCommand < FetchCommand
     def initialize(sequence_set, atts)
       super(sequence_set, atts)
-      if !@atts[0].kind_of?(UidFetchAtt)
+      unless @atts[0].kind_of?(UidFetchAtt)
         @atts.unshift(UidFetchAtt.new)
       end
     end
@@ -3283,7 +3286,7 @@ class Ximapd
         end
         unless @peek
           flags = mail.flags(false)
-          if !/\\Seen\b/ni.match(flags)
+          unless /\\Seen\b/ni.match(flags)
             if flags.empty?
               flags = "\\Seen"
             else
@@ -3330,7 +3333,7 @@ class Ximapd
             @att.store(mail)
             flags = mail.flags
           end
-          if !@att.silent?
+          unless @att.silent?
             @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
                                mail.uid, flags, mail.uid)
           end
@@ -3402,15 +3405,46 @@ class Ximapd
   class NotSelectableMailboxError < MailboxError; end
   class InvalidQueryError < StandardError; end
 
-  class Plugin
-    @@plugin_classes = []
+  class Filter
+    @@directory = nil
+    @@loaded = false
+    @@filter_classes = []
 
-    def self.inherited(plugin_class)
-      @@plugin_classes.push(plugin_class)
+    def self.directory=(dir)
+      @@directory = dir
     end
 
-    def self.plugin_classes
-      return @@plugin_classes
+    def self.inherited(filter_class)
+      @@filter_classes.push(filter_class)
+    end
+
+    def self.create_filters(config, mail_store)
+      if !@@loaded && @@directory
+        logger = config["logger"]
+        Dir.glob(@@directory + "/*.rb") do |filename|
+          open(filename) do |f|
+            Ximapd.class_eval(f.read)
+          end
+          logger.debug("loaded filter: #{filename}")
+        end
+      end
+      return @@filter_classes.collect { |filter_class|
+        filter_class.new(config, mail_store)
+      }
+    end
+
+    def initialize(config, mail_store)
+      @config = config
+      @mail_store = mail_store
+      @logger = @config["logger"]
+      init_filter
+    end
+
+    def init_filter
+    end
+
+    def filter(mail)
+      raise ScriptError.new("subclass must override Filter#filter")
     end
   end
 
@@ -3482,6 +3516,7 @@ class Ximapd
     StringOption.new("user", "user"),
     StringOption.new("password", "password"),
     StringOption.new("data_dir", "data directory"),
+    StringOption.new("filter_dir", "filter directory"),
     StringOption.new("db_type", "database type (yaml, pstore)"),
     BoolOption.new("ssl", "use SSL"),
     StringOption.new("ssl_key", "path to SSL private key"),
