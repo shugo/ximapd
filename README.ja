@@ -8,8 +8,7 @@ ximapdは実験的なIMAPデーモンです。
 
 * Ruby 1.8.2 以降
 * Rast 0.0.1 以降
-* Ruby interface for BDB 0.5.4 以降
-* TMail 0.10.8 以降
+* RubyMail 0.17 以降
 
 == Subversionレポジトリ
 
