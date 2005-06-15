@@ -37,7 +37,7 @@ require "nkf"
 require "date"
 require "set"
 require "logger"
-require "tmail"
+require "rmail/parser"
 require "rast"
 require "optparse"
 require "sdbm"
@@ -74,12 +74,6 @@ begin
 rescue LoadError
   class ProgressBar < NullObject
     VERSION = "not available"
-  end
-end
-
-module TMail
-  def Decoder.decode(str, encoding = nil)
-    return str
   end
 end
 
@@ -622,6 +616,7 @@ class Ximapd
         @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
         @mailbox_db["mailing-lists"] ||= {}
       end
+      @mail_parser = RMail::Parser.new
       @flags_db_path = File.expand_path("flags.sdbm", @path)
       @flags_db = nil
       @index_path = File.expand_path("index", @path)
@@ -1197,7 +1192,7 @@ class Ximapd
       properties["x-mail-count"] = 0
       properties["mailbox-id"] = mailbox_id
       begin
-        m = TMail::Mail.parse(mail)
+        m = @mail_parser.parse(mail.gsub(/\r\n/, "\n"))
         text = extract_text(m)
         properties = extract_properties(m, properties)
       rescue Exception => e
@@ -1239,24 +1234,25 @@ class Ximapd
 
     def extract_text(mail)
       if mail.multipart?
-        return mail.parts.collect { |part|
+        return mail.body.collect { |part|
           extract_text(part)
         }.join("\n")
       else
-        case mail.content_type("text/plain")
+        case mail.header.content_type("text/plain")
         when "text/plain"
-          return get_body(mail)
+          return decode_body(mail)
         when "text/html", "text/xml"
-          return get_body(mail).gsub(/<.*?>/um, "")
+          return decode_body(mail).gsub(/<.*?>/um, "")
         else
           return ""
         end
       end
     end
 
-    def get_body(mail)
-      charset = mail.type_param("charset", @default_charset)
-      return to_utf8(mail.body, charset)
+    def decode_body(mail)
+      charset = mail.header.params("content-type", {})["charset"] ||
+        @default_charset
+      return to_utf8(mail.decode, charset)
     end
 
     def to_utf8(src, charset)
@@ -1272,21 +1268,21 @@ class Ximapd
         properties[field] = get_header_field(mail, field)
       end
       begin
-        properties["date"] = DateTime.parse(mail["date"].to_s).to_s
+        properties["date"] = DateTime.parse(mail.header["date"].to_s).to_s
       rescue Exception => e
         @logger.log_exception(e, nil, Logger::WARN)
       end
       s = nil
       @ml_header_fields.each do |field_name|
-        s ||= mail[field_name]
+        s ||= mail.header[field_name]
       end
       properties["x-ml-name"] = decode_encoded_word(s.to_s)
-      properties["x-mail-count"] = mail["x-mail-count"].to_s.to_i
+      properties["x-mail-count"] = mail.header["x-mail-count"].to_s.to_i
       return properties
     end
 
     def get_header_field(mail, field)
-      return decode_encoded_word(mail[field].to_s)
+      return decode_encoded_word(mail.header[field].to_s)
     end
 
     def decode_encoded_word(s)
@@ -1332,25 +1328,29 @@ class Ximapd
     def envelope
       mail = parsed_mail
       s = "("
-      s.concat(quoted(mail["date"]))
+      s.concat(quoted(mail.header["date"]))
       s.concat(" ")
-      s.concat(quoted(mail["subject"]))
+      s.concat(quoted(mail.header["subject"]))
       s.concat(" ")
-      s.concat(envelope_addrs(mail.from_addrs))
+      s.concat(envelope_addrs(mail.header.from))
       s.concat(" ")
-      s.concat(envelope_addrs(mail.from_addrs))
+      s.concat(envelope_addrs(mail.header.from))
       s.concat(" ")
-      s.concat(envelope_addrs(mail.reply_to_addrs || mail.from_addrs))
+      if mail.header.reply_to.empty?
+        s.concat(envelope_addrs(mail.header.from))
+      else
+        s.concat(envelope_addrs(mail.header.reply_to))
+      end
       s.concat(" ")
-      s.concat(envelope_addrs(mail.to_addrs))
+      s.concat(envelope_addrs(mail.header.to))
       s.concat(" ")
-      s.concat(envelope_addrs(mail.cc_addrs))
+      s.concat(envelope_addrs(mail.header.cc))
       s.concat(" ")
-      s.concat(envelope_addrs(mail.bcc_addrs))
+      s.concat(envelope_addrs(mail.header.bcc))
       s.concat(" ")
-      s.concat(quoted(mail.in_reply_to))
+      s.concat(quoted(mail.header["in-reply-to"]))
       s.concat(" ")
-      s.concat(quoted(mail.message_id))
+      s.concat(quoted(mail.header["message-id"]))
       s.concat(")")
       return s
     end
@@ -1446,7 +1446,7 @@ class Ximapd
 
     def parsed_mail
       if @parsed_mail.nil?
-        @parsed_mail = TMail::Mail.parse(to_s)
+        @parsed_mail = RMail::Parser.read(to_s.gsub(/\r\n/, "\n"))
       end
       return @parsed_mail
     end
@@ -1456,24 +1456,14 @@ class Ximapd
         return "NIL"
       else
         return "(" + addrs.collect { |addr|
-          if addr.address_group?
-            addr.flatten
-          else
-            addr
-          end
-        }.flatten.collect { |addr|
           envelope_addr(addr)
         }.join(" ") + ")"
       end
     end
 
     def envelope_addr(addr)
-      name = addr.phrase
-      if addr.routes.empty?
-        adl = nil
-      else
-        adl = addr.routes.collect { |i| "@" + i }.join(",") + ":"
-      end
+      name = addr.display_name
+      adl = nil
       if addr.local
         mailbox = addr.local.tr('"', '')
       else
@@ -1489,30 +1479,25 @@ class Ximapd
         parts = mail.parts.collect { |part|
           body_internal(part)
         }.join
-        return format("(%s %s)", parts, quoted(upcase(mail.sub_type)))
+        return format("(%s %s)", parts, quoted(upcase(mail.header.subtype)))
       else
         fields = []
-        content_type = mail["content-type"]
-        if content_type.nil?
-          params = "()"
-        else
-          params = "(" + content_type.params.collect { |k, v|
+        params = "(" + mail.header.params("content-type", {}).collect { |k, v|
             format("%s %s", quoted(upcase(k)), quoted(upcase(v)))
-          }.join(" ") + ")"
-        end
+        }.join(" ") + ")"
         fields.push(params)
         fields.push("NIL")
         fields.push("NIL")
         content_transfer_encoding =
-          (mail["content-transfer-encoding"] || "7BIT").to_s.upcase
+          (mail.header["content-transfer-encoding"] || "7BIT").to_s.upcase
         fields.push(quoted(content_transfer_encoding))
-        fields.push(mail.body.length.to_s)
-        if mail.main_type == "text"
+        fields.push(mail.body.gsub(/\n/, "\r\n").length.to_s)
+        if mail.header.media_type == "text"
           fields.push(mail.body.to_a.length.to_s)
         end
         return format("(%s %s %s)",
-                      quoted(upcase(mail.main_type)),
-                      quoted(upcase(mail.sub_type)),
+                      quoted(upcase(mail.header.media_type)),
+                      quoted(upcase(mail.header.subtype)),
                       fields.join(" "))
       end
     end

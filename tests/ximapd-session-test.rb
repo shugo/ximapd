@@ -1257,6 +1257,17 @@ Content-Type: text/plain; charset=iso-2022-jp
 こんにちは、みなさん
 EOF
     uid4 = mail_store.import_mail(mail4)
+    mail5 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
+Date: Sun, 03 Apr 2005 03:06:39 +0900
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: base64
+
+#{["こんにちは、みなさん"].pack("m").chop}
+EOF
+    uid5 = mail_store.import_mail(mail5)
     mail_store.close
 
     sock = SpoofSocket.new(<<EOF)
@@ -1308,10 +1319,10 @@ EOF
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
-    assert_equal("* 4 EXISTS\r\n", sock.output.gets)
-    assert_equal("* 4 RECENT\r\n", sock.output.gets)
+    assert_equal("* 5 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 5 RECENT\r\n", sock.output.gets)
     assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
-    assert_equal("* OK [UIDNEXT #{uid4 + 1}] Predicted next UID\r\n",
+    assert_equal("* OK [UIDNEXT #{uid5 + 1}] Predicted next UID\r\n",
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
@@ -1337,9 +1348,9 @@ EOF
     assert_equal("A010 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
     assert_equal("A011 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH #{uid4}\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid4} #{uid5}\r\n", sock.output.gets)
     assert_equal("A012 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH #{uid4}\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid4} #{uid5}\r\n", sock.output.gets)
     assert_equal("A013 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
     assert_equal("A014 OK UID SEARCH completed\r\n", sock.output.gets)
@@ -1349,7 +1360,7 @@ EOF
     assert_equal("* SEARCH 2 3\r\n",
                  sock.output.gets)
     assert_equal("A016 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH 2 3 4\r\n",
+    assert_equal("* SEARCH 2 3 4 5\r\n",
                  sock.output.gets)
     assert_equal("A017 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
