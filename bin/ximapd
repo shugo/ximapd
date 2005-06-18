@@ -101,6 +101,7 @@ class Ximapd
 
   LOG_SHIFT_AGE = 10
   LOG_SHIFT_SIZE = 1 * 1024 * 1024
+  TIMEZONE = Time.now.strftime("%z")
 
   @@debug = false
 
@@ -590,11 +591,14 @@ class Ximapd
     end
   end
 
+  MailData = Struct.new(:raw_data, :uid, :flags, :internal_date,
+                        :body, :properties)
+
   class MailStore
     include QueryFormat
     include MonitorMixin
 
-    attr_reader :flags_db
+    attr_reader :path, :flags_db
 
     def initialize(config)
       super()
@@ -929,19 +933,48 @@ class Ximapd
 
     def import_mail(str, mailbox_name = nil, flags = "", indate = nil)
       open_index do
-        mail = parse_mail(str, mailbox_name, indate)
-        path = get_mail_path(mail.uid, mail.internal_date)
-        FileUtils.mkdir_p(File.dirname(path))
-        File.open(path, "w") do |f|
-          f.flock(File::LOCK_EX)
-          f.print(mail.raw_data)
+        uid = nil
+        mailbox_id = nil
+        mailbox = nil
+        @mailbox_db.transaction do
+          uid = get_next_uid
+          mailbox_id = get_mailbox_id(mailbox_name)
+          mailbox = Mailbox.new(@config, mailbox_name,
+                                @mailbox_db["mailboxes"][mailbox_name], self)
         end
-        time = mail.internal_date.to_time
-        File.utime(time, time, path)
-        @flags_db[mail.uid.to_s] = flags
-        index_mail(mail)
+        mail = parse_mail(str, uid, mailbox_id, flags, indate)
+        mailbox.import(mail)
         @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}>")
         return mail.uid
+      end
+    end
+
+    def index_mail(mail)
+      @index.register(mail.body, mail.properties)
+      s = mail.properties["x-ml-name"]
+      unless s.empty?
+        @mailbox_db.transaction do
+          unless @mailbox_db["mailing-lists"].key?(s)
+            mbox = s.slice(/(.*) <.*>/u, 1) 
+            if mbox.nil?
+              mbox = s.slice(/<(.*)>/u, 1) 
+              if mbox.nil?
+                mbox = s.slice(/\S+@[^ \t;]+/u) 
+                if mbox.nil?
+                  mbox = s
+                end
+              end
+            end
+            @mailbox_db["mailing-lists"][s] = mail.uid
+            mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox))
+            query = format("x-ml-name = %s",
+                           quote_query(mail.properties["x-ml-name"]))
+            begin
+              create_mailbox_internal(mailbox_name, query)
+            rescue MailboxExistError
+            end
+          end
+        end
       end
     end
 
@@ -983,15 +1016,15 @@ class Ximapd
             last = seq_number.last == -1 ? result.items.length : seq_number.last
             for i in first .. last
               item = result.items[i - 1]
-              mail = mailbox.get_mail(i, item.properties[0], item.doc_id)
-              mail.internal_date = item.properties[1]
+              mail = mailbox.get_mail(i, item.properties[0], item.doc_id,
+                                      item.properties[1])
               mails.push(mail)
             end
           else
             item = result.items[seq_number - 1]
             next if item.nil?
-            mail = mailbox.get_mail(seq_number, item.properties[0], item.doc_id)
-            mail.internal_date = item.properties[1]
+            mail = mailbox.get_mail(seq_number, item.properties[0],
+                                    item.doc_id, item.properties[1])
             mails.push(mail)
           end
         end
@@ -1034,9 +1067,7 @@ class Ximapd
         result = index.search(query, options)
         return result.items.collect { |i|
           uid = i.properties[0]
-          mail = mailbox.get_mail(uid, uid, i.doc_id)
-          mail.internal_date = i.properties[1]
-          mail
+          mailbox.get_mail(uid, uid, i.doc_id, i.properties[1])
         }
       end
     end
@@ -1083,7 +1114,7 @@ class Ximapd
       str.sub!(/\AFrom\s+\S+\s+(.*)\r\n/) do
         if indate.nil?
           begin
-            indate = DateTime.strptime($1 + " " + Time.now.strftime("%z"),
+            indate = DateTime.strptime($1 + " " + TIMEZONE,
                                        "%a %b %d %H:%M:%S %Y %z")
           rescue
           end
@@ -1159,18 +1190,7 @@ class Ximapd
       end
     end
 
-    def get_mail_path(uid, indate)
-      relpath = format("%s/%d", indate.strftime("%Y/%m/%d"), uid)
-      return File.expand_path(relpath, @mail_path)
-    end
-
-    def parse_mail(mail, mailbox_name, indate)
-      mailbox_id = nil
-      uid = nil
-      @mailbox_db.transaction do
-        mailbox_id = get_mailbox_id(mailbox_name, mailbox_id)
-        uid = get_next_uid()
-      end
+    def parse_mail(mail, uid, mailbox_id, flags, indate)
       mail.gsub!(/\r?\n/, "\r\n")
       indate = strip_unix_from(mail, indate)
       if indate.nil?
@@ -1198,10 +1218,10 @@ class Ximapd
       if properties["mailbox-id"] == 0 && properties["x-ml-name"].empty?
         properties["mailbox-id"] = 1
       end
-      return MailData.new(mail, uid, indate, body, properties)
+      return MailData.new(mail, uid, flags, indate, body, properties)
     end
 
-    def get_mailbox_id(mailbox_name, mailbox_id)
+    def get_mailbox_id(mailbox_name)
       if mailbox_name.nil?
         mailbox_id = 0
       else
@@ -1217,41 +1237,10 @@ class Ximapd
       return mailbox_id
     end
 
-    def get_next_uid()
+    def get_next_uid
       @mailbox_db["status"]["last_uid"] += 1
       uid = @mailbox_db["status"]["last_uid"]
       return uid
-    end
-
-    MailData = Struct.new(:raw_data, :uid, :internal_date, :body, :properties)
-
-    def index_mail(mail)
-      @index.register(mail.body, mail.properties)
-      s = mail.properties["x-ml-name"]
-      unless s.empty?
-        @mailbox_db.transaction do
-          unless @mailbox_db["mailing-lists"].key?(s)
-            mbox = s.slice(/(.*) <.*>/u, 1) 
-            if mbox.nil?
-              mbox = s.slice(/<(.*)>/u, 1) 
-              if mbox.nil?
-                mbox = s.slice(/\S+@[^ \t;]+/u) 
-                if mbox.nil?
-                  mbox = s
-                end
-              end
-            end
-            @mailbox_db["mailing-lists"][s] = mail.uid
-            mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox))
-            query = format("x-ml-name = %s",
-                           quote_query(mail.properties["x-ml-name"]))
-            begin
-              create_mailbox_internal(mailbox_name, query)
-            rescue MailboxExistError
-            end
-          end
-        end
-      end
     end
 
     def extract_body(mail)
@@ -1326,23 +1315,44 @@ class Ximapd
       return @data[key]
     end
 
-    def get_mail(seqno, uid, doc_id)
-      return Mail.new(@config, self, seqno, uid, doc_id)
+    def get_mail(seqno, uid, doc_id, indate)
+      return Mail.new(@config, self, seqno, uid, doc_id, indate)
+    end
+
+    def import(mail_data)
+      path = get_mail_path(mail_data)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.open(path, "w") do |f|
+        f.flock(File::LOCK_EX)
+        f.print(mail_data.raw_data)
+      end
+      time = mail_data.internal_date.to_time
+      File.utime(time, time, path)
+      @mail_store.flags_db[mail_data.uid.to_s] = mail_data.flags
+      @mail_store.index_mail(mail_data)
+    end
+
+    def get_mail_path(mail)
+      relpath = format("mails/%s/%d",
+                       mail.internal_date.strftime("%Y/%m/%d"),
+                       mail.uid)
+      return File.expand_path(relpath, @mail_store.path)
     end
   end
 
   class Mail
     include DataFormat
 
-    attr_reader :mailbox, :seqno, :uid, :doc_id
-    attr_accessor :internal_date
+    attr_reader :mailbox, :seqno, :uid, :doc_id, :internal_date
 
-    def initialize(config, mailbox, seqno, uid, doc_id)
+    def initialize(config, mailbox, seqno, uid, doc_id, internal_date)
       @config = config
       @mailbox = mailbox
       @seqno = seqno
       @uid = uid
       @doc_id = doc_id
+      @internal_date = DateTime.strptime(internal_date[0, 19] + " " + TIMEZONE,
+                                         "%Y-%m-%dT%H:%M:%S %z")
       @mail_store = @mailbox.mail_store
       @parsed_mail = nil
     end
@@ -1395,8 +1405,7 @@ class Ximapd
     end
 
     def path
-      relpath = format("mails/%s/%d", internal_date[0, 10].tr("-", "/"), uid)
-      return File.expand_path(relpath, @config["data_dir"])
+      return @mailbox.get_mail_path(self)
     end
 
     def old_path
@@ -3226,9 +3235,8 @@ class Ximapd
     include DataFormat
 
     def fetch(mail)
-      datetime = DateTime.strptime(mail.internal_date)
-      return format("INTERNALDATE %s",
-                    quoted(datetime.strftime("%d-%b-%Y %H:%M:%S %z")))
+      indate = mail.internal_date.strftime("%d-%b-%Y %H:%M:%S %z")
+      return format("INTERNALDATE %s", quoted(indate))
     end
   end
 
