@@ -167,8 +167,8 @@ class Ximapd
         }
         @config = config.merge(@config)
         check_config(@config)
-        dir = @config["filter_dir"] || File.join(@config["data_dir"], "filters")
-        Filter.directory = File.expand_path(dir)
+        dir = @config["plugin_dir"] || File.join(@config["data_dir"], "plugins")
+        Plugin.directory = File.expand_path(dir)
       end
     rescue StandardError => e
       raise if @config["debug"]
@@ -636,7 +636,7 @@ class Ximapd
       lock_path = File.expand_path("lock", @path)
       @lock = File.open(lock_path, "w+")
       @lock_count = 0
-      @filters = Filter.create_filters(@config, self)
+      @plugins = Plugin.create_plugins(@config, self)
     end
 
     def close
@@ -783,7 +783,7 @@ class Ximapd
           Find.find(arg) do |filename|
             if File.file?(filename)
               open(filename) do |f|
-                uid = import_mail_internal(index, f.read, mailbox_name)
+                uid = import_mail(f.read, mailbox_name)
               end
             end
           end
@@ -875,9 +875,8 @@ class Ximapd
                     else
                       flags = ""
                     end
-                    import_mail_internal(index,
-                                         mail.attr["BODY[]"], mailbox_name,
-                                         flags, indate)
+                    import_mail(mail.attr["BODY[]"], mailbox_name,
+                                flags, indate)
                     #imported_uids.push(mail.attr["UID"])
                     imported_uids.add(mail.attr["UID"])
                     progress_bar.inc
@@ -928,11 +927,21 @@ class Ximapd
       @logger.info("imported from #{host}")
     end
 
-    def import_mail(str, mailbox_name = nil, flags = "")
-      synchronize do
-        open_index do |index|
-          return import_mail_internal(index, str, mailbox_name, flags)
+    def import_mail(str, mailbox_name = nil, flags = "", indate = nil)
+      open_index do
+        mail = parse_mail(str, mailbox_name, indate)
+        path = get_mail_path(mail.uid, mail.internal_date)
+        FileUtils.mkdir_p(File.dirname(path))
+        File.open(path, "w") do |f|
+          f.flock(File::LOCK_EX)
+          f.print(mail.raw_data)
         end
+        time = mail.internal_date.to_time
+        File.utime(time, time, path)
+        @flags_db[mail.uid.to_s] = flags
+        index_mail(mail)
+        @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}>")
+        return mail.uid
       end
     end
 
@@ -1051,20 +1060,37 @@ class Ximapd
     private
 
     def open_index(flags = Rast::DB::RDWR)
-      if @index_ref_count == 0
-        @index = Rast::DB.open(@index_path, flags,
-                               "sync_threshold_chars" => @sync_threshold_chars)
-      end
-      @index_ref_count += 1
-      begin
-        yield(@index)
-      ensure
-        @index_ref_count -= 1
+      synchronize do
         if @index_ref_count == 0
-          @index.close
-          @index = nil
+          @index = Rast::DB.open(@index_path, flags,
+                                 "sync_threshold_chars" =>
+                                   @sync_threshold_chars)
+        end
+        @index_ref_count += 1
+        begin
+          yield(@index)
+        ensure
+          @index_ref_count -= 1
+          if @index_ref_count == 0
+            @index.close
+            @index = nil
+          end
         end
       end
+    end
+
+    def strip_unix_from(str, indate)
+      str.sub!(/\AFrom\s+\S+\s+(.*)\r\n/) do
+        if indate.nil?
+          begin
+            indate = DateTime.strptime($1 + " " + Time.now.strftime("%z"),
+                                       "%a %b %d %H:%M:%S %Y %z")
+          rescue
+          end
+        end
+        ""
+      end
+      return indate
     end
 
     def mkdir_p(dirname)
@@ -1121,7 +1147,7 @@ class Ximapd
       f.each_line do |line|
         if /\AFrom\s+\S+\s+[A-Z][a-z]{2} [A-Z][a-z]{2}\s+\d+ \d\d:\d\d:\d\d \d+/.match(line)
           if s
-            uid = import_mail_internal(index, s, mailbox_name)
+            uid = import_mail(s, mailbox_name)
           end
           s = line
         else
@@ -1129,55 +1155,8 @@ class Ximapd
         end
       end
       if s
-        uid = import_mail_internal(index, s, mailbox_name)
+        uid = import_mail(s, mailbox_name)
       end
-    end
-
-    def import_mail_internal(index, str, mailbox_name = nil, flags = "",
-                             indate = nil)
-      mailbox_id = nil
-      uid = nil
-      @mailbox_db.transaction do
-        if mailbox_name.nil?
-          mailbox_id = 0
-        else
-          mailbox = @mailbox_db["mailboxes"][mailbox_name]
-          if mailbox.nil?
-            raise NoMailboxError.new("no such mailbox")
-          end
-          mailbox_id = mailbox["id"]
-          if mailbox_id.nil?
-            raise MailboxAccessError.new("can't import to mailbox without id")
-          end
-        end
-        @mailbox_db["status"]["last_uid"] += 1
-        uid = @mailbox_db["status"]["last_uid"]
-      end
-      s = str.gsub(/\r?\n/, "\r\n").sub(/\AFrom\s+\S+\s+(.*)\r\n/) {
-        if indate.nil?
-          begin
-            indate = DateTime.strptime($1 + " " + Time.now.strftime("%z"),
-                                       "%a %b %d %H:%M:%S %Y %z")
-          rescue
-          end
-        end
-        ""
-      }
-      if indate.nil?
-        indate = DateTime.now
-      end
-      path = get_mail_path(uid, indate)
-      FileUtils.mkdir_p(File.dirname(path))
-      File.open(path, "w") do |f|
-        f.flock(File::LOCK_EX)
-        f.print(s)
-      end
-      time = indate.to_time
-      File.utime(time, time, path)
-      @flags_db[uid.to_s] = flags
-      properties = index_mail(index, uid, s, mailbox_id, indate)
-      @logger.add(Logger::INFO, "imported: uid=#{uid} from=<#{properties['from']}> subject=<#{properties['subject']}> date=<#{properties['date']}>")
-      return uid
     end
 
     def get_mail_path(uid, indate)
@@ -1185,7 +1164,18 @@ class Ximapd
       return File.expand_path(relpath, @mail_path)
     end
 
-    def index_mail(index, uid, mail, mailbox_id, indate)
+    def parse_mail(mail, mailbox_name, indate)
+      mailbox_id = nil
+      uid = nil
+      @mailbox_db.transaction do
+        mailbox_id = get_mailbox_id(mailbox_name, mailbox_id)
+        uid = get_next_uid()
+      end
+      mail.gsub!(/\r?\n/, "\r\n")
+      indate = strip_unix_from(mail, indate)
+      if indate.nil?
+        indate = DateTime.now
+      end
       properties = Hash.new("")
       properties["uid"] = uid
       properties["size"] = mail.size
@@ -1196,19 +1186,48 @@ class Ximapd
       properties["mailbox-id"] = mailbox_id
       begin
         m = @mail_parser.parse(mail.gsub(/\r\n/, "\n"))
-        text = extract_text(m)
+        body = extract_body(m)
         properties = extract_properties(m, properties)
       rescue Exception => e
+        raise
         @logger.log_exception(e, "failed to parse mail uid=#{uid}",
                               Logger::WARN)
         header, body = *mail.split(/^\r\n/)
-        text = to_utf8(body, @default_charset)
+        body = to_utf8(body, @default_charset)
       end
       if properties["mailbox-id"] == 0 && properties["x-ml-name"].empty?
         properties["mailbox-id"] = 1
       end
-      index.register(text, properties)
-      s = properties["x-ml-name"]
+      return MailData.new(mail, uid, indate, body, properties)
+    end
+
+    def get_mailbox_id(mailbox_name, mailbox_id)
+      if mailbox_name.nil?
+        mailbox_id = 0
+      else
+        mailbox = @mailbox_db["mailboxes"][mailbox_name]
+        if mailbox.nil?
+          raise NoMailboxError.new("no such mailbox")
+        end
+        mailbox_id = mailbox["id"]
+        if mailbox_id.nil?
+          raise MailboxAccessError.new("can't import to mailbox without id")
+        end
+      end
+      return mailbox_id
+    end
+
+    def get_next_uid()
+      @mailbox_db["status"]["last_uid"] += 1
+      uid = @mailbox_db["status"]["last_uid"]
+      return uid
+    end
+
+    MailData = Struct.new(:raw_data, :uid, :internal_date, :body, :properties)
+
+    def index_mail(mail)
+      @index.register(mail.body, mail.properties)
+      s = mail.properties["x-ml-name"]
       unless s.empty?
         @mailbox_db.transaction do
           unless @mailbox_db["mailing-lists"].key?(s)
@@ -1222,9 +1241,10 @@ class Ximapd
                 end
               end
             end
-            @mailbox_db["mailing-lists"][s] = uid
+            @mailbox_db["mailing-lists"][s] = mail.uid
             mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox))
-            query = format("x-ml-name = %s", quote_query(properties["x-ml-name"]))
+            query = format("x-ml-name = %s",
+                           quote_query(mail.properties["x-ml-name"]))
             begin
               create_mailbox_internal(mailbox_name, query)
             rescue MailboxExistError
@@ -1232,13 +1252,12 @@ class Ximapd
           end
         end
       end
-      return properties
     end
 
-    def extract_text(mail)
+    def extract_body(mail)
       if mail.multipart?
         return mail.body.collect { |part|
-          extract_text(part)
+          extract_body(part)
         }.join("\n")
       else
         case mail.header.content_type("text/plain")
@@ -3405,31 +3424,31 @@ class Ximapd
   class NotSelectableMailboxError < MailboxError; end
   class InvalidQueryError < StandardError; end
 
-  class Filter
+  class Plugin
     @@directory = nil
     @@loaded = false
-    @@filter_classes = []
+    @@plugin_classes = []
 
     def self.directory=(dir)
       @@directory = dir
     end
 
-    def self.inherited(filter_class)
-      @@filter_classes.push(filter_class)
+    def self.inherited(plugin_class)
+      @@plugin_classes.push(plugin_class)
     end
 
-    def self.create_filters(config, mail_store)
+    def self.create_plugins(config, mail_store)
       if !@@loaded && @@directory
         logger = config["logger"]
         Dir.glob(@@directory + "/*.rb") do |filename|
           open(filename) do |f|
             Ximapd.class_eval(f.read)
           end
-          logger.debug("loaded filter: #{filename}")
+          logger.debug("loaded plugin: #{filename}")
         end
       end
-      return @@filter_classes.collect { |filter_class|
-        filter_class.new(config, mail_store)
+      return @@plugin_classes.collect { |plugin_class|
+        plugin_class.new(config, mail_store)
       }
     end
 
@@ -3437,14 +3456,14 @@ class Ximapd
       @config = config
       @mail_store = mail_store
       @logger = @config["logger"]
-      init_filter
+      init_plugin
     end
 
-    def init_filter
+    def init_plugin
     end
 
     def filter(mail)
-      raise ScriptError.new("subclass must override Filter#filter")
+      return nil
     end
   end
 
