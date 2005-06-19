@@ -966,8 +966,7 @@ class Ximapd
 
     def get_mailbox(name)
       @mailbox_db.transaction do
-        return Mailbox.new(@config, name,
-                           @mailbox_db["mailboxes"][name], self)
+        get_mailbox_internal(name)
       end
     end
 
@@ -1030,6 +1029,11 @@ class Ximapd
       }
     end
 
+    def get_mailbox_internal(name)
+      return Mailbox.new(@config, name,
+                         @mailbox_db["mailboxes"][name], self)
+    end
+
     def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil)
       uid = nil
       mailbox_id = nil
@@ -1037,8 +1041,7 @@ class Ximapd
       @mailbox_db.transaction do
         uid = get_next_uid
         mailbox_id = get_mailbox_id(mailbox_name)
-        mailbox = Mailbox.new(@config, mailbox_name,
-                              @mailbox_db["mailboxes"][mailbox_name], self)
+        mailbox = get_mailbox_internal(mailbox_name)
       end
       mail = parse_mail(str, uid, mailbox_id, flags, indate)
       mailbox.import(mail)
