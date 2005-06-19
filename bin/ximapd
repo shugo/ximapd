@@ -976,100 +976,6 @@ class Ximapd
       end
     end
 
-    def uid_search(mailbox_name, query)
-      mailbox = get_mailbox(mailbox_name)
-      open_index do |index|
-        options = {
-          "properties" => ["uid"],
-          "start_no" => 0,
-          "num_items" => Rast::RESULT_ALL_ITEMS,
-          "sort_method" => Rast::SORT_METHOD_PROPERTY,
-          "sort_property" => "uid",
-          "sort_order" => Rast::SORT_ORDER_ASCENDING
-        }
-        #if mailbox_name != "INBOX"
-        #  query += " " + mailbox["query"]
-        #end
-        query += " " + mailbox["query"]
-        result = index.search(query, options)
-        return result.items.collect { |i| i.properties[0] }
-      end
-    end
-
-    def fetch(mailbox_name, sequence_set)
-      mailbox = get_mailbox(mailbox_name)
-      open_index do |index|
-        result = index.search(mailbox["query"],
-                              "properties" => ["uid", "internal-date"],
-                              "start_no" => 0,
-                              "num_items" => Rast::RESULT_ALL_ITEMS,
-                              "sort_method" => Rast::SORT_METHOD_PROPERTY,
-                              "sort_property" => "uid",
-                              "sort_order" => Rast::SORT_ORDER_ASCENDING)
-        mails = []
-        sequence_set.each do |seq_number|
-          case seq_number
-          when Range
-            first = seq_number.first
-            last = seq_number.last == -1 ? result.items.length : seq_number.last
-            for i in first .. last
-              item = result.items[i - 1]
-              mail = mailbox.get_mail(i, item.properties[0], item.doc_id,
-                                      item.properties[1])
-              mails.push(mail)
-            end
-          else
-            item = result.items[seq_number - 1]
-            next if item.nil?
-            mail = mailbox.get_mail(seq_number, item.properties[0],
-                                    item.doc_id, item.properties[1])
-            mails.push(mail)
-          end
-        end
-        return mails
-      end
-    end
-
-    def uid_fetch(mailbox_name, sequence_set)
-      mailbox = get_mailbox(mailbox_name)
-      open_index do |index|
-        options = {
-          "properties" => ["uid", "internal-date"],
-          "start_no" => 0,
-          "num_items" => Rast::RESULT_ALL_ITEMS,
-          "sort_method" => Rast::SORT_METHOD_PROPERTY,
-          "sort_property" => "uid",
-          "sort_order" => Rast::SORT_ORDER_ASCENDING
-        }
-        additional_queries = sequence_set.collect { |seq_number|
-          case seq_number
-          when Range
-            q = ""
-            if seq_number.first > 1
-              q += format(" uid >= %d", seq_number.first)
-            end
-            if seq_number.last != -1
-              q += format(" uid <= %d", seq_number.last)
-            end
-            q
-          else
-            format("uid = %d", seq_number)
-          end
-        }.reject { |q| q.empty? }
-        if additional_queries.empty?
-          query = mailbox["query"]
-        else
-          query = mailbox["query"] +
-            " ( " + additional_queries.join(" | ") + " )"
-        end
-        result = index.search(query, options)
-        return result.items.collect { |i|
-          uid = i.properties[0]
-          mailbox.get_mail(uid, uid, i.doc_id, i.properties[1])
-        }
-      end
-    end
-
     def get_mailbox(name)
       @mailbox_db.transaction do
         return Mailbox.new(@config, name,
@@ -1085,8 +991,6 @@ class Ximapd
         end
       end
     end
-
-    private
 
     def open_index(flags = Rast::DB::RDWR)
       synchronize do
@@ -1107,6 +1011,8 @@ class Ximapd
         end
       end
     end
+
+    private
 
     def strip_unix_from(str, indate)
       str.sub!(/\AFrom\s+\S+\s+(.*)\r\n/) do
@@ -1335,6 +1241,94 @@ class Ximapd
                        mail.internal_date.strftime("%Y/%m/%d"),
                        mail.uid)
       return File.expand_path(relpath, @mail_store.path)
+    end
+
+    def uid_search(query)
+      @mail_store.open_index do |index|
+        options = {
+          "properties" => ["uid"],
+          "start_no" => 0,
+          "num_items" => Rast::RESULT_ALL_ITEMS,
+          "sort_method" => Rast::SORT_METHOD_PROPERTY,
+          "sort_property" => "uid",
+          "sort_order" => Rast::SORT_ORDER_ASCENDING
+        }
+        query += " " + self["query"]
+        result = index.search(query, options)
+        return result.items.collect { |i| i.properties[0] }
+      end
+    end
+
+    def fetch(sequence_set)
+      @mail_store.open_index do |index|
+        result = index.search(self["query"],
+                              "properties" => ["uid", "internal-date"],
+                              "start_no" => 0,
+                              "num_items" => Rast::RESULT_ALL_ITEMS,
+                              "sort_method" => Rast::SORT_METHOD_PROPERTY,
+                              "sort_property" => "uid",
+                              "sort_order" => Rast::SORT_ORDER_ASCENDING)
+        mails = []
+        sequence_set.each do |seq_number|
+          case seq_number
+          when Range
+            first = seq_number.first
+            last = seq_number.last == -1 ? result.items.length : seq_number.last
+            for i in first .. last
+              item = result.items[i - 1]
+              mail = get_mail(i, item.properties[0], item.doc_id,
+                              item.properties[1])
+              mails.push(mail)
+            end
+          else
+            item = result.items[seq_number - 1]
+            next if item.nil?
+            mail = get_mail(seq_number, item.properties[0],
+                            item.doc_id, item.properties[1])
+            mails.push(mail)
+          end
+        end
+        return mails
+      end
+    end
+
+    def uid_fetch(sequence_set)
+      @mail_store.open_index do |index|
+        options = {
+          "properties" => ["uid", "internal-date"],
+          "start_no" => 0,
+          "num_items" => Rast::RESULT_ALL_ITEMS,
+          "sort_method" => Rast::SORT_METHOD_PROPERTY,
+          "sort_property" => "uid",
+          "sort_order" => Rast::SORT_ORDER_ASCENDING
+        }
+        additional_queries = sequence_set.collect { |seq_number|
+          case seq_number
+          when Range
+            q = ""
+            if seq_number.first > 1
+              q += format(" uid >= %d", seq_number.first)
+            end
+            if seq_number.last != -1
+              q += format(" uid <= %d", seq_number.last)
+            end
+            q
+          else
+            format("uid = %d", seq_number)
+          end
+        }.reject { |q| q.empty? }
+        if additional_queries.empty?
+          query = self["query"]
+        else
+          query = self["query"] +
+            " ( " + additional_queries.join(" | ") + " )"
+        end
+        result = index.search(query, options)
+        return result.items.collect { |i|
+          uid = i.properties[0]
+          get_mail(uid, uid, i.doc_id, i.properties[1])
+        }
+      end
     end
   end
 
@@ -2990,7 +2984,8 @@ class Ximapd
     def exec
       @session.synchronize do
         @session.sync
-        mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
+        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mails = mailbox.fetch([1..-1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
         }
@@ -3006,7 +3001,8 @@ class Ximapd
       deleted_seqnos = nil
       @session.synchronize do
         @session.sync
-        mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
+        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mails = mailbox.fetch([1..-1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
         }.reverse
@@ -3033,7 +3029,8 @@ class Ximapd
       }.join(" ")
       uids = nil
       @session.synchronize do
-        uids = @session.mail_store.uid_search(@session.current_mailbox, query)
+        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        uids = mailbox.uid_search(query)
         for key in @keys
           uids = key.select(uids)
         end
@@ -3174,8 +3171,8 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mails = @session.mail_store.fetch(@session.current_mailbox,
-                                          @sequence_set)
+        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mails = mailbox.fetch(@sequence_set)
       end
       for mail in mails
         data = nil
@@ -3201,8 +3198,8 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mails = @session.mail_store.uid_fetch(@session.current_mailbox,
-                                              @sequence_set)
+        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mails = mailbox.uid_fetch(@sequence_set)
       end
       for mail in mails
         data = nil
@@ -3348,8 +3345,8 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mails = @session.mail_store.uid_fetch(@session.current_mailbox,
-                                              @sequence_set)
+        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mails = mailbox.uid_fetch(@sequence_set)
       end
       unless @session.read_only?
         for mail in mails
@@ -3410,8 +3407,8 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mails = @session.mail_store.uid_fetch(@session.current_mailbox,
-                                              @sequence_set)
+        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mails = mailbox.uid_fetch(@sequence_set)
       end
       for mail in mails
         @session.synchronize do

@@ -59,7 +59,8 @@ Content-Type: text/plain; charset=US-ASCII
 Hello world
 EOF
     uid1 = mail_store.import_mail(mail1)
-    mails = mail_store.uid_fetch("INBOX", [uid1])
+    inbox = mail_store.get_mailbox("INBOX")
+    mails = inbox.uid_fetch([uid1])
     assert_equal(1, mails.length)
     m = mails[0]
     assert_equal(uid1, m.uid)
@@ -81,7 +82,7 @@ Hello world
 EOF
     uid2 = mail_store.import_mail(mail2)
     assert_equal(uid1 + 1, uid2)
-    mails = mail_store.uid_fetch("INBOX", [uid2])
+    mails = inbox.uid_fetch([uid2])
     assert_equal(1, mails.length)
     m = mails[0]
     assert_equal(uid2, m.uid)
