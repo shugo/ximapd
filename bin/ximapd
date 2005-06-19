@@ -2654,6 +2654,7 @@ class Ximapd
     def session=(session)
       @session = session
       @config = session.config
+      @mail_store = session.mail_store
     end
 
     def send_tagged_ok(code = nil)
@@ -2785,8 +2786,8 @@ class Ximapd
       begin
         status = nil
         @session.synchronize do
-          status = @session.mail_store.get_mailbox_status(@mailbox_name,
-                                                          @session.read_only?)
+          status = @mail_store.get_mailbox_status(@mailbox_name,
+                                                  @session.read_only?)
         end
         @session.send_data("%d EXISTS", status.messages)
         @session.send_data("%d RECENT", status.recent)
@@ -2839,7 +2840,7 @@ class Ximapd
     def exec
       begin
         @session.synchronize do
-          @session.mail_store.create_mailbox(@mailbox_name)
+          @mail_store.create_mailbox(@mailbox_name)
         end
         send_tagged_ok
       rescue InvalidQueryError
@@ -2859,7 +2860,7 @@ class Ximapd
         return
       end
       @session.synchronize do
-        @session.mail_store.delete_mailbox(@mailbox_name)
+        @mail_store.delete_mailbox(@mailbox_name)
       end
       send_tagged_ok
     end
@@ -2878,7 +2879,7 @@ class Ximapd
       end
       begin
         @session.synchronize do
-          @session.mail_store.rename_mailbox(@mailbox_name, @new_mailbox_name)
+          @mail_store.rename_mailbox(@mailbox_name, @new_mailbox_name)
         end
         send_tagged_ok
       rescue InvalidQueryError
@@ -2918,7 +2919,7 @@ class Ximapd
       re = Regexp.new("\\A" + pat + "\\z", nil, "n")
       mailboxes = nil
       @session.synchronize do
-        mailboxes = @session.mail_store.mailboxes.to_a.select { |mbox_name,|
+        mailboxes = @mail_store.mailboxes.to_a.select { |mbox_name,|
           re.match(mbox_name)
         }
       end
@@ -2941,7 +2942,7 @@ class Ximapd
     def exec
       status = nil
       @session.synchronize do
-        status = @session.mail_store.get_mailbox_status(@mailbox_name,
+        status = @mail_store.get_mailbox_status(@mailbox_name,
                                                         @session.read_only?)
       end
       s = @atts.collect { |att|
@@ -2962,8 +2963,7 @@ class Ximapd
 
     def exec
       @session.synchronize do
-        @session.mail_store.import_mail(@message, @mailbox_name,
-                                        @flags.join(" "))
+        @mail_store.import_mail(@message, @mailbox_name, @flags.join(" "))
       end
       send_tagged_ok
     end
@@ -2984,12 +2984,12 @@ class Ximapd
     def exec
       @session.synchronize do
         @session.sync
-        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
         mails = mailbox.fetch([1..-1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
         }
-        @session.mail_store.delete_mails(deleted_mails)
+        @mail_store.delete_mails(deleted_mails)
       end
       @session.close_mailbox
       send_tagged_ok
@@ -3001,7 +3001,7 @@ class Ximapd
       deleted_seqnos = nil
       @session.synchronize do
         @session.sync
-        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
         mails = mailbox.fetch([1..-1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
@@ -3009,7 +3009,7 @@ class Ximapd
         deleted_seqnos = deleted_mails.collect { |mail|
           mail.seqno
         }
-        @session.mail_store.delete_mails(deleted_mails)
+        @mail_store.delete_mails(deleted_mails)
       end
       for seqno in deleted_seqnos
         @session.send_data("%d EXPUNGE", seqno)
@@ -3029,7 +3029,7 @@ class Ximapd
       }.join(" ")
       uids = nil
       @session.synchronize do
-        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
         uids = mailbox.uid_search(query)
         for key in @keys
           uids = key.select(uids)
@@ -3171,7 +3171,7 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
         mails = mailbox.fetch(@sequence_set)
       end
       for mail in mails
@@ -3198,7 +3198,7 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
         mails = mailbox.uid_fetch(@sequence_set)
       end
       for mail in mails
@@ -3345,7 +3345,7 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
         mails = mailbox.uid_fetch(@sequence_set)
       end
       unless @session.read_only?
@@ -3407,12 +3407,12 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mailbox = @session.mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
         mails = mailbox.uid_fetch(@sequence_set)
       end
       for mail in mails
         @session.synchronize do
-          @session.mail_store.import_mail(mail.to_s, @mailbox_name)
+          @mail_store.import_mail(mail.to_s, @mailbox_name)
         end
       end
       send_tagged_ok
