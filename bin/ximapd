@@ -787,7 +787,7 @@ class Ximapd
           Find.find(arg) do |filename|
             if File.file?(filename)
               open(filename) do |f|
-                uid = import_mail(f.read, mailbox_name)
+                uid = import_mail_internal(f.read, mailbox_name)
               end
             end
           end
@@ -796,7 +796,7 @@ class Ximapd
     end
 
     def import_file(f, mailbox_name = nil)
-      return import_mail(f.read, mailbox_name)
+      return import_mail_internal(f.read, mailbox_name)
     end
 
     def import_mbox(args, mailbox_name = nil)
@@ -878,8 +878,8 @@ class Ximapd
                     else
                       flags = ""
                     end
-                    import_mail(mail.attr["BODY[]"], mailbox_name,
-                                flags, indate)
+                    import_mail_internal(mail.attr["BODY[]"], mailbox_name,
+                                         flags, indate)
                     imported_uids.add(mail.attr["UID"])
                     progress_bar.inc
                     imap.responses["FETCH"].clear
@@ -931,19 +931,7 @@ class Ximapd
 
     def import_mail(str, mailbox_name = nil, flags = "", indate = nil)
       open_index do
-        uid = nil
-        mailbox_id = nil
-        mailbox = nil
-        @mailbox_db.transaction do
-          uid = get_next_uid
-          mailbox_id = get_mailbox_id(mailbox_name)
-          mailbox = Mailbox.new(@config, mailbox_name,
-                                @mailbox_db["mailboxes"][mailbox_name], self)
-        end
-        mail = parse_mail(str, uid, mailbox_id, flags, indate)
-        mailbox.import(mail)
-        @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}>")
-        return mail.uid
+        import_mail_internal(str, mailbox_name, flags, indate)
       end
     end
 
@@ -1042,6 +1030,22 @@ class Ximapd
       }
     end
 
+    def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil)
+      uid = nil
+      mailbox_id = nil
+      mailbox = nil
+      @mailbox_db.transaction do
+        uid = get_next_uid
+        mailbox_id = get_mailbox_id(mailbox_name)
+        mailbox = Mailbox.new(@config, mailbox_name,
+                              @mailbox_db["mailboxes"][mailbox_name], self)
+      end
+      mail = parse_mail(str, uid, mailbox_id, flags, indate)
+      mailbox.import(mail)
+      @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}>")
+      return mail.uid
+    end
+
     def create_mailbox_internal(name, query = nil)
       if @mailbox_db["mailboxes"].key?(name)
         raise MailboxExistError, format("mailbox already exist - %s", name)
@@ -1082,7 +1086,7 @@ class Ximapd
       f.each_line do |line|
         if /\AFrom\s+\S+\s+[A-Z][a-z]{2} [A-Z][a-z]{2}\s+\d+ \d\d:\d\d:\d\d \d+/.match(line)
           if s
-            uid = import_mail(s, mailbox_name)
+            uid = import_mail_internal(s, mailbox_name)
           end
           s = line
         else
@@ -1090,7 +1094,7 @@ class Ximapd
         end
       end
       if s
-        uid = import_mail(s, mailbox_name)
+        uid = import_mail_internal(s, mailbox_name)
       end
     end
 
