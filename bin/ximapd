@@ -856,7 +856,6 @@ class Ximapd
               imap.select(folder.name)
               mail_count = imap.responses["EXISTS"][-1]
               next if mail_count == 0
-              #imported_uids = []
               imported_uids = Set.new
               progress_bar = NullObject.new
               handler = Proc.new { |resp|
@@ -881,7 +880,6 @@ class Ximapd
                     end
                     import_mail(mail.attr["BODY[]"], mailbox_name,
                                 flags, indate)
-                    #imported_uids.push(mail.attr["UID"])
                     imported_uids.add(mail.attr["UID"])
                     progress_bar.inc
                     imap.responses["FETCH"].clear
