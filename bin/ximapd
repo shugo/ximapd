@@ -1030,8 +1030,8 @@ class Ximapd
     end
 
     def get_mailbox_internal(name)
-      return Mailbox.new(@config, name,
-                         @mailbox_db["mailboxes"][name], self)
+      return SearchBasedMailbox.new(@config, name,
+                                    @mailbox_db["mailboxes"][name], self)
     end
 
     def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil)
@@ -1225,11 +1225,9 @@ class Ximapd
     def [](key)
       return @data[key]
     end
+  end
 
-    def get_mail(seqno, uid, doc_id, indate)
-      return Mail.new(@config, self, seqno, uid, doc_id, indate)
-    end
-
+  class SearchBasedMailbox < Mailbox
     def import(mail_data)
       path = get_mail_path(mail_data)
       FileUtils.mkdir_p(File.dirname(path))
@@ -1283,14 +1281,14 @@ class Ximapd
             last = seq_number.last == -1 ? result.items.length : seq_number.last
             for i in first .. last
               item = result.items[i - 1]
-              mail = get_mail(i, item.properties[0], item.doc_id,
-                              item.properties[1])
+              mail = Mail.new(@config, self, i, item.properties[0],
+                              item.doc_id, item.properties[1])
               mails.push(mail)
             end
           else
             item = result.items[seq_number - 1]
             next if item.nil?
-            mail = get_mail(seq_number, item.properties[0],
+            mail = Mail.new(@config, self, seq_number, item.properties[0],
                             item.doc_id, item.properties[1])
             mails.push(mail)
           end
@@ -1333,9 +1331,40 @@ class Ximapd
         result = index.search(query, options)
         return result.items.collect { |i|
           uid = i.properties[0]
-          get_mail(uid, uid, i.doc_id, i.properties[1])
+          Mail.new(@config, self, uid, uid, i.doc_id, i.properties[1])
         }
       end
+    end
+  end
+
+  class StaticMailbox < Mailbox
+    def import(mail_data)
+      path = get_mail_path(mail_data)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.open(path, "w") do |f|
+        f.flock(File::LOCK_EX)
+        f.print(mail_data.raw_data)
+      end
+      time = mail_data.internal_date.to_time
+      File.utime(time, time, path)
+      @mail_store.flags_db[mail_data.uid.to_s] = mail_data.flags
+    end
+
+    def get_mail_path(mail)
+      relpath = format("mailboxes/%d/%d", self["id"], mail.uid)
+      return File.expand_path(relpath, @mail_store.path)
+    end
+
+    def uid_search(query)
+      return []
+    end
+
+    def fetch(sequence_set)
+      return []
+    end
+
+    def uid_fetch(sequence_set)
+      return []
     end
   end
 
@@ -1625,6 +1654,10 @@ class Ximapd
       @current_mailbox = mailbox
       @read_only = true
       @state = SELECTED_STATE
+    end
+
+    def get_current_mailbox
+      return @mail_store.get_mailbox(@current_mailbox)
     end
 
     def read_only?
@@ -2991,7 +3024,7 @@ class Ximapd
     def exec
       @session.synchronize do
         @session.sync
-        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @session.get_current_mailbox
         mails = mailbox.fetch([1..-1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
@@ -3008,7 +3041,7 @@ class Ximapd
       deleted_seqnos = nil
       @session.synchronize do
         @session.sync
-        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @session.get_current_mailbox
         mails = mailbox.fetch([1..-1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
@@ -3036,7 +3069,7 @@ class Ximapd
       }.join(" ")
       uids = nil
       @session.synchronize do
-        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @session.get_current_mailbox
         uids = mailbox.uid_search(query)
         for key in @keys
           uids = key.select(uids)
@@ -3178,7 +3211,7 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @session.get_current_mailbox
         mails = mailbox.fetch(@sequence_set)
       end
       for mail in mails
@@ -3205,7 +3238,7 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @session.get_current_mailbox
         mails = mailbox.uid_fetch(@sequence_set)
       end
       for mail in mails
@@ -3352,7 +3385,7 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @session.get_current_mailbox
         mails = mailbox.uid_fetch(@sequence_set)
       end
       unless @session.read_only?
@@ -3414,7 +3447,7 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mailbox = @mail_store.get_mailbox(@session.current_mailbox)
+        mailbox = @session.get_current_mailbox
         mails = mailbox.uid_fetch(@sequence_set)
       end
       for mail in mails
