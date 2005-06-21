@@ -593,6 +593,8 @@ class Ximapd
 
   MailData = Struct.new(:raw_data, :uid, :flags, :internal_date,
                         :body, :properties)
+  MailboxStatus = Struct.new(:messages, :recent, :uidnext, :uidvalidity,
+                             :unseen)
 
   class MailStore
     include QueryFormat
@@ -689,7 +691,7 @@ class Ximapd
     end
 
     def mailboxes
-      @mailbox_db.transaction do
+      @mailbox_db.transaction(true) do
         return @mailbox_db["mailboxes"]
       end
     end
@@ -742,7 +744,7 @@ class Ximapd
     def get_mailbox_status(mailbox_name, read_only)
       mailbox = nil
       status = nil
-      @mailbox_db.transaction do
+      @mailbox_db.transaction(true) do
         mailboxes = @mailbox_db["mailboxes"]
         mailbox = mailboxes[mailbox_name]
         status = @mailbox_db["status"]
@@ -777,9 +779,6 @@ class Ximapd
         return mailbox_status
       end
     end
-
-    MailboxStatus = Struct.new(:messages, :recent, :uidnext, :uidvalidity,
-                               :unseen)
 
     def import(args, mailbox_name = nil)
       open_index do |index|
@@ -965,7 +964,7 @@ class Ximapd
     end
 
     def get_mailbox(name)
-      @mailbox_db.transaction do
+      @mailbox_db.transaction(true) do
         get_mailbox_internal(name)
       end
     end
