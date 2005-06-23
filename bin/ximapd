@@ -47,11 +47,28 @@ unless defined?(now.to_time)
   class DateTime
     def to_time
       d = new_offset(0)
-      d.instance_eval do
+      d.instance_eval {
         Time.utc(year, mon, mday, hour, min, sec,
                  (sec_fraction * 86400000000).to_i)
-      end.
-          getlocal
+      }.getlocal
+    end
+
+    def to_datetime
+      return self
+    end
+  end
+
+  class Time
+    def to_time
+      return getlocal
+    end
+
+    def to_datetime
+      jd = DateTime.civil_to_jd(year, mon, mday, DateTime::ITALY)
+      fr = DateTime.time_to_day_fraction(hour, min, [sec, 59].min) +
+           usec.to_r/86400000000
+      of = utc_offset.to_r/86400
+      DateTime.new0(DateTime.jd_to_ajd(jd, fr, of), of, DateTime::ITALY)
     end
   end
 end
@@ -143,6 +160,7 @@ class Ximapd
       send(@config["action"])
     rescue StandardError => e
       STDERR.printf("ximapd: %s\n", e)
+      @logger.log_exception(e)
     end
   end
 
@@ -785,8 +803,8 @@ class Ximapd
         for arg in args
           Find.find(arg) do |filename|
             if File.file?(filename)
-              open(filename) do |f|
-                uid = import_mail_internal(f.read, mailbox_name)
+              File.open(filename) do |f|
+                uid = import_mail_internal(f.read, mailbox_name, "", f.mtime)
               end
             end
           end
@@ -803,7 +821,7 @@ class Ximapd
         for arg in args
           Find.find(arg) do |filename|
             if File.file?(filename)
-              open(filename) do |f|
+              File.open(filename) do |f|
                 import_mbox_internal(index, f, mailbox_name)
               end
             end
@@ -1110,16 +1128,15 @@ class Ximapd
       properties["uid"] = uid
       properties["size"] = mail.size
       properties["flags"] = ""
-      properties["internal-date"] = indate.to_s
+      properties["internal-date"] = indate.strftime("%Y-%m-%dT%H:%M:%S")
       properties["date"] = properties["internal-date"]
       properties["x-mail-count"] = 0
       properties["mailbox-id"] = mailbox_id
       begin
         m = @mail_parser.parse(mail.gsub(/\r\n/, "\n"))
-        body = extract_body(m)
         properties = extract_properties(m, properties)
+        body = extract_body(m)
       rescue Exception => e
-        raise
         @logger.log_exception(e, "failed to parse mail uid=#{uid}",
                               Logger::WARN)
         header, body = *mail.split(/^\r\n/)
@@ -1492,11 +1509,11 @@ class Ximapd
 
     def open_file(mode = "r")
       begin
-        open(path, mode) do |f|
+        File.open(path, mode) do |f|
           yield(f)
         end
       rescue Errno::ENOENT
-        open(old_path, mode) do |f|
+        File.open(old_path, mode) do |f|
           yield(f)
         end
       end
@@ -3483,7 +3500,7 @@ class Ximapd
       if !@@loaded && @@directory
         logger = config["logger"]
         Dir.glob(@@directory + "/*.rb") do |filename|
-          open(filename) do |f|
+          File.open(filename) do |f|
             Ximapd.class_eval(f.read)
           end
           logger.debug("loaded plugin: #{filename}")
