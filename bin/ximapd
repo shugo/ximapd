@@ -629,7 +629,7 @@ class Ximapd
     include QueryFormat
     include MonitorMixin
 
-    attr_reader :path, :flags_db
+    attr_reader :path, :mailbox_db, :flags_db
 
     def initialize(config)
       super()
@@ -771,35 +771,13 @@ class Ximapd
     end
 
     def get_mailbox_status(mailbox_name, read_only)
-      mailbox = nil
-      status = nil
       @mailbox_db.transaction(true) do
-        mailboxes = @mailbox_db["mailboxes"]
-        mailbox = mailboxes[mailbox_name]
         status = @mailbox_db["status"]
-      end
-      if mailbox.nil?
-        raise NoMailboxError.new("no such mailbox")
-      end
-      if /\\Noselect/ni.match(mailbox["flags"])
-        raise NotSelectableMailboxError.new("can't open #{mailbox_name}: not a selectable mailbox")
-      end
-      open_index do |index|
-        mailbox_status = MailboxStatus.new
-        result = index.search(mailbox["query"],
-                              "properties" => ["uid"],
-                              "start_no" => 0)
-        mailbox_status.messages = result.hit_count
-        mailbox_status.unseen = result.items.select { |i|
-          !/\\Seen\b/ni.match(@flags_db[i.properties[0].to_s])
-        }.length
-        query = format("%s uid > %d",
-                       mailbox["query"], mailbox["last_peeked_uid"])
-        result = index.search(query,
-                              "properties" => ["uid"],
-                              "start_no" => 0,
-                              "num_items" => Rast::RESULT_MIN_ITEMS)
-        mailbox_status.recent = result.hit_count
+        mailbox = get_mailbox_internal(mailbox_name)
+        if /\\Noselect/ni.match(mailbox["flags"])
+          raise NotSelectableMailboxError.new("can't open #{mailbox_name}: not a selectable mailbox")
+        end
+        mailbox_status = mailbox.status
         mailbox_status.uidnext = status["last_uid"] + 1
         mailbox_status.uidvalidity = status["uidvalidity"]
         unless read_only
@@ -1058,6 +1036,9 @@ class Ximapd
     end
 
     def get_mailbox_internal(name)
+      unless @mailbox_db["mailboxes"].key?(name)
+        raise NoMailboxError.new("no such mailbox")
+      end
       return SearchBasedMailbox.new(@config, name,
                                     @mailbox_db["mailboxes"][name], self)
     end
@@ -1069,7 +1050,7 @@ class Ximapd
       @mailbox_db.transaction do
         uid = get_next_uid
         mailbox_id = get_mailbox_id(mailbox_name)
-        mailbox = get_mailbox_internal(mailbox_name)
+        mailbox = get_mailbox_internal(mailbox_name || "INBOX")
       end
       mail = parse_mail(str, uid, mailbox_id, flags, indate)
       mailbox.import(mail)
@@ -1252,9 +1233,54 @@ class Ximapd
     def [](key)
       return @data[key]
     end
+
+    def status
+      raise ScriptError.new("subclass must override Mailbox#status")
+    end
+
+    def import(mail_data)
+      raise ScriptError.new("subclass must override Mailbox#import")
+    end
+
+    def get_mail_path(mail)
+      raise ScriptError.new("subclass must override Mailbox#get_mail_path")
+    end
+
+    def uid_search(query)
+      raise ScriptError.new("subclass must override Mailbox#uid_search")
+    end
+
+    def fetch(sequence_set)
+      raise ScriptError.new("subclass must override Mailbox#fetch")
+    end
+
+    def uid_fetch(sequence_set)
+      raise ScriptError.new("subclass must override Mailbox#uid_fetch")
+    end
   end
 
   class SearchBasedMailbox < Mailbox
+    def status
+      @mail_store.open_index do |index|
+        mailbox_status = MailboxStatus.new
+        result = index.search(self["query"],
+                              "properties" => ["uid"],
+                              "start_no" => 0)
+        mailbox_status.messages = result.hit_count
+        mailbox_status.unseen = result.items.select { |i|
+          !/\\Seen\b/ni.match(@mail_store.flags_db[i.properties[0].to_s])
+        }.length
+        query = format("%s uid > %d",
+                       self["query"], self["last_peeked_uid"])
+        result = index.search(query,
+                              "properties" => ["uid"],
+                              "start_no" => 0,
+                              "num_items" => Rast::RESULT_MIN_ITEMS)
+        mailbox_status.recent = result.hit_count
+        return mailbox_status
+      end
+    end
+
     def import(mail_data)
       path = get_mail_path(mail_data)
       FileUtils.mkdir_p(File.dirname(path))
@@ -1365,6 +1391,14 @@ class Ximapd
   end
 
   class StaticMailbox < Mailbox
+    def status
+      mailbox_status = MailboxStatus.new
+      mailbox_status.messages = 0
+      mailbox_status.unseen = 0
+      mailbox_status.recent = 0
+      return mailbox_status
+    end
+
     def import(mail_data)
       path = get_mail_path(mail_data)
       FileUtils.mkdir_p(File.dirname(path))
@@ -3024,7 +3058,7 @@ class Ximapd
       status = nil
       @session.synchronize do
         status = @mail_store.get_mailbox_status(@mailbox_name,
-                                                        @session.read_only?)
+                                                @session.read_only?)
       end
       s = @atts.collect { |att|
         format("%s %d", att, status.send(att.downcase))
