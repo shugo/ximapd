@@ -376,6 +376,17 @@ class Ximapd
     end
   end
 
+  def interactive
+    @mail_store = Ximapd::MailStore.new(@config)
+    begin
+      sock = ConsoleSocket.new
+      session = Ximapd::Session.new(@config, sock, @mail_store, true)
+      session.start
+    ensure
+      @mail_store.close
+    end
+  end
+
   def check_config(config)
     unless config.key?("data_dir")
       raise "data_dir is not specified"
@@ -1603,15 +1614,20 @@ class Ximapd
       @@test = test
     end
 
-    def initialize(config, sock, mail_store)
+    def initialize(config, sock, mail_store, pre_authenticated = false)
       @config = config
       @sock = sock
       @mail_store = mail_store
+      @pre_authenticated = pre_authenticated
       @logger = @config["logger"]
       @parser = CommandParser.new(self, @logger)
       @logout = false
       @peeraddr = nil
-      @state = NON_AUTHENTICATED_STATE
+      if pre_authenticated
+        @state = AUTHENTICATED_STATE
+      else
+        @state = NON_AUTHENTICATED_STATE
+      end
       @current_mailbox = nil
       @read_only = false
     end
@@ -1620,7 +1636,11 @@ class Ximapd
       synchronize do
         @peeraddr = @sock.peeraddr[3]
         @logger.info("connect from #{@peeraddr}")
-        send_ok("ximapd version %s (r%s %s)", VERSION, REVISION, DATE)
+        if @pre_authenticated
+          send_preauth("ximapd version %s (r%s %s)", VERSION, REVISION, DATE)
+        else
+          send_ok("ximapd version %s (r%s %s)", VERSION, REVISION, DATE)
+        end
       end
       begin
         while !@logout
@@ -1690,7 +1710,7 @@ class Ximapd
     end
 
     def recv_line
-      s = @sock.gets("\r\n")
+      s = @sock.gets
       return s if s.nil?
       line = s.sub(/\r\n\z/n, "")
       @logger.debug(line.gsub(/^/n, "C: ")) if @config["debug"]
@@ -1700,8 +1720,9 @@ class Ximapd
     def recv_cmd
       buf = ""
       loop do
-        s = @sock.gets("\r\n")
+        s = @sock.gets
         break unless s
+        s.gsub!(/\r?\n\z/, "\r\n")
         buf.concat(s)
         if len = s.slice(/\{(\d+)\}\r\n/n, 1)
           send_continue_req("Ready for additional command text")
@@ -1753,6 +1774,10 @@ class Ximapd
 
     def send_bad(fmt, *args)
       send_data("BAD " + fmt, *args)
+    end
+
+    def send_preauth(fmt, *args)
+      send_data("PREAUTH " + fmt, *args)
     end
 
     def send_continue_req(fmt, *args)
@@ -3526,6 +3551,32 @@ class Ximapd
     end
   end
 
+  class ConsoleSocket
+    [:read, :gets, :getc].each do |mid|
+      define_method(mid) do |*args|
+        STDIN.send(mid, *args)
+      end
+    end
+
+    [:write, :print].each do |mid|
+      define_method(mid) do |*args|
+        STDOUT.send(mid, *args)
+      end
+    end
+
+    def peeraddr
+      return ["AF_TTY", 0, "tty", "tty"]
+    end
+
+    def shutdown
+    end
+
+    def close
+      STDIN.close
+      STDOUT.close
+    end
+  end
+
   class Option
     def initialize(name, description)
       @name = name
@@ -3627,6 +3678,7 @@ class Ximapd
     Action.new("import", "import mail"),
     Action.new("import_mbox", "import mbox"),
     Action.new("import_imap", "import from another imap server"),
+    Action.new("interactive", "interactive mode"),
     Action.new("version", "print version"),
     Action.new("help", "print this message"),
   ]
