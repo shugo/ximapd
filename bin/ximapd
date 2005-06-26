@@ -1220,6 +1220,15 @@ class Ximapd
       return @data[key]
     end
 
+    def save
+      unless @mail_store.mailbox_db["mailboxes"].key?(@name)
+        @mail_store.mailbox_db["status"]["last_mailbox_id"] += 1
+        @data["id"] = @mail_store.mailbox_db["status"]["last_mailbox_id"]
+      end
+      @data["class"] = self.class.name.slice(/\AXimapd::(.*)\z/, 1)
+      @mail_store.mailbox_db["mailboxes"][@name] = @data
+    end
+
     def import(mail_data)
       raise ScriptError.new("subclass must override Mailbox#import")
     end

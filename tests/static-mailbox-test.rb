@@ -1,4 +1,4 @@
-# $Id: mail-store-test.rb 145 2005-06-26 00:41:06Z shugo $
+# $Id$
 # Copyright (C) 2005  Shugo Maeda <shugo@ruby-lang.org>
 # All rights reserved.
 #
