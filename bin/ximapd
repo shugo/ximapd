@@ -1015,11 +1015,19 @@ class Ximapd
     end
 
     def get_mailbox_internal(name)
-      unless @mailbox_db["mailboxes"].key?(name)
+      data = @mailbox_db["mailboxes"][name]
+      unless data
         raise NoMailboxError.new("no such mailbox")
       end
-      return SearchBasedMailbox.new(@config, name,
-                                    @mailbox_db["mailboxes"][name], self)
+      class_name = data["class"]
+      if class_name
+        return Ximapd.const_get(class_name).new(@config, name,
+                                                @mailbox_db["mailboxes"][name],
+                                                self)
+      else
+        return SearchBasedMailbox.new(@config, name,
+                                      @mailbox_db["mailboxes"][name], self)
+      end
     end
 
     def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil)
@@ -1213,16 +1221,16 @@ class Ximapd
       return @data[key]
     end
 
-    def status
-      raise ScriptError.new("subclass must override Mailbox#status")
-    end
-
     def import(mail_data)
       raise ScriptError.new("subclass must override Mailbox#import")
     end
 
     def get_mail_path(mail)
       raise ScriptError.new("subclass must override Mailbox#get_mail_path")
+    end
+
+    def status
+      raise ScriptError.new("subclass must override Mailbox#status")
     end
 
     def uid_search(query)
@@ -1239,6 +1247,26 @@ class Ximapd
   end
 
   class SearchBasedMailbox < Mailbox
+    def import(mail_data)
+      path = get_mail_path(mail_data)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.open(path, "w") do |f|
+        f.flock(File::LOCK_EX)
+        f.print(mail_data.raw_data)
+      end
+      time = mail_data.internal_date.to_time
+      File.utime(time, time, path)
+      @mail_store.flags_db[mail_data.uid.to_s] = mail_data.flags
+      @mail_store.index_mail(mail_data)
+    end
+
+    def get_mail_path(mail)
+      relpath = format("mails/%s/%d",
+                       mail.internal_date.strftime("%Y/%m/%d"),
+                       mail.uid)
+      return File.expand_path(relpath, @mail_store.path)
+    end
+
     def status
       @mail_store.open_index do |index|
         mailbox_status = MailboxStatus.new
@@ -1258,26 +1286,6 @@ class Ximapd
         mailbox_status.recent = result.hit_count
         return mailbox_status
       end
-    end
-
-    def import(mail_data)
-      path = get_mail_path(mail_data)
-      FileUtils.mkdir_p(File.dirname(path))
-      File.open(path, "w") do |f|
-        f.flock(File::LOCK_EX)
-        f.print(mail_data.raw_data)
-      end
-      time = mail_data.internal_date.to_time
-      File.utime(time, time, path)
-      @mail_store.flags_db[mail_data.uid.to_s] = mail_data.flags
-      @mail_store.index_mail(mail_data)
-    end
-
-    def get_mail_path(mail)
-      relpath = format("mails/%s/%d",
-                       mail.internal_date.strftime("%Y/%m/%d"),
-                       mail.uid)
-      return File.expand_path(relpath, @mail_store.path)
     end
 
     def uid_search(query)
@@ -1370,14 +1378,6 @@ class Ximapd
   end
 
   class StaticMailbox < Mailbox
-    def status
-      mailbox_status = MailboxStatus.new
-      mailbox_status.messages = 0
-      mailbox_status.unseen = 0
-      mailbox_status.recent = 0
-      return mailbox_status
-    end
-
     def import(mail_data)
       path = get_mail_path(mail_data)
       FileUtils.mkdir_p(File.dirname(path))
@@ -1393,6 +1393,19 @@ class Ximapd
     def get_mail_path(mail)
       relpath = format("mailboxes/%d/%d", self["id"], mail.uid)
       return File.expand_path(relpath, @mail_store.path)
+    end
+
+    def status
+      mailbox_status = MailboxStatus.new
+      dirpath = File.expand_path(format("mailboxes/%d", self["id"]),
+                                 @mail_store.path)
+      uids = Dir.open(dirpath) { |dir|
+        dir.grep(/\A\d+\z/).sort
+      }
+      mailbox_status.messages = uids.length
+      mailbox_status.unseen = uids.length
+      mailbox_status.recent = uids.length
+      return mailbox_status
     end
 
     def uid_search(query)
