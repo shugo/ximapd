@@ -45,7 +45,9 @@ Content-Type: text/plain; charset=US-ASCII
 Hello world
 EOF
     uid1 = mail_store.import_mail(mail1)
-    inbox = mail_store.get_mailbox("INBOX")
+    inbox = mail_store.mailbox_db.transaction {
+      mail_store.get_mailbox("INBOX")
+    }
     mails = inbox.uid_fetch([uid1])
     assert_equal(1, mails.length)
     m = mails[0]

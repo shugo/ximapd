@@ -752,7 +752,7 @@ class Ximapd
     def get_mailbox_status(mailbox_name, read_only)
       @mailbox_db.transaction(true) do
         status = @mailbox_db["status"]
-        mailbox = get_mailbox_internal(mailbox_name)
+        mailbox = get_mailbox(mailbox_name)
         if /\\Noselect/ni.match(mailbox["flags"])
           raise NotSelectableMailboxError.new("can't open #{mailbox_name}: not a selectable mailbox")
         end
@@ -923,26 +923,31 @@ class Ximapd
     def index_mail(mail)
       @index.register(mail.body, mail.properties)
       s = mail.properties["x-ml-name"]
-      unless s.empty?
-        @mailbox_db.transaction do
-          unless @mailbox_db["mailing-lists"].key?(s)
-            mbox = get_mailbox_name_from_x_ml_name(s)
-            @mailbox_db["mailing-lists"][s] = mail.uid
-            mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox))
-            query = format("x-ml-name = %s",
-                           quote_query(mail.properties["x-ml-name"]))
-            begin
-              create_mailbox_internal(mailbox_name, query)
-            rescue MailboxExistError
-            end
-          end
+      if !s.empty? && !@mailbox_db["mailing-lists"].key?(s)
+        mbox = get_mailbox_name_from_x_ml_name(s)
+        @mailbox_db["mailing-lists"][s] = mail.uid
+        mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox))
+        query = format("x-ml-name = %s",
+                       quote_query(mail.properties["x-ml-name"]))
+        begin
+          create_mailbox_internal(mailbox_name, query)
+        rescue MailboxExistError
         end
       end
     end
 
     def get_mailbox(name)
-      @mailbox_db.transaction(true) do
-        get_mailbox_internal(name)
+      data = @mailbox_db["mailboxes"][name]
+      unless data
+        raise NoMailboxError.new("no such mailbox")
+      end
+      class_name = data["class"]
+      if class_name
+        return Ximapd.const_get(class_name).new(self, name,
+                                                @mailbox_db["mailboxes"][name])
+      else
+        return SearchBasedMailbox.new(self, name,
+                                      @mailbox_db["mailboxes"][name])
       end
     end
 
@@ -1005,21 +1010,6 @@ class Ximapd
       }
     end
 
-    def get_mailbox_internal(name)
-      data = @mailbox_db["mailboxes"][name]
-      unless data
-        raise NoMailboxError.new("no such mailbox")
-      end
-      class_name = data["class"]
-      if class_name
-        return Ximapd.const_get(class_name).new(self, name,
-                                                @mailbox_db["mailboxes"][name])
-      else
-        return SearchBasedMailbox.new(self, name,
-                                      @mailbox_db["mailboxes"][name])
-      end
-    end
-
     def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil)
       uid = nil
       mailbox_id = nil
@@ -1027,10 +1017,19 @@ class Ximapd
       @mailbox_db.transaction do
         uid = get_next_uid
         mailbox_id = get_mailbox_id(mailbox_name)
-        mailbox = get_mailbox_internal(mailbox_name || "INBOX")
       end
       mail = parse_mail(str, uid, mailbox_id, flags, indate)
-      mailbox.import(mail)
+      @mailbox_db.transaction do
+        if mailbox_name
+          mailbox = get_mailbox(mailbox_name)
+        else
+          mailbox = @plugins.detect { |plugin|
+            plugin.filter(mail)
+          }
+          mailbox ||= get_mailbox("INBOX")
+        end
+        mailbox.import(mail)
+      end
       @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}>")
       return mail.uid
     end
@@ -1844,7 +1843,9 @@ class Ximapd
     end
 
     def get_current_mailbox
-      return @mail_store.get_mailbox(@current_mailbox)
+      @mail_store.mailbox_db.transaction do
+        return @mail_store.get_mailbox(@current_mailbox)
+      end
     end
 
     def read_only?

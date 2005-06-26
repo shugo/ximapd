@@ -90,7 +90,9 @@ This is test5
 EOF
     @uid5 = @mail_store.import_mail(@mail5, "static-mailbox", "")
 
-    @mailbox = @mail_store.get_mailbox("static-mailbox")
+    @mailbox = @mail_store.mailbox_db.transaction {
+      @mail_store.get_mailbox("static-mailbox")
+    }
   end
 
   def test_save
