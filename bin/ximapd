@@ -1321,15 +1321,16 @@ class Ximapd
             last = seq_number.last == -1 ? result.items.length : seq_number.last
             for i in first .. last
               item = result.items[i - 1]
-              mail = Mail.new(@config, self, i, item.properties[0],
-                              item.doc_id, item.properties[1])
+              mail = IndexedMail.new(@config, self, i, item.properties[0],
+                                     item.doc_id, item.properties[1])
               mails.push(mail)
             end
           else
             item = result.items[seq_number - 1]
             next if item.nil?
-            mail = Mail.new(@config, self, seq_number, item.properties[0],
-                            item.doc_id, item.properties[1])
+            mail = IndexedMail.new(@config, self, seq_number,
+                                   item.properties[0], item.doc_id,
+                                   item.properties[1])
             mails.push(mail)
           end
         end
@@ -1371,7 +1372,7 @@ class Ximapd
         result = index.search(query, options)
         return result.items.collect { |i|
           uid = i.properties[0]
-          Mail.new(@config, self, uid, uid, i.doc_id, i.properties[1])
+          IndexedMail.new(@config, self, uid, uid, i.doc_id, i.properties[1])
         }
       end
     end
@@ -1405,11 +1406,7 @@ class Ximapd
 
     def status
       mailbox_status = MailboxStatus.new
-      dirpath = File.expand_path(format("mailboxes/%d", self["id"]),
-                                 @mail_store.path)
-      uids = Dir.open(dirpath) { |dir|
-        dir.grep(/\A\d+\z/).collect { |uid| uid.to_i }.sort
-      }
+      uids = get_uids
       mailbox_status.messages = uids.length
       open_flags_db do |db|
         mailbox_status.unseen = uids.select { |uid|
@@ -1427,33 +1424,58 @@ class Ximapd
     end
 
     def fetch(sequence_set)
-      return []
+      uids = get_uids
+      mails = []
+      sequence_set.each do |seq_number|
+        case seq_number
+        when Range
+          first = seq_number.first
+          last = seq_number.last == -1 ? result.items.length : seq_number.last
+          for i in first .. last
+            uid = uids[i - 1]
+            next if uid.nil?
+            mail = StaticMail.new(@config, self, i, uid)
+            mails.push(mail)
+          end
+        else
+          uid = uids[seq_number - 1]
+          next if uid.nil?
+          mail = StaticMail.new(@config, self, seq_number, uid)
+          mails.push(mail)
+        end
+      end
+      return mails
     end
 
     def uid_fetch(sequence_set)
       return []
     end
 
-    private
-
     def open_flags_db(&block)
       SDBM.open(@flags_db_path, &block)
+    end
+
+    private
+
+    def get_uids
+      dirpath = File.expand_path(format("mailboxes/%d", self["id"]),
+                                 @mail_store.path)
+      return Dir.open(dirpath) { |dir|
+        dir.grep(/\A\d+\z/).collect { |uid| uid.to_i }.sort
+      }
     end
   end
 
   class Mail
     include DataFormat
 
-    attr_reader :mailbox, :seqno, :uid, :doc_id, :internal_date
+    attr_reader :mailbox, :seqno, :uid
 
-    def initialize(config, mailbox, seqno, uid, doc_id, internal_date)
+    def initialize(config, mailbox, seqno, uid)
       @config = config
       @mailbox = mailbox
       @seqno = seqno
       @uid = uid
-      @doc_id = doc_id
-      @internal_date = DateTime.strptime(internal_date[0, 19] + " " + TIMEZONE,
-                                         "%Y-%m-%dT%H:%M:%S %z")
       @mail_store = @mailbox.mail_store
       @parsed_mail = nil
     end
@@ -1486,23 +1508,6 @@ class Ximapd
       s.concat(quoted(mail.header["message-id"]))
       s.concat(")")
       return s
-    end
-
-    def flags(get_recent = true)
-      s = @mail_store.flags_db[@uid.to_s].to_s
-      if get_recent && uid > @mailbox["last_peeked_uid"]
-        if s.empty?
-          return "\\Recent"
-        else
-          return "\\Recent " + s
-        end
-      else
-        return s
-      end
-    end
-
-    def flags=(s)
-      @mail_store.flags_db[@uid.to_s] = s
     end
 
     def path
@@ -1639,6 +1644,61 @@ class Ximapd
         return s
       end
       return s.upcase
+    end
+  end
+
+  class IndexedMail < Mail
+    attr_reader :doc_id, :internal_date
+
+    def initialize(config, mailbox, seqno, uid, doc_id, internal_date)
+      super(config, mailbox, seqno, uid)
+      @doc_id = doc_id
+      @internal_date = DateTime.strptime(internal_date[0, 19] + " " + TIMEZONE,
+                                         "%Y-%m-%dT%H:%M:%S %z")
+    end
+
+    def flags(get_recent = true)
+      s = @mail_store.flags_db[@uid.to_s].to_s
+      if get_recent && uid > @mailbox["last_peeked_uid"]
+        if s.empty?
+          return "\\Recent"
+        else
+          return "\\Recent " + s
+        end
+      else
+        return s
+      end
+    end
+
+    def flags=(s)
+      @mail_store.flags_db[@uid.to_s] = s
+    end
+  end
+
+  class StaticMail < Mail
+    def internal_date
+      return File.mtime(path)
+    end
+
+    def flags(get_recent = true)
+      @mailbox.open_flags_db do |db|
+        s = db[@uid.to_s].to_s
+        if get_recent && uid > @mailbox["last_peeked_uid"]
+          if s.empty?
+            return "\\Recent"
+          else
+            return "\\Recent " + s
+          end
+        else
+          return s
+        end
+      end
+    end
+
+    def flags=(s)
+      @mailbox.open_flags_db do |db|
+        db[@uid.to_s] = s
+      end
     end
   end
 
