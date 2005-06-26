@@ -926,16 +926,7 @@ class Ximapd
       unless s.empty?
         @mailbox_db.transaction do
           unless @mailbox_db["mailing-lists"].key?(s)
-            mbox = s.slice(/(.*) <.*>/u, 1) 
-            if mbox.nil?
-              mbox = s.slice(/<(.*)>/u, 1) 
-              if mbox.nil?
-                mbox = s.slice(/\S+@[^ \t;]+/u) 
-                if mbox.nil?
-                  mbox = s
-                end
-              end
-            end
+            mbox = get_mailbox_name_from_x_ml_name(s)
             @mailbox_db["mailing-lists"][s] = mail.uid
             mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox))
             query = format("x-ml-name = %s",
@@ -1042,6 +1033,20 @@ class Ximapd
       mailbox.import(mail)
       @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}>")
       return mail.uid
+    end
+
+    def get_mailbox_name_from_x_ml_name(s)
+      mbox = s.slice(/(.*) <.*>/u, 1) 
+      if mbox.nil?
+        mbox = s.slice(/<(.*)>/u, 1) 
+        if mbox.nil?
+          mbox = s.slice(/\S+@[^ \t;]+/u) 
+          if mbox.nil?
+            mbox = s
+          end
+        end
+      end
+      return mbox
     end
 
     def create_mailbox_internal(name, query = nil)
