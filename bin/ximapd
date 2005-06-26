@@ -608,7 +608,7 @@ class Ximapd
     include QueryFormat
     include MonitorMixin
 
-    attr_reader :path, :mailbox_db, :flags_db
+    attr_reader :config, :path, :mailbox_db, :flags_db
 
     def initialize(config)
       super()
@@ -1021,12 +1021,11 @@ class Ximapd
       end
       class_name = data["class"]
       if class_name
-        return Ximapd.const_get(class_name).new(@config, name,
-                                                @mailbox_db["mailboxes"][name],
-                                                self)
+        return Ximapd.const_get(class_name).new(self, name,
+                                                @mailbox_db["mailboxes"][name])
       else
-        return SearchBasedMailbox.new(@config, name,
-                                      @mailbox_db["mailboxes"][name], self)
+        return SearchBasedMailbox.new(self, name,
+                                      @mailbox_db["mailboxes"][name])
       end
     end
 
@@ -1208,13 +1207,13 @@ class Ximapd
   end
 
   class Mailbox
-    attr_reader :name, :mail_store
+    attr_reader :mail_store, :name
 
-    def initialize(config, name, data, mail_store)
-      @config = config
+    def initialize(mail_store, name, data)
+      @mail_store = mail_store
       @name = name
       @data = data
-      @mail_store = mail_store
+      @config = mail_store.config
     end
 
     def [](key)
@@ -1379,8 +1378,8 @@ class Ximapd
   end
 
   class StaticMailbox < Mailbox
-    def initialize(config, name, data, mail_store)
-      super(config, name, data, mail_store)
+    def initialize(mail_store, name, data)
+      super(mail_store, name, data)
       relpath = format("mailboxes/%d/flags.sdbm", data["id"])
       @flags_db_path = File.expand_path(relpath, mail_store.path)
     end
