@@ -1430,7 +1430,7 @@ class Ximapd
         case seq_number
         when Range
           first = seq_number.first
-          last = seq_number.last == -1 ? result.items.length : seq_number.last
+          last = seq_number.last == -1 ? uids.length : seq_number.last
           for i in first .. last
             uid = uids[i - 1]
             next if uid.nil?
@@ -1448,7 +1448,30 @@ class Ximapd
     end
 
     def uid_fetch(sequence_set)
-      return []
+      uids = get_uids
+      return uids if uids.empty?
+      uid_set = Set.new(uids)
+      mails = []
+      sequence_set.each do |seq_number|
+        case seq_number
+        when Range
+          first = seq_number.first
+          last = seq_number.last == -1 ? uids.last : seq_number.last
+          if last > uids.last
+            last = uids.last
+          end
+
+          for uid in (first..last).to_a & uids
+            mail = StaticMail.new(@config, self, uid, uid)
+            mails.push(mail)
+          end
+        else
+          next unless uid_set.include?(seq_number)
+          mail = StaticMail.new(@config, self, seq_number, seq_number)
+          mails.push(mail)
+        end
+      end
+      return mails
     end
 
     def open_flags_db(&block)

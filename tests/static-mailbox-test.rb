@@ -125,6 +125,51 @@ EOF
     assert_equal(@mail4, mails[2].to_s)
     assert_equal(@uid5, mails[3].uid)
     assert_equal(@mail5, mails[3].to_s)
+
+    mails = @mailbox.fetch([3..-1])
+    assert_equal(3, mails.length)
+    assert_equal(@uid3, mails[0].uid)
+    assert_equal(@mail3, mails[0].to_s)
+    assert_equal(@uid4, mails[1].uid)
+    assert_equal(@mail4, mails[1].to_s)
+    assert_equal(@uid5, mails[2].uid)
+    assert_equal(@mail5, mails[2].to_s)
+  end
+
+  def test_uid_fetch
+    mails = @mailbox.uid_fetch([@uid1])
+    assert_equal(1, mails.length)
+    assert_equal(@uid1, mails[0].uid)
+    assert_equal(@mail1, mails[0].to_s)
+
+    mails = @mailbox.uid_fetch([@uid1, @uid4, @uid5])
+    assert_equal(3, mails.length)
+    assert_equal(@uid1, mails[0].uid)
+    assert_equal(@mail1, mails[0].to_s)
+    assert_equal(@uid4, mails[1].uid)
+    assert_equal(@mail4, mails[1].to_s)
+    assert_equal(@uid5, mails[2].uid)
+    assert_equal(@mail5, mails[2].to_s)
+
+    mails = @mailbox.uid_fetch([@uid1, @uid3..@uid5])
+    assert_equal(4, mails.length)
+    assert_equal(@uid1, mails[0].uid)
+    assert_equal(@mail1, mails[0].to_s)
+    assert_equal(@uid3, mails[1].uid)
+    assert_equal(@mail3, mails[1].to_s)
+    assert_equal(@uid4, mails[2].uid)
+    assert_equal(@mail4, mails[2].to_s)
+    assert_equal(@uid5, mails[3].uid)
+    assert_equal(@mail5, mails[3].to_s)
+
+    mails = @mailbox.uid_fetch([@uid3..-1])
+    assert_equal(3, mails.length)
+    assert_equal(@uid3, mails[0].uid)
+    assert_equal(@mail3, mails[0].to_s)
+    assert_equal(@uid4, mails[1].uid)
+    assert_equal(@mail4, mails[1].to_s)
+    assert_equal(@uid5, mails[2].uid)
+    assert_equal(@mail5, mails[2].to_s)
   end
 end
 
