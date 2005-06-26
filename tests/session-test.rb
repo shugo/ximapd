@@ -28,14 +28,10 @@ require File.expand_path("test-helper", File.dirname(__FILE__))
 Ximapd::Session.test = true
 
 class XimapdSessionTest < Test::Unit::TestCase
+  include XimapdTestMixin
+
   def setup
-    @tmpdir = mkdtemp("ximapd-test")
-    @config = {
-      "user" => "foo",
-      "password" => "bar",
-      "data_dir" => File.expand_path("data", @tmpdir),
-      "logger" => Ximapd::NullObject.new
-    }
+    super
     @challenge_generator =
       Ximapd::AuthenticateCramMD5Command.challenge_generator
     Ximapd::AuthenticateCramMD5Command.challenge_generator = Proc.new {
@@ -48,7 +44,7 @@ class XimapdSessionTest < Test::Unit::TestCase
     @mail_store.close
     Ximapd::AuthenticateCramMD5Command.challenge_generator =
       @challenge_generator
-    system("rm", "-rf", @tmpdir)
+    super
   end
 
   def test_capability

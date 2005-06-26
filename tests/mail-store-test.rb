@@ -26,21 +26,7 @@
 require File.expand_path("test-helper", File.dirname(__FILE__))
 
 class XimapdMailStoreTest < Test::Unit::TestCase
-  def setup
-    @tmpdir = mkdtemp("ximapd-test")
-    @config = {
-      "user" => "foo",
-      "password" => "bar",
-      "data_dir" => File.expand_path("data", @tmpdir),
-      "logger" => Ximapd::NullObject.new
-    }
-    #GC.disable # to avoid `BDB::Fatal: BUG : current_env not set'
-  end
-
-  def teardown
-    #GC.enable
-    system("rm", "-rf", @tmpdir)
-  end
+  include XimapdTestMixin
 
   def test_import_mail
     mail_store = Ximapd::MailStore.new(@config)

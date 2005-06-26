@@ -46,6 +46,22 @@ def mkdtemp(prefix, mode = 0700)
   end
 end
 
+module XimapdTestMixin
+  def setup
+    @tmpdir = mkdtemp("ximapd-test")
+    @config = {
+      "user" => "foo",
+      "password" => "bar",
+      "data_dir" => File.expand_path("data", @tmpdir),
+      "logger" => Ximapd::NullObject.new
+    }
+  end
+
+  def teardown
+    system("rm", "-rf", @tmpdir)
+  end
+end
+
 ximapd = File.expand_path("../bin/ximapd", File.dirname(__FILE__))
 load(ximapd)
 
