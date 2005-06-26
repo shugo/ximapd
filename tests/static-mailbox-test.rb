@@ -53,24 +53,36 @@ class XimapdStaticMailboxTest < Test::Unit::TestCase
     assert_equal(0, status.recent)
 
     mail1 = <<EOF.gsub(/\n/, "\r\n")
-From foobar@ruby-lang.org  Sat Apr  2 00:07:54 2005
+From: shugo@ruby-lang.org
+Subject: hello
 Date: Wed, 30 Mar 2005 17:34:46 +0900
-Message-ID: <41ECC569.8000603@ruby-lang.org>
-From: Shugo Maeda <shugo@ruby-lang.org>
-Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
-To: Foo <foo@ruby-lang.org>,
-        bar@ruby-lang.org
-Cc: Baz <"baz.."@ruby-lang.org>
-In-Reply-To: <41C448BF.7080605@ruby-lang.org>
-Content-Type: text/plain; charset=US-ASCII
 
 Hello world
 EOF
-    uid1 = @mail_store.import_mail(mail1, "static-mailbox")
+    uid2 = @mail_store.import_mail(mail1, "static-mailbox", "\\Seen")
+    @mail_store.mailbox_db.transaction do
+      mailbox_data = @mail_store.mailbox_db["mailboxes"]["static-mailbox"]
+      mailbox_data["last_peeked_uid"] = uid2
+    end
 
     mailbox = @mail_store.get_mailbox("static-mailbox")
     status = mailbox.status
     assert_equal(1, status.messages)
+    assert_equal(0, status.unseen)
+    assert_equal(0, status.recent)
+
+    mail2 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+Subject: bye
+Date: Wed, 30 Mar 2005 19:21:09 +0900
+
+Goodbye world
+EOF
+    @mail_store.import_mail(mail1, "static-mailbox", "")
+
+    mailbox = @mail_store.get_mailbox("static-mailbox")
+    status = mailbox.status
+    assert_equal(2, status.messages)
     assert_equal(1, status.unseen)
     assert_equal(1, status.recent)
   end

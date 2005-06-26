@@ -1378,6 +1378,12 @@ class Ximapd
   end
 
   class StaticMailbox < Mailbox
+    def initialize(config, name, data, mail_store)
+      super(config, name, data, mail_store)
+      relpath = format("mailboxes/%d/flags.sdbm", data["id"])
+      @flags_db_path = File.expand_path(relpath, mail_store.path)
+    end
+
     def import(mail_data)
       path = get_mail_path(mail_data)
       FileUtils.mkdir_p(File.dirname(path))
@@ -1387,7 +1393,9 @@ class Ximapd
       end
       time = mail_data.internal_date.to_time
       File.utime(time, time, path)
-      @mail_store.flags_db[mail_data.uid.to_s] = mail_data.flags
+      open_flags_db do |db|
+        db[mail_data.uid.to_s] = mail_data.flags
+      end
     end
 
     def get_mail_path(mail)
@@ -1400,11 +1408,17 @@ class Ximapd
       dirpath = File.expand_path(format("mailboxes/%d", self["id"]),
                                  @mail_store.path)
       uids = Dir.open(dirpath) { |dir|
-        dir.grep(/\A\d+\z/).sort
+        dir.grep(/\A\d+\z/).collect { |uid| uid.to_i }.sort
       }
       mailbox_status.messages = uids.length
-      mailbox_status.unseen = uids.length
-      mailbox_status.recent = uids.length
+      open_flags_db do |db|
+        mailbox_status.unseen = uids.select { |uid|
+          !/\\Seen\b/ni.match(db[uid.to_s])
+        }.length
+      end
+      mailbox_status.recent = uids.select { |uid|
+        uid > self["last_peeked_uid"]
+      }.length
       return mailbox_status
     end
 
@@ -1418,6 +1432,12 @@ class Ximapd
 
     def uid_fetch(sequence_set)
       return []
+    end
+
+    private
+
+    def open_flags_db(&block)
+      SDBM.open(@flags_db_path, &block)
     end
   end
 
