@@ -23,7 +23,7 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-require File.expand_path("ximapd-test-helper", File.dirname(__FILE__))
+require File.expand_path("test-helper", File.dirname(__FILE__))
 
 class XimapdMailStoreTest < Test::Unit::TestCase
   def setup
@@ -32,7 +32,7 @@ class XimapdMailStoreTest < Test::Unit::TestCase
       "user" => "foo",
       "password" => "bar",
       "data_dir" => File.expand_path("data", @tmpdir),
-      "logger" => NullObject.new
+      "logger" => Ximapd::NullObject.new
     }
     #GC.disable # to avoid `BDB::Fatal: BUG : current_env not set'
   end

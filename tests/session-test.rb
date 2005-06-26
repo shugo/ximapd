@@ -23,7 +23,7 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-require File.expand_path("ximapd-test-helper", File.dirname(__FILE__))
+require File.expand_path("test-helper", File.dirname(__FILE__))
 
 Ximapd::Session.test = true
 
@@ -34,7 +34,7 @@ class XimapdSessionTest < Test::Unit::TestCase
       "user" => "foo",
       "password" => "bar",
       "data_dir" => File.expand_path("data", @tmpdir),
-      "logger" => NullObject.new
+      "logger" => Ximapd::NullObject.new
     }
     @challenge_generator =
       Ximapd::AuthenticateCramMD5Command.challenge_generator

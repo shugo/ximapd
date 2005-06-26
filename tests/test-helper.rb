@@ -23,9 +23,6 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-dir = File.expand_path("../ext/ximapd_bdb", File.dirname(__FILE__))
-$:.unshift(dir)
-
 require "test/unit"
 require "stringio"
 require "tmpdir"

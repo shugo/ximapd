@@ -73,27 +73,6 @@ unless defined?(now.to_time)
   end
 end
 
-class NullObject
-  def initialize(*args)
-  end
-
-  def method_missing(mid, *args)
-    return self
-  end
-
-  def self.method_missing(mid, *args)
-    return new
-  end
-end
-
-begin
-  require "progressbar"
-rescue LoadError
-  class ProgressBar < NullObject
-    VERSION = "not available"
-  end
-end
-
 module Rast
   unless defined?(RESULT_ALL_ITEMS)
     if Rast::VERSION < "0.1.0"
@@ -3608,6 +3587,27 @@ class Ximapd
     def close
       STDIN.close
       STDOUT.close
+    end
+  end
+
+  class NullObject
+    def initialize(*args)
+    end
+
+    def method_missing(mid, *args)
+      return self
+    end
+
+    def self.method_missing(mid, *args)
+      return new
+    end
+  end
+
+  begin
+    require "progressbar"
+  rescue LoadError
+    class ProgressBar < NullObject
+      VERSION = "not available"
     end
   end
 
