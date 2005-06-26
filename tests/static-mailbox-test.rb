@@ -93,6 +93,22 @@ EOF
     @mailbox = @mail_store.get_mailbox("static-mailbox")
   end
 
+  def test_save
+    mailbox = Ximapd::StaticMailbox.new(@mail_store, "mailbox-test",
+                                        "flags" => "")
+    @mail_store.mailbox_db.transaction do
+      mailbox.save
+      mailbox_data = @mail_store.mailbox_db["mailboxes"]["mailbox-test"]
+      assert_equal(@mail_store.mailbox_db["status"]["last_mailbox_id"], 
+                   mailbox_data["id"])
+      assert_equal("StaticMailbox", mailbox_data["class"])
+      assert_equal("", mailbox_data["flags"])
+      dir = File.expand_path("mailboxes/#{mailbox_data['id']}",
+                             @mail_store.path)
+      assert_equal(true, File.directory?(dir))
+    end
+  end
+
   def test_status
     status = @mailbox.status
     assert_equal(5, status.messages)

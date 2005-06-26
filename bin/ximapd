@@ -1393,6 +1393,11 @@ class Ximapd
       @flags_db_path = File.expand_path(relpath, mail_store.path)
     end
 
+    def save
+      super
+      FileUtils.mkdir_p(get_mailbox_dir)
+    end
+
     def import(mail_data)
       path = get_mail_path(mail_data)
       FileUtils.mkdir_p(File.dirname(path))
@@ -1408,8 +1413,7 @@ class Ximapd
     end
 
     def get_mail_path(mail)
-      relpath = format("mailboxes/%d/%d", self["id"], mail.uid)
-      return File.expand_path(relpath, @mail_store.path)
+      return File.expand_path(mail.uid.to_s, get_mailbox_dir)
     end
 
     def status
@@ -1487,6 +1491,11 @@ class Ximapd
     end
 
     private
+
+    def get_mailbox_dir
+      relpath = format("mailboxes/%d", self["id"])
+      return File.expand_path(relpath, @mail_store.path)
+    end
 
     def get_uids
       dirpath = File.expand_path(format("mailboxes/%d", self["id"]),
