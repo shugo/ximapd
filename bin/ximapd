@@ -572,6 +572,9 @@ class Ximapd
     },
     "queries" => {
       "flags" => "\\Noselect"
+    },
+    "static" => {
+      "flags" => "\\Noselect"
     }
   }
 
@@ -632,6 +635,7 @@ class Ximapd
       @mailbox_db.transaction do
         @mailbox_db["status"] ||= DEFAULT_STATUS.dup
         @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
+        convert_old_mailboxes
         @mailbox_db["mailing-lists"] ||= {}
         @plugins = Plugin.create_plugins(@config, self)
       end
@@ -986,6 +990,12 @@ class Ximapd
 
     private
 
+    def convert_old_mailboxes
+      @mailbox_db["mailboxes"]["static"] ||= {
+        "flags" => "\\Noselect"
+      }
+    end
+
     def strip_unix_from(str, indate)
       str.sub!(/\AFrom\s+\S+\s+(.*)\r\n/) do
         if indate.nil?
@@ -1062,6 +1072,11 @@ class Ximapd
       if @mailbox_db["mailboxes"].key?(name)
         raise MailboxExistError, format("mailbox already exist - %s", name)
       end
+      if /\Astatic\//u.match(name)
+        mailbox = StaticMailbox.new(self, name, "flags" => "")
+        mailbox.save
+        return
+      end
       mailbox = {
         "flags" => "",
         "last_peeked_uid" => 0
@@ -1080,7 +1095,7 @@ class Ximapd
     end
 
     def extract_query(mailbox_name)
-      s = mailbox_name.slice(/\Aqueries\/(.*)/, 1)
+      s = mailbox_name.slice(/\Aqueries\/(.*)/u, 1)
       return nil if s.nil?
       query = Net::IMAP.decode_utf7(s)
       begin

@@ -28,7 +28,7 @@ class SpamFilter < Plugin
     begin
       @mail_store.get_mailbox("spam")
     rescue NoMailboxError
-      mailbox = SpamMailbox.new(@mail_store, "spam", "flags" => "")
+      mailbox = StaticMailbox.new(@mail_store, "spam", "flags" => "")
       mailbox.save
       @logger.info("mailbox created: spam")
     end
