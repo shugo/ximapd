@@ -1016,26 +1016,27 @@ class Ximapd
 
     def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil)
       uid = nil
-      mailbox_id = nil
-      mailbox = nil
       @mailbox_db.transaction do
         uid = get_next_uid
-        mailbox_id = get_mailbox_id(mailbox_name)
       end
-      mail = parse_mail(str, uid, mailbox_id, flags, indate)
+      mail = parse_mail(str, uid, flags, indate)
       @mailbox_db.transaction do
         if mailbox_name
           mailbox = get_mailbox(mailbox_name)
         else
+          mailbox = nil
           for plugin in @plugins
             begin
-              mailbox = plugin.filter(mail)
-              break if mailbox
+              mbox_name = plugin.filter(mail)
+              if mbox_name
+                mailbox = get_mailbox(mbox_name)
+                break
+              end
             rescue Exception => e
               @logger.log_exception(e)
             end
           end
-          mailbox ||= get_mailbox("INBOX")
+          mailbox ||= DefaultMailbox.new(self)
         end
         mailbox.import(mail)
       end
@@ -1109,7 +1110,7 @@ class Ximapd
       end
     end
 
-    def parse_mail(mail, uid, mailbox_id, flags, indate)
+    def parse_mail(mail, uid, flags, indate)
       mail.gsub!(/\r?\n/, "\r\n")
       indate = strip_unix_from(mail, indate)
       if indate.nil?
@@ -1122,7 +1123,7 @@ class Ximapd
       properties["internal-date"] = indate.strftime("%Y-%m-%dT%H:%M:%S")
       properties["date"] = properties["internal-date"]
       properties["x-mail-count"] = 0
-      properties["mailbox-id"] = mailbox_id
+      properties["mailbox-id"] = 0
       begin
         m = @mail_parser.parse(mail.gsub(/\r\n/, "\n"))
         properties = extract_properties(m, properties)
@@ -1132,9 +1133,6 @@ class Ximapd
                               Logger::WARN)
         header, body = *mail.split(/^\r\n/)
         body = to_utf8(body, @default_charset)
-      end
-      if properties["mailbox-id"] == 0 && properties["x-ml-name"].empty?
-        properties["mailbox-id"] = 1
       end
       return MailData.new(mail, uid, flags, indate, body, properties)
     end
@@ -1234,11 +1232,6 @@ class Ximapd
     end
 
     def save
-      unless @mail_store.mailbox_db["mailboxes"].key?(@name)
-        @mail_store.mailbox_db["status"]["last_mailbox_id"] += 1
-        @data["id"] = @mail_store.mailbox_db["status"]["last_mailbox_id"]
-        @data["last_peeked_uid"] ||= 0
-      end
       @data["class"] = self.class.name.slice(/\AXimapd::(.*)\z/, 1)
       @mail_store.mailbox_db["mailboxes"][@name] = @data
     end
@@ -1270,6 +1263,9 @@ class Ximapd
 
   class SearchBasedMailbox < Mailbox
     def import(mail_data)
+      if @data.key?("id")
+        mail_data.properties["mailbox-id"] = @data["id"]
+      end
       path = get_mail_path(mail_data)
       FileUtils.mkdir_p(File.dirname(path))
       File.open(path, "w") do |f|
@@ -1400,6 +1396,21 @@ class Ximapd
     end
   end
 
+  class DefaultMailbox < SearchBasedMailbox
+    def initialize(mail_store)
+      super(mail_store, "DEFAULT", {})
+    end
+
+    def import(mail_data)
+      if mail_data.properties["x-ml-name"].empty?
+        mail_data.properties["mailbox-id"] = 1
+      else
+        mail_data.properties["mailbox-id"] = 0
+      end
+      super(mail_data)
+    end
+  end
+
   class StaticMailbox < Mailbox
     def initialize(mail_store, name, data)
       super(mail_store, name, data)
@@ -1408,6 +1419,11 @@ class Ximapd
     end
 
     def save
+      unless @mail_store.mailbox_db["mailboxes"].key?(@name)
+        @mail_store.mailbox_db["status"]["last_mailbox_id"] += 1
+        @data["id"] = @mail_store.mailbox_db["status"]["last_mailbox_id"]
+        @data["last_peeked_uid"] ||= 0
+      end
       super
       FileUtils.mkdir_p(get_mailbox_dir)
     end

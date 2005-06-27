@@ -40,7 +40,7 @@ class SpamFilter < Plugin
     end
     if $?.exitstatus == 0
       @logger.debug("spam: uid=#{mail.uid}")
-      return @mail_store.get_mailbox("spam")
+      return "spam"
     else
       @logger.debug("clean: uid=#{mail.uid}")
       return nil
