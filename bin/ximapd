@@ -3232,8 +3232,10 @@ class Ximapd
       @session.send_continue_req("Waiting for DONE")
       @session.synchronize do
         @session.sync
-        for plugin in @mail_store.plugins
-          plugin.on_idle
+        @mail_store.mailbox_db.transaction do
+          for plugin in @mail_store.plugins
+            plugin.on_idle
+          end
         end
       end
       line = @session.recv_line

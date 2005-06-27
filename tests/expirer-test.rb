@@ -86,8 +86,8 @@ EOF
     @uid5 = @mail_store.import_mail(@mail5, "static-mailbox", "")
 
     config = {
-      "limit" => {
-        "static-mailbox" => {
+      "expires" => {
+        "^static-mailbox$" => {
           "days" => 7
         }
       }

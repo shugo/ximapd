@@ -25,10 +25,27 @@
 
 class Expirer < Plugin
   def on_idle
-    for mailbox_name, limit in @config["limit"]
-      mailbox = @mail_store.get_mailbox(mailbox_name)
-      mailbox.expire_by_date(limit["days"])
+    expired_mailboxes = Set.new
+    for pattern, limit in @config["expires"]
+      re = Regexp.new(pattern, nil, "u")
+      mboxes = @mail_store.mailbox_db["mailboxes"].keys.select { |mailbox_name|
+        re.match(mailbox_name) && !expired_mailboxes.include?(mailbox_name)
+      }
+      for mailbox_name in mboxes
+        mailbox = @mail_store.get_mailbox(mailbox_name)
+        count = mailbox.expire_by_date(limit["days"])
+        if count > 0
+          @logger.info("expired #{count} mails in #{mailbox_name}")
+        end
+        expired_mailboxes.add(mailbox_name)
+      end
     end
+  end
+end
+
+class Mailbox
+  def expire_by_date(days)
+    return 0
   end
 end
 
@@ -36,12 +53,15 @@ class StaticMailbox
   def expire_by_date(days)
     limit_date = Time.now - days * 24 * 60 * 60
     uids = get_uids
+    count = 0
     for uid in uids
       mail = StaticMail.new(@config, self, uid, uid)
       break if mail.internal_date >= limit_date
       if /\\Seen\b/ni.match(mail.flags(false))
         mail.delete
+        count += 1
       end
     end
+    return count
   end
 end
