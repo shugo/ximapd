@@ -27,9 +27,9 @@ Copy bin/ximapd under PATH.
 
 == Setup
 
-(1) Copy sample.ximapd to ~/.ximapd.
+(1) Copy examples/dot.ximapd to ~/.ximapd.
 
-      $ cp sample.ximapd ~/.ximapd
+      $ cp examples/dot.ximapd ~/.ximapd
 
 (2) Edit ~/.ximapd.
 

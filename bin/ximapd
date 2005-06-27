@@ -605,10 +605,43 @@ class Ximapd
     end
   end
 
-  class MailData < Struct.new(:raw_data, :uid, :flags, :internal_date,
-                              :body, :properties)
-    alias to_s raw_data
+  class MailData
+    attr_reader :raw_data, :uid, :flags, :internal_date, :text, :properties
+
+    def initialize(raw_data, uid, flags, internal_date, text, properties)
+      @raw_data = raw_data
+      @uid = uid
+      @flags = flags
+      @internal_date = internal_date
+      @text = text
+      @properties = properties
+      @parsed_mail = nil
+    end
+
+    def to_s
+      return @raw_data
+    end
+
+    def parsed_mail
+      if @parsed_mail.nil?
+        @parsed_mail = RMail::Parser.read(to_s.gsub(/\r\n/, "\n"))
+      end
+      return @parsed_mail
+    end
+
+    def header
+      return parsed_mail.header
+    end
+
+    def multipart?
+      return parsed_mail.multipart?
+    end
+
+    def body
+      return parsed_mail.body
+    end
   end
+
   MailboxStatus = Struct.new(:messages, :recent, :uidnext, :uidvalidity,
                              :unseen)
 
@@ -930,7 +963,7 @@ class Ximapd
     end
 
     def index_mail(mail)
-      @index.register(mail.body, mail.properties)
+      @index.register(mail.text, mail.properties)
       s = mail.properties["x-ml-name"]
       if !s.empty? && !@mailbox_db["mailing-lists"].key?(s)
         mbox = get_mailbox_name_from_x_ml_name(s)
@@ -948,7 +981,7 @@ class Ximapd
     def get_mailbox(name)
       data = @mailbox_db["mailboxes"][name]
       unless data
-        raise NoMailboxError.new("no such mailbox")
+        raise NoMailboxError.new("no such mailbox - #{name}")
       end
       class_name = data["class"]
       if class_name
@@ -1052,8 +1085,8 @@ class Ximapd
           mailbox ||= DefaultMailbox.new(self)
         end
         mailbox.import(mail)
+        @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}> mailbox=<#{mailbox.name}>")
       end
-      @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}>")
       return mail.uid
     end
 

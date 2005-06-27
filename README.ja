@@ -26,9 +26,9 @@ bin/ximapdをPATHにコピーしてください。
 
 == セットアップ
 
-(1) sample.ximapdを~/.ximapdにコピーしてください。
+(1) examples/dot.ximapdを~/.ximapdにコピーしてください。
 
-      $ cp sample.ximapd ~/.ximapd
+      $ cp examples/dot.ximapd ~/.ximapd
 
 (2) ~/.ximapdを編集してください。
 
