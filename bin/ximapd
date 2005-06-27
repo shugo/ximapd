@@ -830,7 +830,9 @@ class Ximapd
     end
 
     def import_file(f, mailbox_name = nil)
-      return import_mail_internal(f.read, mailbox_name)
+      open_index do |index|
+        return import_mail_internal(f.read, mailbox_name)
+      end
     end
 
     def import_mbox(args, mailbox_name = nil)
