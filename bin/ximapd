@@ -165,8 +165,11 @@ class Ximapd
         }
         @config = config.merge(@config)
         check_config(@config)
-        dir = @config["plugin_dir"] || File.join(@config["data_dir"], "plugins")
-        Plugin.directory = File.expand_path(dir)
+        path = @config["plugin_path"] ||
+          File.join(@config["data_dir"], "plugins")
+        Plugin.directories = path.split(File::PATH_SEPARATOR).collect { |dir|
+          File.expand_path(dir)
+        }
       end
     rescue StandardError => e
       raise if @config["debug"]
@@ -3725,25 +3728,29 @@ class Ximapd
   class InvalidQueryError < StandardError; end
 
   class Plugin
-    @@directory = nil
+    @@directories = nil
     @@loaded = false
 
-    def self.directory=(dir)
-      @@directory = dir
+    def self.directories=(dirs)
+      @@directories = dirs
     end
 
     def self.create_plugins(config, mail_store)
       return [] unless config.key?("plugins")
-      if !@@loaded && @@directory
+      if !@@loaded && @@directories
         logger = config["logger"]
         for plugin in config["plugins"]
-          filename = File.expand_path(plugin["name"].downcase + ".rb",
-                                      @@directory)
+          basename = plugin["name"].downcase + ".rb"
+          filename = @@directories.collect { |dir|
+            File.expand_path(basename, dir)
+          }.detect { |filename| File.exist?(filename) }
+          raise "#{basename} not found" unless filename
           File.open(filename) do |f|
             Ximapd.class_eval(f.read)
           end
           logger.debug("loaded plugin: #{filename}")
         end
+        @@loaded = true
       end
       return config["plugins"].collect { |plugin|
         Ximapd.const_get(plugin["name"]).new(plugin, mail_store,
