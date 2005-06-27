@@ -870,7 +870,6 @@ class Ximapd
       end
       user = @config["remote_user"]
       pass = @config["remote_password"]
-      import_all = @config["import_all"]
 
       @logger.info("importing from #{host} via IMAP...")
       imap = Net::IMAP.new(host, port, ssl)
@@ -889,7 +888,10 @@ class Ximapd
             begin
               imap.select(folder.name)
               mail_count = imap.responses["EXISTS"][-1]
-              next if mail_count == 0
+              if mail_count == 0
+                @logger.info("0 messages in #{folder.name}")
+                next
+              end
               imported_uids = Set.new
               progress_bar = NullObject.new
               handler = Proc.new { |resp|
@@ -926,7 +928,7 @@ class Ximapd
                 if @config["import_imap_flags"]
                   fetch_attrs.push("FLAGS")
                 end
-                if import_all
+                if @config["import_all"]
                   @logger.info("#{mail_count} messages in #{folder.name}")
                   if @config["verbose"]
                     progress_bar = ProgressBar.new(folder.name, mail_count)
@@ -947,10 +949,13 @@ class Ximapd
               ensure
                 imap.remove_response_handler(handler)
               end
-              #while imported_uids.length > 0
-              #  imap.uid_store(imported_uids.slice!(0, 100),
-              #                 "+FLAGS.SILENT", [:Seen])
-              #end
+              unless @config["keep"]
+                uids = imported_uids.to_a.sort
+                while uids.length > 0
+                  imap.uid_store(uids.slice!(0, 100),
+                                 "+FLAGS.SILENT", [:Deleted])
+                end
+              end
             rescue StandardError => e
               @logger.log_exception(e, folder.name)
             ensure
@@ -3951,6 +3956,7 @@ class Ximapd
     StringOption.new("remote_password", "password of remote IMAP server"),
     BoolOption.new("import_all", "import all mails by --import-imap"),
     BoolOption.new("import_imap_flags", "import IMAP flags by --import-imap"),
+    BoolOption.new("keep", "keep retrieved mails on the remote server"),
     StringOption.new("dest_mailbox", "destination mailbox name"),
     ArrayOption.new("ml_header_fields",
                     "header fields to handle same as X-ML-Name"),
