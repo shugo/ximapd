@@ -631,6 +631,7 @@ class Ximapd
         @mailbox_db["status"] ||= DEFAULT_STATUS.dup
         @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
         @mailbox_db["mailing-lists"] ||= {}
+        @plugins = Plugin.create_plugins(@config, self)
       end
       @mail_parser = RMail::Parser.new
       @flags_db_path = File.expand_path("flags.sdbm", @path)
@@ -650,7 +651,6 @@ class Ximapd
       lock_path = File.expand_path("lock", @path)
       @lock = File.open(lock_path, "w+")
       @lock_count = 0
-      @plugins = Plugin.create_plugins(@config, self)
     end
 
     def close
@@ -1023,9 +1023,14 @@ class Ximapd
         if mailbox_name
           mailbox = get_mailbox(mailbox_name)
         else
-          mailbox = @plugins.detect { |plugin|
-            plugin.filter(mail)
-          }
+          for plugin in @plugins
+            begin
+              mailbox = plugin.filter(mail)
+              break if mailbox
+            rescue Exception => e
+              @logger.log_exception(e)
+            end
+          end
           mailbox ||= get_mailbox("INBOX")
         end
         mailbox.import(mail)
@@ -3663,35 +3668,33 @@ class Ximapd
   class Plugin
     @@directory = nil
     @@loaded = false
-    @@plugin_classes = []
 
     def self.directory=(dir)
       @@directory = dir
     end
 
-    def self.inherited(plugin_class)
-      @@plugin_classes.push(plugin_class)
-    end
-
     def self.create_plugins(config, mail_store)
       if !@@loaded && @@directory
         logger = config["logger"]
-        Dir.glob(@@directory + "/*.rb") do |filename|
+        for plugin in config["plugins"]
+          filename = File.expand_path(plugin["name"].downcase + ".rb",
+                                      @@directory)
           File.open(filename) do |f|
             Ximapd.class_eval(f.read)
           end
           logger.debug("loaded plugin: #{filename}")
         end
       end
-      return @@plugin_classes.collect { |plugin_class|
-        plugin_class.new(config, mail_store)
+      return config["plugins"].collect { |plugin|
+        Ximapd.const_get(plugin["name"]).new(plugin, mail_store,
+                                             config["logger"])
       }
     end
 
-    def initialize(config, mail_store)
+    def initialize(config, mail_store, logger)
       @config = config
       @mail_store = mail_store
-      @logger = @config["logger"]
+      @logger = logger
       init_plugin
     end
 
@@ -3858,6 +3861,7 @@ class Ximapd
 end
 
 if $0 == __FILE__
+  File.umask(0077)
   imapd = Ximapd.new
   imapd.run(ARGV)
 end
