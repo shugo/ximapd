@@ -956,6 +956,9 @@ class Ximapd
     def delete_mails(mails)
       open_index do |index|
         for mail in mails
+          for plugin in @plugins
+            plugin.on_delete_mail(self)
+          end
           mail.delete
         end
       end
@@ -1611,9 +1614,6 @@ class Ximapd
     end
 
     def delete
-      for plugin in @mail_store.plugins
-        plugin.on_delete_mail(self)
-      end
       begin
         File.unlink(path)
       rescue Errno::ENOENT
@@ -3229,10 +3229,13 @@ class Ximapd
 
   class IdleCommand < Command
     def exec
+      @session.send_continue_req("Waiting for DONE")
       @session.synchronize do
         @session.sync
+        for plugin in @mail_store.plugins
+          plugin.on_idle
+        end
       end
-      @session.send_continue_req("Waiting for DONE")
       line = @session.recv_line
       send_tagged_ok
     end
@@ -3733,6 +3736,9 @@ class Ximapd
     end
 
     def on_delete_mail(mail)
+    end
+
+    def on_idle
     end
   end
 

@@ -52,7 +52,8 @@ Date: Wed, 30 Mar 2005 17:34:46 +0900
 
 Hello world
 EOF
-    @uid1 = @mail_store.import_mail(@mail1, "static-mailbox", "\\Seen")
+    @uid1 = @mail_store.import_mail(@mail1, "static-mailbox", "\\Seen",
+                                    Time.mktime(2005, 6, 19, 23, 59, 59))
     @mail2 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
 Subject: bye
@@ -60,7 +61,8 @@ Date: Wed, 30 Mar 2005 19:18:02 +0900
 
 Goodbye world
 EOF
-    @uid2 = @mail_store.import_mail(@mail2, "static-mailbox", "\\Seen")
+    @uid2 = @mail_store.import_mail(@mail2, "static-mailbox", "\\Seen",
+                                    Time.mktime(2005, 6, 20, 0, 0, 0))
     @mail3 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
 Subject: test3
@@ -90,7 +92,7 @@ This is test5
 EOF
     @uid5 = @mail_store.import_mail(@mail5, "static-mailbox", "")
 
-    @mailbox = @mail_store.mailbox_db.transaction {
+    @mailbox = @mail_store.mailbox_db.transaction(true) {
       @mail_store.get_mailbox("static-mailbox")
     }
   end

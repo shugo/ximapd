@@ -29,6 +29,13 @@ require "tmpdir"
 require "logger"
 require "pp"
 
+def require_plugin(name)
+  filename = File.expand_path("../plugins/#{name}.rb", File.dirname(__FILE__))
+  open(filename) do |f|
+    Ximapd.class_eval(f.read)
+  end
+end
+
 def mkdtemp(prefix, mode = 0700)
   retry_count = 0
   begin
@@ -42,6 +49,35 @@ def mkdtemp(prefix, mode = 0700)
       retry
     else
       raise "can't create #{dir}"
+    end
+  end
+end
+
+class Time
+  @spoof_now = nil
+
+  class << self
+    alias real_now now
+    attr_accessor :spoof_now
+
+    klass = self
+
+    define_method(:use_spoof_now) do
+      klass.send(:alias_method, :now, :spoof_now)
+    end
+
+    define_method(:use_real_now) do
+      klass.send(:alias_method, :now, :real_now)
+    end
+
+    def replace_now(time)
+      self.spoof_now = time
+      use_spoof_now
+      begin
+        yield
+      ensure
+        use_real_now
+      end
     end
   end
 end
