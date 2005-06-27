@@ -981,7 +981,7 @@ class Ximapd
     def get_mailbox(name)
       data = @mailbox_db["mailboxes"][name]
       unless data
-        raise NoMailboxError.new("no such mailbox - #{name}")
+        raise NoMailboxError.new("no such mailbox")
       end
       class_name = data["class"]
       if class_name
