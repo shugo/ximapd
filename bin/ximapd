@@ -608,37 +608,44 @@ class Ximapd
   class MailData
     attr_reader :raw_data, :uid, :flags, :internal_date, :text, :properties
 
-    def initialize(raw_data, uid, flags, internal_date, text, properties)
+    def initialize(raw_data, uid, flags, internal_date, text, properties,
+                   parsed_mail)
       @raw_data = raw_data
       @uid = uid
       @flags = flags
       @internal_date = internal_date
       @text = text
       @properties = properties
-      @parsed_mail = nil
+      @parsed_mail = parsed_mail
     end
 
     def to_s
       return @raw_data
     end
 
-    def parsed_mail
-      if @parsed_mail.nil?
-        @parsed_mail = RMail::Parser.read(to_s.gsub(/\r\n/, "\n"))
-      end
-      return @parsed_mail
-    end
-
     def header
-      return parsed_mail.header
+      return @parsed_mail.header
     end
 
     def multipart?
-      return parsed_mail.multipart?
+      return @parsed_mail.multipart?
     end
 
     def body
-      return parsed_mail.body
+      return @parsed_mail.body
+    end
+  end
+
+  class NullMessage
+    attr_reader :header, :body
+
+    def initialize
+      @header = {}
+      @body = ""
+    end
+
+    def multipart?
+      return false
     end
   end
 
@@ -1185,7 +1192,8 @@ class Ximapd
         header, body = *mail.split(/^\r\n/)
         body = to_utf8(body, @default_charset)
       end
-      return MailData.new(mail, uid, flags, indate, body, properties)
+      return MailData.new(mail, uid, flags, indate, body, properties,
+                          m || NullMessage.new)
     end
 
     def get_mailbox_id(mailbox_name)
