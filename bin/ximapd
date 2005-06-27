@@ -599,8 +599,10 @@ class Ximapd
     end
   end
 
-  MailData = Struct.new(:raw_data, :uid, :flags, :internal_date,
-                        :body, :properties)
+  class MailData < Struct.new(:raw_data, :uid, :flags, :internal_date,
+                              :body, :properties)
+    alias to_s raw_data
+  end
   MailboxStatus = Struct.new(:messages, :recent, :uidnext, :uidvalidity,
                              :unseen)
 
@@ -608,7 +610,7 @@ class Ximapd
     include QueryFormat
     include MonitorMixin
 
-    attr_reader :config, :path, :mailbox_db, :flags_db
+    attr_reader :config, :path, :mailbox_db, :flags_db, :plugins
 
     def initialize(config)
       super()
@@ -954,7 +956,6 @@ class Ximapd
     def delete_mails(mails)
       open_index do |index|
         for mail in mails
-          index.delete(mail.doc_id)
           mail.delete
         end
       end
@@ -1233,6 +1234,7 @@ class Ximapd
       unless @mail_store.mailbox_db["mailboxes"].key?(@name)
         @mail_store.mailbox_db["status"]["last_mailbox_id"] += 1
         @data["id"] = @mail_store.mailbox_db["status"]["last_mailbox_id"]
+        @data["last_peeked_uid"] ||= 0
       end
       @data["class"] = self.class.name.slice(/\AXimapd::(.*)\z/, 1)
       @mail_store.mailbox_db["mailboxes"][@name] = @data
@@ -1269,7 +1271,7 @@ class Ximapd
       FileUtils.mkdir_p(File.dirname(path))
       File.open(path, "w") do |f|
         f.flock(File::LOCK_EX)
-        f.print(mail_data.raw_data)
+        f.print(mail_data)
       end
       time = mail_data.internal_date.to_time
       File.utime(time, time, path)
@@ -1412,7 +1414,7 @@ class Ximapd
       FileUtils.mkdir_p(File.dirname(path))
       File.open(path, "w") do |f|
         f.flock(File::LOCK_EX)
-        f.print(mail_data.raw_data)
+        f.print(mail_data)
       end
       time = mail_data.internal_date.to_time
       File.utime(time, time, path)
@@ -1609,6 +1611,9 @@ class Ximapd
     end
 
     def delete
+      for plugin in @mail_store.plugins
+        plugin.on_delete_mail(self)
+      end
       begin
         File.unlink(path)
       rescue Errno::ENOENT
@@ -1722,6 +1727,14 @@ class Ximapd
     def flags=(s)
       @mail_store.flags_db[@uid.to_s] = s
     end
+
+    def delete
+      super
+      @mail_store.flags_db.delete(@uid.to_s)
+      @mail_store.open_index do |index|
+        index.delete(@doc_id)
+      end
+    end
   end
 
   class StaticMail < Mail
@@ -1747,6 +1760,13 @@ class Ximapd
     def flags=(s)
       @mailbox.open_flags_db do |db|
         db[@uid.to_s] = s
+      end
+    end
+
+    def delete
+      super
+      @mailbox.open_flags_db do |db|
+        db.delete(@uid.to_s)
       end
     end
   end
@@ -3651,6 +3671,9 @@ class Ximapd
       for mail in mails
         @session.synchronize do
           @mail_store.import_mail(mail.to_s, @mailbox_name)
+          for plugin in @mail_store.plugins
+            plugin.on_copy(mail, @mailbox_name)
+          end
         end
       end
       send_tagged_ok
@@ -3674,6 +3697,7 @@ class Ximapd
     end
 
     def self.create_plugins(config, mail_store)
+      return [] unless config.key?("plugins")
       if !@@loaded && @@directory
         logger = config["logger"]
         for plugin in config["plugins"]
@@ -3703,6 +3727,12 @@ class Ximapd
 
     def filter(mail)
       return nil
+    end
+
+    def on_copy(mail, mailbox_name)
+    end
+
+    def on_delete_mail(mail)
     end
   end
 

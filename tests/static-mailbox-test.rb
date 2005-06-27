@@ -105,6 +105,7 @@ EOF
                    mailbox_data["id"])
       assert_equal("StaticMailbox", mailbox_data["class"])
       assert_equal("", mailbox_data["flags"])
+      assert_equal(0, mailbox_data["last_peeked_uid"])
       dir = File.expand_path("mailboxes/#{mailbox_data['id']}",
                              @mail_store.path)
       assert_equal(true, File.directory?(dir))
