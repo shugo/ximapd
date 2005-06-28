@@ -1011,7 +1011,7 @@ class Ximapd
       open_index do |index|
         for mail in mails
           for plugin in @plugins
-            plugin.on_delete_mail(self)
+            plugin.on_delete_mail(mail)
           end
           mail.delete
         end
