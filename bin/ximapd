@@ -1088,6 +1088,10 @@ class Ximapd
           for plugin in @plugins
             begin
               mbox_name = plugin.filter(mail)
+              if mbox_name == "REJECT"
+                @logger.add(Logger::INFO, "rejected: from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}> mailbox=<#{mailbox.name}>")
+                return 0
+              end
               if mbox_name
                 mailbox = get_mailbox(mbox_name)
                 break
