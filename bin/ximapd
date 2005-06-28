@@ -818,13 +818,24 @@ class Ximapd
     def import(args, mailbox_name = nil)
       open_index do |index|
         for arg in args
+          filenames = []
           Find.find(arg) do |filename|
             if File.file?(filename)
-              File.open(filename) do |f|
-                uid = import_mail_internal(f.read, mailbox_name, "", f.mtime)
-              end
+              filenames.push(filename)
             end
           end
+          if @config["progress"]
+            progress_bar = ProgressBar.new(arg, filenames.length)
+          else
+            progress_bar = NullObject.new
+          end
+          for filename in filenames
+            File.open(filename) do |f|
+              import_mail_internal(f.read, mailbox_name, "", f.mtime)
+            end
+            progress_bar.inc
+          end
+          progress_bar.finish
         end
       end
     end
@@ -932,7 +943,7 @@ class Ximapd
                 end
                 if @config["import_all"]
                   @logger.info("#{mail_count} messages in #{folder.name}")
-                  if @config["verbose"]
+                  if @config["progress"]
                     progress_bar = ProgressBar.new(folder.name, mail_count)
                   end
                   imap.fetch(1 .. -1, fetch_attrs)
@@ -940,7 +951,7 @@ class Ximapd
                   uids = imap.uid_search(["UNSEEN"])
                   @logger.info("#{uids.length} unseen messages " + 
                                "in #{folder.name}")
-                  if @config["verbose"]
+                  if @config["progress"]
                     progress_bar = ProgressBar.new(folder.name, uids.length)
                   end
                   while uids.length > 0
@@ -3975,6 +3986,7 @@ class Ximapd
                   "number of characters to start index sync"),
     BoolOption.new("debug", "turn on debug mode"),
     BoolOption.new("verbose", "turn on verbose mode"),
+    BoolOption.new("progress", "show progress"),
   ]
 
   ACTIONS = [
