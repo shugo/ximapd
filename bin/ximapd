@@ -1004,6 +1004,9 @@ class Ximapd
     end
 
     def get_mailbox(name)
+      if name == "DEFAULT"
+        return DefaultMailbox.new(self)
+      end
       data = @mailbox_db["mailboxes"][name]
       unless data
         raise NoMailboxError.new("no such mailbox")
