@@ -3963,7 +3963,7 @@ class Ximapd
     StringOption.new("user", "user"),
     StringOption.new("password", "password"),
     StringOption.new("data_dir", "data directory"),
-    StringOption.new("filter_dir", "filter directory"),
+    StringOption.new("plugin_path", "path for plugins"),
     StringOption.new("db_type", "database type (yaml, pstore)"),
     BoolOption.new("ssl", "use SSL"),
     StringOption.new("ssl_key", "path to SSL private key"),
