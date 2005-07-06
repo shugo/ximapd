@@ -1056,6 +1056,7 @@ class Ximapd
     end
 
     def rebuild_index
+      @logger.info("rebuilding index...")
       old_index_path = @index_path + ".old"
       begin
         File.rename(@index_path, old_index_path)
@@ -1098,7 +1099,9 @@ class Ximapd
                   File.read(filename + ".mailbox-id").to_i
               rescue Errno::ENOENT
               end
-              index_mail(mail)
+              @mailbox_db.transaction do
+                index_mail(mail)
+              end
             rescue StandardError => e
               @logger.log_exception(e)
             end
@@ -1108,6 +1111,7 @@ class Ximapd
         end
       end
       FileUtils.rm_rf(old_index_path)
+      @logger.info("rebuilt index")
     end
 
     private
