@@ -358,6 +358,12 @@ class Ximapd
     end
   end
 
+  def rebuild_index
+    open_mail_store do |mail_store|
+      mail_store.rebuild_index
+    end
+  end
+
   def interactive
     @mail_store = Ximapd::MailStore.new(@config)
     begin
@@ -663,11 +669,8 @@ class Ximapd
       @config = config
       @logger = @config["logger"]
       @path = File.expand_path(@config["data_dir"])
-      @mail_path = File.expand_path("mails", @path)
-      @db_path = File.expand_path("db", @path)
       FileUtils.mkdir_p(@path)
-      FileUtils.mkdir_p(@mail_path)
-      FileUtils.mkdir_p(@db_path)
+      FileUtils.mkdir_p(File.expand_path("mails", @path))
       mailbox_db_path = File.expand_path("mailbox.db", @path)
       case @config["db_type"].to_s.downcase
       when "pstore"
@@ -1052,6 +1055,61 @@ class Ximapd
       end
     end
 
+    def rebuild_index
+      old_index_path = @index_path + ".old"
+      begin
+        File.rename(@index_path, old_index_path)
+      rescue Errno::ENOENT
+      end
+      Rast::DB.create(@index_path, INDEX_OPTIONS)
+      mailbox_names = {}
+      @mailbox_db.transaction do
+        for mailbox_name, mailbox_data in @mailbox_db["mailboxes"]
+          id = mailbox_data["id"]
+          if id
+            mailbox_names[id] = mailbox_name
+          end
+        end
+      end
+      open_index do
+        mail_dir = File.expand_path("mails", @path)
+        Dir.glob(mail_dir + "/*/*").sort.each do |dir|
+          filenames = []
+          Find.find(dir) do |filename|
+            if File.file?(filename) && /\/\d+\z/.match(filename)
+              filenames.push(filename)
+            end
+          end
+          if @config["progress"]
+            month = dir.slice(/\d+\/\d+\z/)
+            progress_bar = ProgressBar.new(month, filenames.length)
+          else
+            progress_bar = NullObject.new
+          end
+          for filename in filenames
+            begin
+              str = File.read(filename)
+              uid = filename.slice(/\/(\d+)\z/, 1).to_i
+              flags = @flags_db[uid.to_s] || "\\Seen"
+              indate = File.mtime(filename)
+              mail = parse_mail(str, uid, flags, indate)
+              begin
+                mail.properties["mailbox-id"] =
+                  File.read(filename + ".mailbox-id").to_i
+              rescue Errno::ENOENT
+              end
+              index_mail(mail)
+            rescue StandardError => e
+              @logger.log_exception(e)
+            end
+            progress_bar.inc
+          end
+          progress_bar.finish
+        end
+      end
+      FileUtils.rm_rf(old_index_path)
+    end
+
     private
 
     def convert_old_mailboxes
@@ -1355,6 +1413,11 @@ class Ximapd
       File.open(path, "w") do |f|
         f.flock(File::LOCK_EX)
         f.print(mail_data)
+      end
+      mailbox_id_path = path + ".mailbox-id"
+      File.open(mailbox_id_path, "w") do |f|
+        f.flock(File::LOCK_EX)
+        f.print(mail_data.properties["mailbox-id"].to_s)
       end
       time = mail_data.internal_date.to_time
       File.utime(time, time, path)
@@ -3998,6 +4061,7 @@ class Ximapd
     Action.new("import", "import mail"),
     Action.new("import_mbox", "import mbox"),
     Action.new("import_imap", "import from another imap server"),
+    Action.new("rebuild_index", "rebuild index"),
     Action.new("interactive", "interactive mode"),
     Action.new("version", "print version"),
     Action.new("help", "print this message"),
