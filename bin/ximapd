@@ -1075,39 +1075,7 @@ class Ximapd
       open_index do
         mail_dir = File.expand_path("mails", @path)
         Dir.glob(mail_dir + "/*/*").sort.each do |dir|
-          filenames = []
-          Find.find(dir) do |filename|
-            if File.file?(filename) && /\/\d+\z/.match(filename)
-              filenames.push(filename)
-            end
-          end
-          if @config["progress"]
-            month = dir.slice(/\d+\/\d+\z/)
-            progress_bar = ProgressBar.new(month, filenames.length)
-          else
-            progress_bar = NullObject.new
-          end
-          for filename in filenames
-            begin
-              str = File.read(filename)
-              uid = filename.slice(/\/(\d+)\z/, 1).to_i
-              flags = @flags_db[uid.to_s] || "\\Seen"
-              indate = File.mtime(filename)
-              mail = parse_mail(str, uid, flags, indate)
-              begin
-                mail.properties["mailbox-id"] =
-                  File.read(filename + ".mailbox-id").to_i
-              rescue Errno::ENOENT
-              end
-              @mailbox_db.transaction do
-                index_mail(mail)
-              end
-            rescue StandardError => e
-              @logger.log_exception(e)
-            end
-            progress_bar.inc
-          end
-          progress_bar.finish
+          reindex_month(dir)
         end
       end
       FileUtils.rm_rf(old_index_path)
@@ -1252,6 +1220,46 @@ class Ximapd
       end
       if s
         uid = import_mail_internal(s, mailbox_name)
+      end
+    end
+
+    def reindex_month(dir)
+      filenames = []
+      Find.find(dir) do |filename|
+        if File.file?(filename) && /\/\d+\z/.match(filename)
+          filenames.push(filename)
+        end
+      end
+      if @config["progress"]
+        month = dir.slice(/\d+\/\d+\z/)
+        progress_bar = ProgressBar.new(month, filenames.length)
+      else
+        progress_bar = NullObject.new
+      end
+      for filename in filenames
+        reindex_mail(filename)
+        progress_bar.inc
+      end
+      progress_bar.finish
+    end
+
+    def reindex_mail(filename)
+      begin
+        str = File.read(filename)
+        uid = filename.slice(/\/(\d+)\z/, 1).to_i
+        flags = @flags_db[uid.to_s] || "\\Seen"
+        indate = File.mtime(filename)
+        mail = parse_mail(str, uid, flags, indate)
+        begin
+          mail.properties["mailbox-id"] =
+            File.read(filename + ".mailbox-id").to_i
+        rescue Errno::ENOENT
+        end
+        @mailbox_db.transaction do
+          index_mail(mail)
+        end
+      rescue StandardError => e
+        @logger.log_exception(e)
       end
     end
 
