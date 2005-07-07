@@ -1877,6 +1877,9 @@ EOF
     def close
       @output.rewind
     end
+
+    def fcntl(cmd, arg)
+    end
   end
 end
 

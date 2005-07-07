@@ -25,6 +25,7 @@
 # SUCH DAMAGE.
 
 require "socket"
+require "fcntl"
 require "monitor"
 require "net/imap"
 require "pstore"
@@ -240,8 +241,14 @@ class Ximapd
               raise
             end
           end
+          unless @config["ssl"]
+            sock.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1)
+            if defined?(Fcntl::FD_CLOEXEC)
+              sock.fcntl(Fcntl::F_SETFD, Fcntl::FD_CLOEXEC) 
+            end
+          end
           Thread.start(sock) do |socket|
-            session = Session.new(@config, sock, @mail_store)
+            session = Session.new(@config, socket, @mail_store)
             @sessions[Thread.current] = session
             session.start
             @sessions.delete(Thread.current)
@@ -2101,7 +2108,13 @@ class Ximapd
 
     def send_line(line)
       @logger.debug(line.gsub(/^/n, "S: ")) if @config["debug"]
-      @sock.print(line + "\r\n")
+      if defined?(Fcntl::O_NONBLOCK) && !config["ssl"]
+        @sock.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK)
+        @sock.print(line + "\r\n")
+        @sock.fcntl(Fcntl::F_SETFL, 0)
+      else
+        @sock.print(line + "\r\n")
+      end
     end
 
     def send_tagged_response(tag, name, fmt, *args)
@@ -3957,6 +3970,9 @@ class Ximapd
     def close
       STDIN.close
       STDOUT.close
+    end
+
+    def fcntl(cmd, arg)
     end
   end
 
