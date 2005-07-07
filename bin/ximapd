@@ -37,10 +37,11 @@ require "nkf"
 require "date"
 require "set"
 require "logger"
-require "rmail/parser"
-require "rast"
+require "timeout"
 require "optparse"
 require "sdbm"
+require "rast"
+require "rmail/parser"
 
 now = DateTime.now
 unless defined?(now.to_time)
@@ -1952,7 +1953,9 @@ class Ximapd
   LOGOUT_STATE = :LOGOUT_STATE
 
   class Session
-    attr_reader :config, :state, :mail_store, :current_mailbox
+    attr_reader :config, :state, :mail_store, :current_mailbox, :peeraddr
+
+    MAX_IDLE_SECONDS = 30 * 60
 
     @@test = false
 
@@ -1994,23 +1997,26 @@ class Ximapd
       end
       begin
         while !@logout
-            begin
-              cmd = recv_cmd
-            rescue StandardError => e
-              send_bad("parse error: %s", e)
-              next
-            end
-            break if cmd.nil?
-            @logger.debug("received #{cmd.name} command from #{@peeraddr}")
-            begin
-              cmd.exec
-            rescue StandardError => e
-              raise if @@test
-              send_tagged_no(cmd.tag, "%s failed - %s", cmd.name, e)
-              @logger.log_exception(e)
-            end
-            @logger.debug("sent #{cmd.name} response to #{@peeraddr}")
+          begin
+            cmd = recv_cmd
+          rescue StandardError => e
+            send_bad("parse error: %s", e)
+            next
+          end
+          break if cmd.nil?
+          @logger.debug("received #{cmd.name} command from #{@peeraddr}")
+          begin
+            cmd.exec
+          rescue StandardError => e
+            raise if @@test
+            send_tagged_no(cmd.tag, "%s failed - %s", cmd.name, e)
+            @logger.log_exception(e)
+          end
+          @logger.debug("sent #{cmd.name} response to #{@peeraddr}")
         end
+      rescue Timeout::Error
+        @logger.info("autologout #{@peeraddr}")
+        send_data("BYE Autologout; idle for too long")
       rescue TerminateException
         send_data("BYE IMAP server terminating connection")
       end
@@ -2062,31 +2068,35 @@ class Ximapd
     end
 
     def recv_line
-      s = @sock.gets
-      return s if s.nil?
-      line = s.sub(/\r\n\z/n, "")
-      @logger.debug(line.gsub(/^/n, "C: ")) if @config["debug"]
-      return line
+      timeout(MAX_IDLE_SECONDS) do
+        s = @sock.gets
+        return s if s.nil?
+        line = s.sub(/\r\n\z/n, "")
+        @logger.debug(line.gsub(/^/n, "C: ")) if @config["debug"]
+        return line
+      end
     end
 
     def recv_cmd
-      buf = ""
-      loop do
-        s = @sock.gets
-        break unless s
-        s.gsub!(/\r?\n\z/, "\r\n")
-        buf.concat(s)
-        if len = s.slice(/\{(\d+)\}\r\n/n, 1)
-          send_continue_req("Ready for additional command text")
-          s = @sock.read(len.to_i)
+      timeout(MAX_IDLE_SECONDS) do
+        buf = ""
+        loop do
+          s = @sock.gets
+          break unless s
+          s.gsub!(/\r?\n\z/, "\r\n")
           buf.concat(s)
-        else
-          break
+          if len = s.slice(/\{(\d+)\}\r\n/n, 1)
+            send_continue_req("Ready for additional command text")
+            s = @sock.read(len.to_i)
+            buf.concat(s)
+          else
+            break
+          end
         end
+        return nil if buf.length == 0
+        @logger.debug(buf.gsub(/^/n, "C: ")) if @config["debug"]
+        return @parser.parse(buf)
       end
-      return nil if buf.length == 0
-      @logger.debug(buf.gsub(/^/n, "C: ")) if @config["debug"]
-      return @parser.parse(buf)
     end
 
     def send_line(line)
@@ -3088,6 +3098,7 @@ class Ximapd
       @session = session
       @config = session.config
       @mail_store = session.mail_store
+      @logger = @config["logger"]
     end
 
     def send_tagged_ok(code = nil)
@@ -3413,7 +3424,7 @@ class Ximapd
           end
         end
       end
-      line = @session.recv_line
+      @session.recv_line
       send_tagged_ok
     end
   end
