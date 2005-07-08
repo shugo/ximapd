@@ -246,6 +246,9 @@ class Ximapd
             if defined?(Fcntl::FD_CLOEXEC)
               sock.fcntl(Fcntl::F_SETFD, Fcntl::FD_CLOEXEC) 
             end
+            if defined?(Fcntl::O_NONBLOCK)
+              sock.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK)
+            end
           end
           Thread.start(sock) do |socket|
             session = Session.new(@config, socket, @mail_store)
@@ -2094,8 +2097,12 @@ class Ximapd
           buf.concat(s)
           if len = s.slice(/\{(\d+)\}\r\n/n, 1)
             send_continue_req("Ready for additional command text")
-            s = @sock.read(len.to_i)
-            buf.concat(s)
+            n = len.to_i
+            while n > 0
+              tmp = @sock.read(n)
+              n -= tmp.length
+              buf.concat(tmp)
+            end
           else
             break
           end
@@ -2108,13 +2115,7 @@ class Ximapd
 
     def send_line(line)
       @logger.debug(line.gsub(/^/n, "S: ")) if @config["debug"]
-      if defined?(Fcntl::O_NONBLOCK) && !config["ssl"]
-        @sock.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK)
-        @sock.print(line + "\r\n")
-        @sock.fcntl(Fcntl::F_SETFL, 0)
-      else
-        @sock.print(line + "\r\n")
-      end
+      @sock.print(line + "\r\n")
     end
 
     def send_tagged_response(tag, name, fmt, *args)
