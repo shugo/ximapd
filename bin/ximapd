@@ -99,6 +99,7 @@ class Ximapd
 
   LOG_SHIFT_AGE = 10
   LOG_SHIFT_SIZE = 1 * 1024 * 1024
+  MAX_CLIENTS = 10
   TIMEZONE = Time.now.strftime("%z")
 
   @@debug = false
@@ -127,6 +128,7 @@ class Ximapd
       opts.separator("")
       define_options(opts, @config, ACTIONS)
     }
+    @max_clients = nil
   end
 
   def run(args)
@@ -136,6 +138,7 @@ class Ximapd
       @server = nil
       @logger = open_logger
       @config["logger"] = @logger
+      @max_clients = @config["max_clients"] || MAX_CLIENTS
       @threads = []
       @sessions = {}
       send(@config["action"])
@@ -194,6 +197,7 @@ class Ximapd
       log_level = (@config["log_level"] || "INFO").upcase
       logger.level = Logger.const_get(log_level)
     end
+    logger.datetime_format = "%Y-%m-%dT%H:%M:%S "
     if @config["action"] != "start"
       for m in [:fatal, :error, :warn]
         class << logger; self; end.send(:define_method, m) do |s|
@@ -250,11 +254,22 @@ class Ximapd
               sock.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK)
             end
           end
+          if @sessions.length >= @max_clients
+            sock.print("* BYE too many clients\r\n")
+            peeraddr = sock.peeraddr[3]
+            sock.close
+            @logger.info("rejected connection from #{peeraddr}: " +
+                         "too many clients")
+            next
+          end
           Thread.start(sock) do |socket|
             session = Session.new(@config, socket, @mail_store)
             @sessions[Thread.current] = session
-            session.start
-            @sessions.delete(Thread.current)
+            begin
+              session.start
+            ensure
+              @sessions.delete(Thread.current)
+            end
           end
         end
       ensure
@@ -4152,6 +4167,7 @@ class Ximapd
     StringOption.new("data_dir", "data directory"),
     StringOption.new("plugin_path", "path for plugins"),
     StringOption.new("db_type", "database type (yaml, pstore)"),
+    IntOption.new("max_clients", "max number of clients"),
     BoolOption.new("ssl", "use SSL"),
     StringOption.new("ssl_key", "path to SSL private key"),
     StringOption.new("ssl_cert", "path to SSL certificate"),
