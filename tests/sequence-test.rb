@@ -28,24 +28,51 @@ require File.expand_path("test-helper", File.dirname(__FILE__))
 class XimapdSequenceTest < Test::Unit::TestCase
   include XimapdTestMixin
 
+  def test_current
+    path = File.expand_path("uid.seq", @tmpdir)
+    seq = Ximapd::Sequence.new(path)
+    assert_equal(nil, seq.current)
+    seq.next
+    assert_equal(1, seq.current)
+    assert_equal(1, seq.current)
+    seq.next
+    assert_equal(2, seq.current)
+    assert_equal(2, seq.current)
+
+    seq2 = Ximapd::Sequence.new(path)
+    assert_equal(2, seq2.current)
+  end
+
+  def test_current=
+    path = File.expand_path("uid.seq", @tmpdir)
+    seq = Ximapd::Sequence.new(path)
+    assert_equal(nil, seq.current)
+    seq.current = 5
+    assert_equal(5, seq.current)
+    seq.current = 10
+    seq2 = Ximapd::Sequence.new(path)
+    assert_equal(10, seq2.current)
+  end
+
   def test_next
     path = File.expand_path("uid.seq", @tmpdir)
-    seq = Ximapd::Sequence.new(path, 1)
+    seq = Ximapd::Sequence.new(path)
     assert_equal(1, seq.next)
     assert_equal(2, seq.next)
 
-    seq2 = Ximapd::Sequence.new(path, 1)
+    seq2 = Ximapd::Sequence.new(path)
     assert_equal(3, seq2.next)
   end
 
   def test_peek_next
     path = File.expand_path("uid.seq", @tmpdir)
-    seq = Ximapd::Sequence.new(path, 1)
+    seq = Ximapd::Sequence.new(path)
+    assert_equal(1, seq.peek_next)
     seq.next
     assert_equal(2, seq.peek_next)
     assert_equal(2, seq.peek_next)
 
-    seq2 = Ximapd::Sequence.new(path, 1)
+    seq2 = Ximapd::Sequence.new(path)
     assert_equal(2, seq2.peek_next)
   end
 end

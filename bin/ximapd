@@ -1958,24 +1958,33 @@ class Ximapd
   end
 
   class Sequence
-    def initialize(path, initial_value)
+    def initialize(path, initial_value = 1)
       @path = path
       @new_path = path + ".new"
       @tmp_path = path + ".tmp"
       @initial_value = initial_value
     end
 
+    def current
+      File.open(@path, File::RDWR | File::CREAT) do |f|
+        f.flock(File::LOCK_SH)
+        return get_current_value(f)
+      end
+    end
+
+    def current=(value)
+      File.open(@path, File::RDWR | File::CREAT) do |f|
+        f.flock(File::LOCK_EX)
+        write_value(f, value)
+        return value
+      end
+    end
+
     def next
       File.open(@path, File::RDWR | File::CREAT) do |f|
         f.flock(File::LOCK_EX)
         value = get_next_value(f)
-        File.open(@tmp_path, "w") do |tmp|
-          tmp.print(value.to_s)
-        end
-        File.rename(@tmp_path, @new_path)
-        f.rewind
-        f.print(value.to_s)
-        f.truncate(f.pos)
+        write_value(f, value)
         return value
       end
     end
@@ -1989,7 +1998,7 @@ class Ximapd
 
     private
 
-    def get_next_value(f)
+    def get_current_value(f)
       begin
         s = File.read(@new_path)
         File.unlink(@new_path)
@@ -1997,11 +2006,27 @@ class Ximapd
         s = f.read
       end
       if s.empty?
-        value = @initial_value
-      else
-        value = s.to_i + 1
+        return nil
       end
-      return value
+      return s.to_i
+    end
+
+    def get_next_value(f)
+      n = get_current_value(f)
+      if n.nil?
+        return @initial_value
+      end
+      return n + 1
+    end
+
+    def write_value(f, value)
+      File.open(@tmp_path, "w") do |tmp|
+        tmp.print(value.to_s)
+      end
+      File.rename(@tmp_path, @new_path)
+      f.rewind
+      f.print(value.to_s)
+      f.truncate(f.pos)
     end
   end
 
