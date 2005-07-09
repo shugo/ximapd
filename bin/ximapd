@@ -574,12 +574,6 @@ class Ximapd
     "list-id",
     "mailing-list"
   ]
-
-  DEFAULT_STATUS = {
-    "uidvalidity" => 1,
-    "last_uid" => 0,
-    "last_mailbox_id" => 1
-  }
   DEFAULT_MAILBOXES = {
     "INBOX" => {
       "flags" => "",
@@ -674,6 +668,7 @@ class Ximapd
     include MonitorMixin
 
     attr_reader :config, :path, :mailbox_db, :flags_db, :plugins
+    attr_reader :uid_seq, :uidvalidity_seq, :mailbox_id_seq
 
     def initialize(config)
       super()
@@ -682,6 +677,12 @@ class Ximapd
       @path = File.expand_path(@config["data_dir"])
       FileUtils.mkdir_p(@path)
       FileUtils.mkdir_p(File.expand_path("mails", @path))
+      uid_seq_path = File.expand_path("uid.seq", @path)
+      @uid_seq = Sequence.new(uid_seq_path)
+      uidvalidity_seq_path = File.expand_path("uidvalidity.seq", @path)
+      @uidvalidity_seq = Sequence.new(uidvalidity_seq_path)
+      mailbox_id_seq_path = File.expand_path("mailbox_id.seq", @path)
+      @mailbox_id_seq = Sequence.new(mailbox_id_seq_path)
       mailbox_db_path = File.expand_path("mailbox.db", @path)
       case @config["db_type"].to_s.downcase
       when "pstore"
@@ -689,31 +690,38 @@ class Ximapd
       else
         @mailbox_db = YAML::Store.new(mailbox_db_path)
       end
-      @mailbox_db.transaction do
-        @mailbox_db["status"] ||= DEFAULT_STATUS.dup
-        @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
-        convert_old_mailboxes
-        @mailbox_db["mailing-lists"] ||= {}
-        @plugins = Plugin.create_plugins(@config, self)
-      end
-      @mail_parser = RMail::Parser.new
       @flags_db_path = File.expand_path("flags.sdbm", @path)
       @flags_db = nil
-      @index_path = File.expand_path("index", @path)
-      unless File.exist?(@index_path)
-        Rast::DB.create(@index_path, INDEX_OPTIONS)
-      end
+      @mail_parser = RMail::Parser.new
       @default_charset = @config["default_charset"] || DEFAULT_CHARSET
       @sync_threshold_chars =
         @config["sync_threshold_chars"] || DEFAULT_SYNC_THRESHOLD_CHARS
       @ml_header_fields =
         @config["ml_header_fields"] || DEFAULT_ML_HEADER_FIELDS
       @last_peeked_uids = {}
+      @index_path = File.expand_path("index", @path)
       @index = nil
       @index_ref_count = 0
       lock_path = File.expand_path("lock", @path)
       @lock = File.open(lock_path, "w+")
       @lock_count = 0
+      synchronize do
+        if @uidvalidity_seq.current.nil?
+          @uidvalidity_seq.current = 1
+        end
+        if @mailbox_id_seq.current.nil?
+          @mailbox_id_seq.current = 1
+        end
+        @mailbox_db.transaction do
+          @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
+          @mailbox_db["mailing-lists"] ||= {}
+          convert_old_mailbox_db
+          @plugins = Plugin.create_plugins(@config, self)
+        end
+        unless File.exist?(@index_path)
+          Rast::DB.create(@index_path, INDEX_OPTIONS)
+        end
+      end
     end
 
     def close
@@ -814,16 +822,15 @@ class Ximapd
 
     def get_mailbox_status(mailbox_name, read_only)
       @mailbox_db.transaction(true) do
-        status = @mailbox_db["status"]
         mailbox = get_mailbox(mailbox_name)
         if /\\Noselect/ni.match(mailbox["flags"])
           raise NotSelectableMailboxError.new("can't open #{mailbox_name}: not a selectable mailbox")
         end
         mailbox_status = mailbox.status
-        mailbox_status.uidnext = status["last_uid"] + 1
-        mailbox_status.uidvalidity = status["uidvalidity"]
+        mailbox_status.uidnext = @uid_seq.peek_next
+        mailbox_status.uidvalidity = @uidvalidity_seq.current
         unless read_only
-          @last_peeked_uids[mailbox_name] = status["last_uid"]
+          @last_peeked_uids[mailbox_name] = @uid_seq.current.to_i
         end
         return mailbox_status
       end
@@ -1093,9 +1100,19 @@ class Ximapd
       @logger.info("rebuilt index")
     end
 
+    def get_next_mailbox_id
+      return @mailbox_id_seq.next
+    end
+
     private
 
-    def convert_old_mailboxes
+    def convert_old_mailbox_db
+      if @mailbox_db.root?("status")
+        @uid_seq.current = @mailbox_db["status"]["last_uid"]
+        @uidvalidity_seq.current = @mailbox_db["status"]["uidvalidity"]
+        @mailbox_id_seq.current = @mailbox_db["status"]["last_mailbox_id"]
+        @mailbox_db.delete("status")
+      end
       @mailbox_db["mailboxes"]["static"] ||= {
         "flags" => "\\Noselect"
       }
@@ -1130,10 +1147,7 @@ class Ximapd
     end
 
     def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil)
-      uid = nil
-      @mailbox_db.transaction do
-        uid = get_next_uid
-      end
+      uid = get_next_uid
       mail = parse_mail(str, uid, flags, indate)
       @mailbox_db.transaction do
         if mailbox_name
@@ -1193,10 +1207,9 @@ class Ximapd
       if query.nil?
         query = extract_query(name)
         if query.nil?
-          @mailbox_db["status"]["last_mailbox_id"] += 1
-          query = format('mailbox-id = %d',
-                         @mailbox_db["status"]["last_mailbox_id"])
-          mailbox["id"] = @mailbox_db["status"]["last_mailbox_id"]
+          mailbox_id = get_next_mailbox_id
+          query = format('mailbox-id = %d', mailbox_id)
+          mailbox["id"] = mailbox_id
         end
       end
       mailbox["query"] = query
@@ -1319,9 +1332,7 @@ class Ximapd
     end
 
     def get_next_uid
-      @mailbox_db["status"]["last_uid"] += 1
-      uid = @mailbox_db["status"]["last_uid"]
-      return uid
+      return @uid_seq.next
     end
 
     def extract_body(mail)
@@ -1590,8 +1601,7 @@ class Ximapd
 
     def save
       unless @mail_store.mailbox_db["mailboxes"].key?(@name)
-        @mail_store.mailbox_db["status"]["last_mailbox_id"] += 1
-        @data["id"] = @mail_store.mailbox_db["status"]["last_mailbox_id"]
+        @data["id"] = @mail_store.get_next_mailbox_id
         @data["last_peeked_uid"] ||= 0
       end
       super
@@ -2027,6 +2037,7 @@ class Ximapd
       f.rewind
       f.print(value.to_s)
       f.truncate(f.pos)
+      File.unlink(@new_path)
     end
   end
 

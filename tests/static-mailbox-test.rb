@@ -31,10 +31,9 @@ class XimapdStaticMailboxTest < Test::Unit::TestCase
   def setup
     super
     @mail_store = Ximapd::MailStore.new(@config)
+    @mail_store.uid_seq.current = 1000
+    mailbox_id = @mail_store.mailbox_id_seq.next
     @mail_store.mailbox_db.transaction do
-      @mail_store.mailbox_db["status"]["last_uid"] = 1000
-      @mail_store.mailbox_db["status"]["last_mailbox_id"] += 1
-      mailbox_id = @mail_store.mailbox_db["status"]["last_mailbox_id"]
       @mail_store.mailbox_db["mailboxes"]["static-mailbox"] = {
         "id" => mailbox_id,
         "class" => "StaticMailbox",
@@ -103,8 +102,7 @@ EOF
     @mail_store.mailbox_db.transaction do
       mailbox.save
       mailbox_data = @mail_store.mailbox_db["mailboxes"]["mailbox-test"]
-      assert_equal(@mail_store.mailbox_db["status"]["last_mailbox_id"], 
-                   mailbox_data["id"])
+      assert_equal(@mail_store.mailbox_id_seq.current, mailbox_data["id"])
       assert_equal("StaticMailbox", mailbox_data["class"])
       assert_equal("", mailbox_data["flags"])
       assert_equal(0, mailbox_data["last_peeked_uid"])
