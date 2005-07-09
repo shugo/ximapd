@@ -25,20 +25,27 @@
 
 require File.expand_path("test-helper", File.dirname(__FILE__))
 
-class XimapdMailboxTest < Test::Unit::TestCase
+class XimapdSequenceTest < Test::Unit::TestCase
   include XimapdTestMixin
 
-  def test_save
-    mail_store = Ximapd::MailStore.new(@config)
-    mailbox = Ximapd::Mailbox.new(mail_store, "mailbox-test",
-                                  "flags" => "\\Noselect")
-    mail_store.mailbox_db.transaction do
-      mailbox.save
-      mailbox_data = mail_store.mailbox_db["mailboxes"]["mailbox-test"]
-      assert_equal("Mailbox", mailbox_data["class"])
-      assert_equal("\\Noselect", mailbox_data["flags"])
-    end
+  def test_next
+    path = File.expand_path("uid.seq", @tmpdir)
+    seq = Ximapd::Sequence.new(path, 1)
+    assert_equal(1, seq.next)
+    assert_equal(2, seq.next)
+
+    seq2 = Ximapd::Sequence.new(path, 1)
+    assert_equal(3, seq2.next)
+  end
+
+  def test_peek_next
+    path = File.expand_path("uid.seq", @tmpdir)
+    seq = Ximapd::Sequence.new(path, 1)
+    seq.next
+    assert_equal(2, seq.peek_next)
+    assert_equal(2, seq.peek_next)
+
+    seq2 = Ximapd::Sequence.new(path, 1)
+    assert_equal(2, seq2.peek_next)
   end
 end
-
-# vim: set filetype=ruby expandtab sw=2 :
