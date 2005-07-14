@@ -1,5 +1,17 @@
 = ximapd NEWS
 
+== Major changes in release 0.0.2 (2005-07-14)
+
+* supported plugins.
+* added the spamfilter plugin.
+* added the expirer plugin.
+* added the --rebuild-index option.
+* use RubyMail.
+* detached counters for UID etc... from mailbox.db.
+* implemented autologout timer.
+* set umask to 077.
+* use non-blocking mode for sockets.
+
 == Major changes in release 0.0.1 (2005-05-31)
 
 * Added the --import-imap option. [Akira Yamada]
