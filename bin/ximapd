@@ -102,16 +102,6 @@ class Ximapd
   MAX_CLIENTS = 10
   TIMEZONE = Time.now.strftime("%z")
 
-  @@debug = false
-
-  def self.debug
-    return @@debug
-  end
-
-  def self.debug=(debug)
-    @@debug = debug
-  end
-
   def initialize
     @args = nil
     @config = {}
@@ -141,6 +131,7 @@ class Ximapd
       @max_clients = @config["max_clients"] || MAX_CLIENTS
       @threads = []
       @sessions = {}
+      init_profiler if @config["profile"]
       send(@config["action"])
     rescue StandardError => e
       STDERR.printf("ximapd: %s\n", e)
@@ -180,6 +171,37 @@ class Ximapd
       raise if @config["debug"]
       STDERR.printf("ximapd: %s\n", e)
       exit(1)
+    end
+  end
+
+  def init_profiler
+    require "prof"
+    case @config["profiler_clock_mode"] || ENV["RUBY_PROF_CLOCK_MODE"]
+    when "gettimeofday"
+      Prof.clock_mode = Prof::GETTIMEOFDAY
+      $stderr.puts("use gettimeofday(2) for profiling") if @config["verbose"]
+    when "cpu"
+      if ENV.key?("RUBY_PROF_CPU_FREQUENCY")
+        Prof.cpu_frequency = ENV["RUBY_PROF_CPU_FREQUENCY"].to_f
+      else
+        begin
+          open("/proc/cpuinfo") do |f|
+            f.each_line do |line|
+              s = line.slice(/cpu MHz\s*:\s*(.*)/, 1)
+              if s
+                Prof.cpu_frequency = s.to_f * 1000000
+                break
+              end
+            end
+          end
+        rescue Errno::ENOENT
+        end
+      end
+      Prof.clock_mode = Prof::CPU
+      $stderr.puts("use CPU clock counter for profiling") if @config["verbose"]
+    else
+      Prof.clock_mode = Prof::CLOCK
+      $stderr.puts("use clock(3) for profiling") if @config["verbose"]
     end
   end
 
@@ -2113,15 +2135,21 @@ class Ximapd
             next
           end
           break if cmd.nil?
-          @logger.debug("received #{cmd.name} command from #{@peeraddr}")
+          @logger.debug("received #{cmd.tag} #{cmd.name} from #{@peeraddr}")
           begin
-            cmd.exec
+            if @config["profile"] && cmd.name != "IDLE"
+              profile(cmd) do
+                cmd.exec
+              end
+            else
+              cmd.exec
+            end
           rescue StandardError => e
             raise if @@test
             send_tagged_no(cmd.tag, "%s failed - %s", cmd.name, e)
             @logger.log_exception(e)
           end
-          @logger.debug("sent #{cmd.name} response to #{@peeraddr}")
+          @logger.debug("processed #{cmd.tag} #{cmd.name} from #{@peeraddr}")
         end
       rescue Timeout::Error
         @logger.info("autologout #{@peeraddr}")
@@ -2262,6 +2290,48 @@ class Ximapd
 
     def synchronize(&block)
       @mail_store.synchronize(&block)
+    end
+
+    private
+
+    def profile(cmd)
+      begin
+        Prof.start
+      rescue
+        return yield
+      end
+      begin
+        yield
+      ensure
+        result = Prof.stop
+        total = result.detect { |i|
+          i.method_class.nil? && i.method_id == :"#toplevel"
+        }.total_time
+        if total == 0.0
+          total = 0.001
+        end
+        sum = 0
+        path = File.expand_path("profile.log", @config["data_dir"])
+        File.open(path, "a") do |f|
+          f.printf(">>> %s %s\n", cmd.tag, cmd.name)
+          f.print("  %%   cumulative   self              self     total\n")
+          f.print(" time   seconds   seconds    calls  ms/call  ms/call  name\n")
+          for r in result
+            sum += r.self_time
+            if r.method_class.nil?
+              name = r.method_id.to_s
+            elsif r.method_class.is_a?(Class)
+              name = r.method_class.to_s + "#" + r.method_id.to_s
+            else
+              name = r.method_class.to_s + "." + r.method_id.to_s
+            end
+            f.printf("%6.2f %8.3f  %8.3f %8d %8.2f %8.2f  %s\n",
+                     r.self_time / total * 100, sum, r.self_time, r.count,
+                     r.self_time * 1000 / r.count, r.total_time * 1000 / r.count,
+                     name)
+          end
+        end
+      end
     end
   end
 
@@ -4191,6 +4261,8 @@ class Ximapd
     IntOption.new("sync_threshold_chars",
                   "number of characters to start index sync"),
     BoolOption.new("debug", "turn on debug mode"),
+    BoolOption.new("profile", "turn on profile mode"),
+    StringOption.new("profiler_clock_mode", "profiler clock mode"),
     BoolOption.new("verbose", "turn on verbose mode"),
     BoolOption.new("progress", "show progress"),
   ]
