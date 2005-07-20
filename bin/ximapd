@@ -2186,7 +2186,7 @@ class Ximapd
     end
 
     def get_current_mailbox
-      @mail_store.mailbox_db.transaction do
+      @mail_store.mailbox_db.transaction(true) do
         return @mail_store.get_mailbox(@current_mailbox)
       end
     end
