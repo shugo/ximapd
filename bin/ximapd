@@ -1403,6 +1403,31 @@ class Ximapd
       end
     end
 
+    def guess_list_name(fname, mail)
+      ret = nil
+
+      if mail.header.include?(fname)
+        value = mail.header[fname]
+        ret = value
+        case fname
+        when 'list-id'
+          ret = $1 if /<([^<>]+)>/ =~ value
+        when 'x-ml-address'
+          ret = $& if /\b[^<>@]+@[^<>@]+\b/ =~ value
+        when 'x-mailing-list'
+          ret = $1 if /<([^<>@]+@[^<>@]+)>/ =~ value
+        when 'x-ml-name'
+          # noop
+        when 'sender'
+          ret = $1 if /\bowner-([^<>@]+@[^<>@]+)\b/ =~ value
+        when 'x-loop'
+          ret = $& if /\b[^<>@]+@[^<>@]+\b/ =~ value
+        end
+      end
+
+      ret
+    end
+
     def extract_properties(mail, properties)
       for field in ["subject", "from", "to", "cc"]
         properties[field] = get_header_field(mail, field)
@@ -1414,7 +1439,8 @@ class Ximapd
       end
       s = nil
       @ml_header_fields.each do |field_name|
-        s ||= mail.header[field_name]
+        s = guess_list_name(field_name, mail)
+        break if s
       end
       properties["x-ml-name"] = decode_encoded_word(s.to_s)
       properties["x-mail-count"] = mail.header["x-mail-count"].to_s.to_i
