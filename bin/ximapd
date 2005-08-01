@@ -126,7 +126,6 @@ class Ximapd
       @args = args
       parse_options(@args)
       @server = nil
-      @logger = open_logger
       @config["logger"] = @logger
       @max_clients = @config["max_clients"] || MAX_CLIENTS
       @threads = []
@@ -166,6 +165,7 @@ class Ximapd
         Plugin.directories = path.split(File::PATH_SEPARATOR).collect { |dir|
           File.expand_path(dir)
         }
+        @logger = open_logger
       end
     rescue StandardError => e
       raise if @config["debug"]
@@ -313,11 +313,11 @@ class Ximapd
       require "openssl"
       ssl_ctx = OpenSSL::SSL::SSLContext.new
       if @config.key?("ssl_key") && @config.key?("ssl_cert")
-      ssl_ctx.key = File.open(@config["ssl_key"], 'r') { |f|
+      ssl_ctx.key = File.open(File.expand_path(@config["ssl_key"]), 'r') { |f|
         OpenSSL::PKey::RSA.new(f)
       }
-      ssl_ctx.cert = File.open(@config["ssl_cert"], 'r') { |f|
-        OpenSSL::X509::Certificate.new(i)
+      ssl_ctx.cert = File.open(File.expand_path(@config["ssl_cert"]), 'r') { |f|
+        OpenSSL::X509::Certificate.new(f)
       }
       else
         require 'webrick/ssl'
