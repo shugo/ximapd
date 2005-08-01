@@ -4070,7 +4070,8 @@ class Ximapd
       end
       for mail in mails
         @session.synchronize do
-          @mail_store.import_mail(mail.to_s, @mailbox_name)
+          @mail_store.import_mail(mail.to_s, @mailbox_name,
+                                  mail.flags(false), mail.internal_date)
           for plugin in @mail_store.plugins
             plugin.on_copy(mail, @mailbox_name)
           end
