@@ -655,6 +655,7 @@ class Ximapd
 
   class MailData
     attr_reader :raw_data, :uid, :flags, :internal_date, :text, :properties
+    attr_reader :parsed_mail
 
     def initialize(raw_data, uid, flags, internal_date, text, properties,
                    parsed_mail)
@@ -1637,6 +1638,26 @@ class Ximapd
           IndexedMail.new(@config, self, uid, uid, i.doc_id, i.properties[1])
         }
       end
+    end
+  end
+
+  class EnvelopeSearchBasedMailbox < SearchBasedMailbox
+    def import(mail_data)
+      faked_mail_data =
+        MailData.new(mail_data.raw_data, mail_data.uid,
+                     mail_data.flags, mail_data.internal_date,
+                     '', mail_data.properties,
+                     mail_data.parsed_mail)
+      super(faked_mail_data)
+    end
+
+    def save
+      unless @mail_store.mailbox_db["mailboxes"].key?(@name)
+        @data["id"] = @mail_store.get_next_mailbox_id
+        @data["last_peeked_uid"] ||= 0
+        @data["query"] = format('mailbox-id = %d', @data["id"])
+      end
+      super
     end
   end
 
