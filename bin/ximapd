@@ -1414,15 +1414,19 @@ class Ximapd
         when 'list-id'
           ret = $1 if /<([^<>]+)>/ =~ value
         when 'x-ml-address'
-          ret = $& if /\b[^<>@]+@[^<>@]+\b/ =~ value
-        when 'x-mailing-list'
+          ret = $& if /\b[^<>@\s]+@[^<>@\s]+\b/ =~ value
+        when 'x-mailing-list', 'mailing-list'
           ret = $1 if /<([^<>@]+@[^<>@]+)>/ =~ value
         when 'x-ml-name'
           # noop
         when 'sender'
-          ret = $1 if /\bowner-([^<>@]+@[^<>@]+)\b/ =~ value
+          if /\bowner-([^<>@\s]+@[^<>@\s]+)\b/ =~ value
+            ret = $1
+          else
+            ret = nil
+          end
         when 'x-loop'
-          ret = $& if /\b[^<>@]+@[^<>@]+\b/ =~ value
+          ret = $& if /\b[^<>@\s]+@[^<>@\s]+\b/ =~ value
         end
       end
 
