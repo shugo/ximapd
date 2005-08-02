@@ -3447,7 +3447,7 @@ class Ximapd
         @session.send_ok("[UIDVALIDITY %d] UIDs valid", status.uidvalidity)
         @session.send_ok("[UIDNEXT %d] Predicted next UID", status.uidnext)
         @session.send_data("FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
-        @session.send_ok("[PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited")
+        @session.send_ok("[PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited")
         send_tagged_response
       rescue MailboxError => e
         @session.send_tagged_no(@tag, "%s", e)

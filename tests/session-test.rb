@@ -138,7 +138,7 @@ EOF
     assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n", sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 0 EXISTS\r\n", sock.output.gets)
@@ -147,7 +147,7 @@ EOF
     assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n", sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -180,7 +180,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -213,7 +213,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -250,7 +250,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 EXISTS\r\n", sock.output.gets)
@@ -260,7 +260,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("A004 NO no such mailbox\r\n", sock.output.gets)
@@ -299,7 +299,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -334,7 +334,7 @@ EOF
     assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n", sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal("* 0 EXISTS\r\n", sock.output.gets)
@@ -343,7 +343,7 @@ EOF
     assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n", sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -376,7 +376,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -409,7 +409,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -447,7 +447,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal("* 1 EXISTS\r\n", sock.output.gets)
@@ -457,7 +457,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal("A004 NO no such mailbox\r\n", sock.output.gets)
@@ -496,7 +496,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -550,7 +550,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A005 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("A006 OK CREATE completed\r\n", sock.output.gets)
@@ -907,7 +907,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen) UID #{uid1})\r\n",
@@ -973,7 +973,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (BODY[] {#{mail.length}}\r\n",
@@ -995,7 +995,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A007 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (BODY[] {#{mail.length}}\r\n",
@@ -1076,7 +1076,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("A003 OK CHECK completed\r\n", sock.output.gets)
@@ -1126,7 +1126,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("A003 OK CLOSE completed\r\n", sock.output.gets)
@@ -1205,7 +1205,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* SEARCH 2 3 4 7\r\n", sock.output.gets)
@@ -1336,7 +1336,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1} #{uid3}\r\n", sock.output.gets)
@@ -1456,7 +1456,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID #{uid1} FLAGS (\\Recent) RFC822.SIZE #{mail1.length})\r\n",
@@ -1575,7 +1575,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID 1 FLAGS (\\Recent) RFC822.SIZE #{mail1_without_unix_from.length})\r\n",
@@ -1720,7 +1720,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk) UID 1)\r\n",
@@ -1815,7 +1815,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("A003 OK UID COPY completed\r\n", sock.output.gets)
@@ -1826,7 +1826,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A004 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID #{uid2 + 1} BODY[] {#{mail1.length}}\r\n",
