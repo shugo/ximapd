@@ -1049,7 +1049,8 @@ class Ximapd
     def index_mail(mail)
       @index.register(mail.text, mail.properties)
       s = mail.properties["x-ml-name"]
-      if !s.empty? && !@mailbox_db["mailing-lists"].key?(s)
+      if !s.empty? && mail.properties["mailbox-id"] == 0 &&
+        !@mailbox_db["mailing-lists"].key?(s)
         mbox = get_mailbox_name_from_x_ml_name(s)
         @mailbox_db["mailing-lists"][s] = mail.uid
         mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox))
