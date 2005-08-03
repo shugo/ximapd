@@ -2818,7 +2818,7 @@ class Ximapd
 
     def search_key(charset)
       name = tokens([T_ATOM, T_NUMBER, T_NIL, T_PLUS, T_STAR])
-      case name
+      case name.upcase
       when "BODY"
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)

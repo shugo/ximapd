@@ -1340,6 +1340,7 @@ A111 UID SEARCH NOT SEEN FLAGGED\r
 A112 UID SEARCH FLAGGED NOT SEEN\r
 A113 UID SEARCH NOT SEEN NOT FLAGGED\r
 A114 UID SEARCH NOT FLAGGED NOT SEEN\r
+A115 UID SEARCH not flagged not seen\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
@@ -1430,6 +1431,8 @@ EOF
     assert_equal("A113 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid2} #{uid4}\r\n", sock.output.gets)
     assert_equal("A114 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid2} #{uid4}\r\n", sock.output.gets)
+    assert_equal("A115 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
