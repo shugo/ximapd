@@ -752,7 +752,7 @@ class Ximapd
         end
         @mailbox_db.transaction do
           @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
-          @mailbox_db["mailing-lists"] ||= {}
+          @mailbox_db["mailing_lists"] ||= {}
           convert_old_mailbox_db
           @plugins = Plugin.create_plugins(@config, self)
         end
@@ -829,8 +829,20 @@ class Ximapd
       @mailbox_db.transaction do
         pat = "\\A" + Regexp.quote(name) + "(/.*)?\\z"
         re = Regexp.new(pat, nil, "n")
-        @mailbox_db["mailboxes"].delete_if do |k, v|
-          re.match(k)
+        deleted_mailboxes = []
+        @mailbox_db["mailboxes"].delete_if { |k, v|
+          if re.match(k)
+            deleted_mailboxes.push(v)
+            true
+          else
+            false
+          end
+        }
+        for mbox in deleted_mailboxes
+          list_id = mbox["list_id"]
+          if list_id
+            @mailbox_db["mailing_lists"].delete(list_id)
+          end
         end
       end
     end
@@ -850,6 +862,10 @@ class Ximapd
           new_key = k.sub(re) { $1 ? new_name + $1 : new_name }
           @mailbox_db["mailboxes"].delete(k)
           @mailbox_db["mailboxes"][new_key] = v
+          list_id = v["list_id"]
+          if list_id
+            @mailbox_db["mailing_lists"][list_id]["mailbox"] = new_key
+          end
         end
         query = extract_query(new_name)
         if query
@@ -1050,14 +1066,19 @@ class Ximapd
       @index.register(mail.text, mail.properties)
       s = mail.properties["x-ml-name"]
       if !s.empty? && mail.properties["mailbox-id"] == 0 &&
-        !@mailbox_db["mailing-lists"].key?(s)
-        mbox = get_mailbox_name_from_x_ml_name(s)
-        @mailbox_db["mailing-lists"][s] = mail.uid
-        mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox))
+        !@mailbox_db["mailing_lists"].key?(s)
+        mbox_name = get_mailbox_name_from_x_ml_name(s)
+        mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox_name))
         query = format("x-ml-name = %s",
                        quote_query(mail.properties["x-ml-name"]))
         begin
           create_mailbox_internal(mailbox_name, query)
+          mailbox = get_mailbox(mailbox_name)
+          mailbox["list_id"] = s
+          @mailbox_db["mailing_lists"][s] = {
+            "creator_uid" => mail.uid,
+            "mailbox" => mailbox_name
+          }
         rescue MailboxExistError
         end
       end
@@ -1151,6 +1172,14 @@ class Ximapd
         @uidvalidity_seq.current = @mailbox_db["status"]["uidvalidity"]
         @mailbox_id_seq.current = @mailbox_db["status"]["last_mailbox_id"]
         @mailbox_db.delete("status")
+      end
+      if @mailbox_db.root?("mailing-lists")
+        for key, val in @mailbox_db["mailing-lists"]
+          @mailbox_db["mailing_lists"][key] = {
+            "creator_uid" => val
+          }
+        end
+        @mailbox_db.delete("mailing-lists")
       end
       @mailbox_db["mailboxes"]["static"] ||= {
         "flags" => "\\Noselect"
@@ -1474,6 +1503,10 @@ class Ximapd
 
     def [](key)
       return @data[key]
+    end
+
+    def []=(key, val)
+      @data[key] = val
     end
 
     def save

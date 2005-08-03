@@ -101,6 +101,126 @@ EOF
     assert_equal(mail3.sub(/\AFrom.*\r\n/, ""), m.to_s)
   end
 
+  def test_import_mail__ml
+    mail_store = Ximapd::MailStore.new(@config)
+    mail = <<EOF.gsub(/\n/, "\r\n")
+From foobar@ruby-lang.org  Sat Apr  2 00:07:54 2005
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+Message-ID: <41ECC569.8000603@ruby-lang.org>
+From: Shugo Maeda <shugo@ruby-lang.org>
+Subject: hello
+To: ximapd-ja@qwik.netlab.jp
+In-Reply-To: <41C448BF.7080605@ruby-lang.org>
+Content-Type: text/plain; charset=US-ASCII
+X-ML-Name: ximapd-ja
+
+Hello world
+EOF
+    mail_store.import_mail(mail)
+    mail_store.mailbox_db.transaction do
+      ml = mail_store.mailbox_db["mailing_lists"]["ximapd-ja"]
+      assert_equal("ml/ximapd-ja", ml["mailbox"])
+    end
+  end
+
+  def test_delete_mailbox
+    mail_store = Ximapd::MailStore.new(@config)
+    mail = <<EOF.gsub(/\n/, "\r\n")
+From foobar@ruby-lang.org  Sat Apr  2 00:07:54 2005
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+Message-ID: <41ECC569.8000603@ruby-lang.org>
+From: Shugo Maeda <shugo@ruby-lang.org>
+Subject: hello
+To: ximapd-ja@qwik.netlab.jp
+In-Reply-To: <41C448BF.7080605@ruby-lang.org>
+Content-Type: text/plain; charset=US-ASCII
+X-ML-Name: ximapd-ja
+
+Hello world
+EOF
+    mail_store.import_mail(mail)
+    mail2 = <<EOF.gsub(/\n/, "\r\n")
+From foobar@ruby-lang.org  Sat Apr  2 00:07:54 2005
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+Message-ID: <41ECC569.8000603@ruby-lang.org>
+From: Shugo Maeda <shugo@ruby-lang.org>
+Subject: hello
+To: ximapd-en@qwik.netlab.jp
+In-Reply-To: <41C448BF.7080605@ruby-lang.org>
+Content-Type: text/plain; charset=US-ASCII
+X-ML-Name: ximapd-en
+
+Hello world
+EOF
+    mail_store.import_mail(mail2)
+    mail_store.mailbox_db.transaction do
+      ml = mail_store.mailbox_db["mailing_lists"]["ximapd-ja"]
+      assert_equal("ml/ximapd-ja", ml["mailbox"])
+      ml2 = mail_store.mailbox_db["mailing_lists"]["ximapd-en"]
+      assert_equal("ml/ximapd-en", ml2["mailbox"])
+    end
+    mail_store.delete_mailbox("ml/ximapd-ja")
+    mail_store.mailbox_db.transaction do
+      assert_raise(Ximapd::NoMailboxError) do
+        mail_store.get_mailbox("ml/ximapd-ja")
+      end
+      ml = mail_store.mailbox_db["mailing_lists"]["ximapd-ja"]
+      assert_equal(nil, ml)
+      ml2 = mail_store.mailbox_db["mailing_lists"]["ximapd-en"]
+      assert_equal("ml/ximapd-en", ml2["mailbox"])
+    end
+  end
+
+  def test_rename_mailbox
+    mail_store = Ximapd::MailStore.new(@config)
+    mail = <<EOF.gsub(/\n/, "\r\n")
+From foobar@ruby-lang.org  Sat Apr  2 00:07:54 2005
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+Message-ID: <41ECC569.8000603@ruby-lang.org>
+From: Shugo Maeda <shugo@ruby-lang.org>
+Subject: hello
+To: ximapd-ja@qwik.netlab.jp
+In-Reply-To: <41C448BF.7080605@ruby-lang.org>
+Content-Type: text/plain; charset=US-ASCII
+X-ML-Name: ximapd-ja
+
+Hello world
+EOF
+    mail_store.import_mail(mail)
+    mail2 = <<EOF.gsub(/\n/, "\r\n")
+From foobar@ruby-lang.org  Sat Apr  2 00:07:54 2005
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+Message-ID: <41ECC569.8000603@ruby-lang.org>
+From: Shugo Maeda <shugo@ruby-lang.org>
+Subject: hello
+To: ximapd-en@qwik.netlab.jp
+In-Reply-To: <41C448BF.7080605@ruby-lang.org>
+Content-Type: text/plain; charset=US-ASCII
+X-ML-Name: ximapd-en
+
+Hello world
+EOF
+    mail_store.import_mail(mail2)
+    mail_store.mailbox_db.transaction do
+      ml = mail_store.mailbox_db["mailing_lists"]["ximapd-ja"]
+      assert_equal("ml/ximapd-ja", ml["mailbox"])
+      ml2 = mail_store.mailbox_db["mailing_lists"]["ximapd-en"]
+      assert_equal("ml/ximapd-en", ml2["mailbox"])
+    end
+    mail_store.rename_mailbox("ml/ximapd-ja", "ximapd/ja")
+    mail_store.mailbox_db.transaction do
+      assert_raise(Ximapd::NoMailboxError) do
+        mail_store.get_mailbox("ml/ximapd-ja")
+      end
+      mbox = mail_store.get_mailbox("ximapd/ja")
+      assert_equal("ximapd-ja", mbox["list_id"])
+      ml = mail_store.mailbox_db["mailing_lists"]["ximapd-ja"]
+      assert_equal("ximapd/ja", ml["mailbox"])
+      ml2 = mail_store.mailbox_db["mailing_lists"]["ximapd-en"]
+      assert_equal("ml/ximapd-en", ml2["mailbox"])
+    end
+  end
+
   def test_rebuild_index
     mail_store = Ximapd::MailStore.new(@config)
     mail_store.create_mailbox("test")
