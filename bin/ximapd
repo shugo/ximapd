@@ -3744,6 +3744,7 @@ class Ximapd
       query = @keys.collect { |key| key.to_query }.reject { |q|
         q.empty?
       }.join(" ")
+      query = "uid > 0 " + query if /\A\s*!/ =~ query
       uids = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
@@ -3767,6 +3768,10 @@ class Ximapd
     end
 
     def select(uids)
+      return uids
+    end
+
+    def reject(uids)
       return uids
     end
   end
@@ -3812,12 +3817,24 @@ class Ximapd
         @flag_re.match(@mail_store.flags_db[uid.to_s])
       }
     end
+
+    def reject(uids)
+      return uids.reject { |uid|
+        @flag_re.match(@mail_store.flags_db[uid.to_s])
+      }
+    end
   end
 
   class NoFlagSearchKey < FlagSearchKey
     def select(uids)
+      return uids.reject { |uid|
+        @flag_re.match(@mail_store.flags_db[uid.to_s])
+      }
+    end
+
+    def reject(uids)
       return uids.select { |uid|
-        !@flag_re.match(@mail_store.flags_db[uid.to_s])
+        @flag_re.match(@mail_store.flags_db[uid.to_s])
       }
     end
   end
@@ -3874,8 +3891,11 @@ class Ximapd
     end
 
     def select(uids)
-      rejected = @key.select(uids)
-      return uids - rejected
+      return @key.reject(uids)
+    end
+
+    def reject(uids)
+      return @key.select(uids)
     end
   end
 
