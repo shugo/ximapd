@@ -714,16 +714,20 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
-A002 RENAME ruby queries/&-\r
-A003 RENAME ruby queries/perl\r
+A002 RENAME ruby ruby\r
+A003 RENAME ruby queries/&-\r
+A004 RENAME ruby queries/perl\r
+A005 RENAME ruby queries/python\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
-    assert_equal("A002 NO invalid query\r\n", sock.output.gets)
-    assert_equal("A003 OK RENAME completed\r\n", sock.output.gets)
+    assert_equal("A002 NO mailbox already exists\r\n", sock.output.gets)
+    assert_equal("A003 NO invalid query\r\n", sock.output.gets)
+    assert_equal("A004 OK RENAME completed\r\n", sock.output.gets)
+    assert_equal("A005 NO mailbox does not exist\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
     perl = mail_store.mailboxes["queries/perl"]

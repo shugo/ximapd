@@ -850,7 +850,7 @@ class Ximapd
     def rename_mailbox(name, new_name)
       @mailbox_db.transaction do
         if @mailbox_db["mailboxes"].include?(new_name)
-          raise format("%s already exists", new_name)
+          raise MailboxExistError, format("%s already exists", new_name)
         end
         mkdir_p(File.dirname(new_name))
         pat = "\\A" + Regexp.quote(name) + "(/.*)?\\z"
@@ -858,6 +858,9 @@ class Ximapd
         mailboxes = @mailbox_db["mailboxes"].select { |k, v|
           re.match(k)
         }
+        if mailboxes.empty?
+          raise NoMailboxError, format("%s does not exist", name)
+        end
         for k, v in mailboxes
           new_key = k.sub(re) { $1 ? new_name + $1 : new_name }
           @mailbox_db["mailboxes"].delete(k)
@@ -3596,6 +3599,10 @@ class Ximapd
         send_tagged_ok
       rescue InvalidQueryError
         @session.send_tagged_no(@tag, "invalid query")
+      rescue MailboxExistError
+        @session.send_tagged_no(@tag, "mailbox already exists")
+      rescue NoMailboxError
+        @session.send_tagged_no(@tag, "mailbox does not exist")
       end
     end
   end
