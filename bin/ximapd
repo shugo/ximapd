@@ -2844,6 +2844,10 @@ class Ximapd
         return FlagSearchKey.new(@session.mail_store, "\\Recent")
       when "SEEN"
         return FlagSearchKey.new(@session.mail_store, "\\Seen")
+      when "KEYWORD"
+        match(T_SPACE)
+        flag = atom
+        return KeywordSearchKey.new(@session.mail_store, flag)
       when "UNANSWERED"
         return NoFlagSearchKey.new(@session.mail_store, "\\Answered")
       when "UNDELETED"
@@ -2856,6 +2860,10 @@ class Ximapd
         return NoFlagSearchKey.new(@session.mail_store, "\\Seen")
       when "OLD"
         return NoFlagSearchKey.new(@session.mail_store, "\\Recent")
+      when "UNKEYWORD"
+        match(T_SPACE)
+        flag = atom
+        return NoKeywordSearchKey.new(@session.mail_store, flag)
       when /\A(\d+|\*)\z/
         return UidSearchKey.new(parse_seq_number($1))
       when /\A(\d+|\*):(\d+|\*)\z/
@@ -3833,17 +3841,41 @@ class Ximapd
   end
 
   class NoFlagSearchKey < FlagSearchKey
+    alias super_select select
+    alias super_reject reject
+    alias select super_reject
+    alias reject super_select
+  end
+
+  class KeywordSearchKey < NullSearchKey
+    def initialize(mail_store, flag)
+      @mail_store = mail_store
+      if /\A\w/n.match(flag)
+        s = "\\b"
+      else
+        s = ""
+      end
+      @flag_re = Regexp.new(s + Regexp.quote(flag) + "\\b", true, "n")
+    end
+
     def select(uids)
-      return uids.reject { |uid|
+      return uids.select { |uid|
         @flag_re.match(@mail_store.flags_db[uid.to_s])
       }
     end
 
     def reject(uids)
-      return uids.select { |uid|
+      return uids.reject { |uid|
         @flag_re.match(@mail_store.flags_db[uid.to_s])
       }
     end
+  end
+
+  class NoKeywordSearchKey < KeywordSearchKey
+    alias super_select select
+    alias super_reject reject
+    alias select super_reject
+    alias reject super_select
   end
 
   class UidSearchKey < NullSearchKey
