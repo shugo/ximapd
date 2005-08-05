@@ -1237,6 +1237,7 @@ EOF
     mail1 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
 To: ruby-list@ruby-lang.org
+Cc: foo@ruby-lang.org
 Subject: hello
 Date: Wed, 30 Mar 2005 17:34:46 +0900
 
@@ -1246,6 +1247,7 @@ EOF
     mail2 = <<EOF.gsub(/\n/, "\r\n")
 From: foo@ruby-lang.org
 To: ruby-list@ruby-lang.org
+Bcc: foo@ruby-lang.org
 Subject: bye
 Date: Fri, 01 Apr 2005 12:51:06 +0900
 
@@ -1348,6 +1350,12 @@ A115 UID SEARCH not flagged not seen\r
 A201 UID STORE #{uid1},#{uid2} +FLAGS.SILENT ($Forwarded)\r
 A202 UID SEARCH KEYWORD $Forwarded\r
 A203 UID SEARCH UNKEYWORD $Forwarded\r
+A301 UID SEARCH SUBJECT hello\r
+A302 UID SEARCH SUBJECT "hello"\r
+A303 UID SEARCH FROM foo\r
+A304 UID SEARCH TO foo\r
+A305 UID SEARCH CC foo\r
+A306 UID SEARCH BCC foo\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
@@ -1440,11 +1448,26 @@ EOF
     assert_equal("A114 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid2} #{uid4}\r\n", sock.output.gets)
     assert_equal("A115 OK UID SEARCH completed\r\n", sock.output.gets)
+
     assert_equal("A201 OK UID STORE completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1} #{uid2}\r\n", sock.output.gets)
     assert_equal("A202 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid3} #{uid4} #{uid5}\r\n", sock.output.gets)
     assert_equal("A203 OK UID SEARCH completed\r\n", sock.output.gets)
+
+    assert_equal("* SEARCH #{uid1} #{uid3}\r\n", sock.output.gets)
+    assert_equal("A301 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1} #{uid3}\r\n", sock.output.gets)
+    assert_equal("A302 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid2}\r\n", sock.output.gets)
+    assert_equal("A303 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid3} #{uid4} #{uid5}\r\n", sock.output.gets)
+    assert_equal("A304 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
+    assert_equal("A305 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid2}\r\n", sock.output.gets)
+    assert_equal("A306 OK UID SEARCH completed\r\n", sock.output.gets)
+
     assert_equal(nil, sock.output.gets)
   end
 

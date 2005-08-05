@@ -586,6 +586,14 @@ class Ximapd
         "unique" => false,
       },
       {
+        "name" => "bcc",
+        "type" => Rast::PROPERTY_TYPE_STRING,
+        "search" => false,
+        "text_search" => true,
+        "full_text_search" => false,
+        "unique" => false,
+      },
+      {
         "name" => "x-ml-name",
         "type" => Rast::PROPERTY_TYPE_STRING,
         "search" => true,
@@ -1467,7 +1475,7 @@ class Ximapd
     end
 
     def extract_properties(mail, properties)
-      for field in ["subject", "from", "to", "cc"]
+      for field in ["subject", "from", "to", "cc", "bcc"]
         properties[field] = get_header_field(mail, field)
       end
       begin
@@ -2832,6 +2840,26 @@ class Ximapd
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
         return HeaderSearchKey.new(header_name, s)
+      when "SUBJECT"
+        match(T_SPACE)
+        s = Iconv.conv("utf-8", charset, astring)
+        return HeaderSearchKey.new("subject", s)
+      when "FROM"
+        match(T_SPACE)
+        s = Iconv.conv("utf-8", charset, astring)
+        return HeaderSearchKey.new("from", s)
+      when "TO"
+        match(T_SPACE)
+        s = Iconv.conv("utf-8", charset, astring)
+        return HeaderSearchKey.new("to", s)
+      when "CC"
+        match(T_SPACE)
+        s = Iconv.conv("utf-8", charset, astring)
+        return HeaderSearchKey.new("cc", s)
+      when "BCC"
+        match(T_SPACE)
+        s = Iconv.conv("utf-8", charset, astring)
+        return HeaderSearchKey.new("bcc", s)
       when "ANSWERED"
         return FlagSearchKey.new(@session.mail_store, "\\Answered")
       when "DELETED"
@@ -3811,7 +3839,7 @@ class Ximapd
 
     def to_query
       case @name
-      when "subject", "from", "to", "cc"
+      when "subject", "from", "to", "cc", "bcc"
         return format("%s : %s", @name, quote_query(@value))
       when "x-ml-name", "x-mail-count"
         return format("%s = %s", @name, quote_query(@value))
