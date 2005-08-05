@@ -2182,7 +2182,8 @@ class Ximapd
   class Session
     attr_reader :config, :state, :mail_store, :current_mailbox, :peeraddr
 
-    MAX_IDLE_SECONDS = 30 * 60
+    NON_AUTEHNTICATED_MAX_IDLE_SECONDS = 10
+    AUTEHNTICATED_MAX_IDLE_SECONDS = 30 * 60
 
     @@test = false
 
@@ -2205,8 +2206,10 @@ class Ximapd
       @peeraddr = nil
       if pre_authenticated
         @state = AUTHENTICATED_STATE
+        @max_idle_seconds = AUTEHNTICATED_MAX_IDLE_SECONDS
       else
         @state = NON_AUTHENTICATED_STATE
+        @max_idle_seconds = NON_AUTEHNTICATED_MAX_IDLE_SECONDS
       end
       @current_mailbox = nil
       @read_only = false
@@ -2267,6 +2270,7 @@ class Ximapd
 
     def login
       @state = AUTHENTICATED_STATE
+      @max_idle_seconds = AUTEHNTICATED_MAX_IDLE_SECONDS
     end
 
     def select(mailbox)
@@ -2301,7 +2305,7 @@ class Ximapd
     end
 
     def recv_line
-      timeout(MAX_IDLE_SECONDS) do
+      timeout(@max_idle_seconds) do
         s = @sock.gets
         return s if s.nil?
         line = s.sub(/\r\n\z/n, "")
@@ -2311,7 +2315,7 @@ class Ximapd
     end
 
     def recv_cmd
-      timeout(MAX_IDLE_SECONDS) do
+      timeout(@max_idle_seconds) do
         buf = ""
         loop do
           s = @sock.gets
