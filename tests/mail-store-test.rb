@@ -269,6 +269,8 @@ EOF
     uid3 = mail_store.import_mail(mail3, "test")
     mail_store.rebuild_index
 
+    status = mail_store.get_mailbox_status("INBOX", true)
+    assert_equal(2, status.uidvalidity)
     inbox = mail_store.mailbox_db.transaction {
       mail_store.get_mailbox("INBOX")
     }

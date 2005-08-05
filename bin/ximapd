@@ -1168,6 +1168,7 @@ class Ximapd
         end
       end
       FileUtils.rm_rf(old_index_path)
+      @uidvalidity_seq.next
       @logger.info("rebuilt index")
     end
 
