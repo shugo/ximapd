@@ -3,6 +3,23 @@
 == Major changes in release 0.0.3
 
 * Guess mailing list names intelligently. [Akira Yamada]
+* Do not open logger on --help. [Akira Yamada]
+* Fixed a bug of --ssl-cert. [Akira Yamada]
+* Expand ~ etc... in paths. [Akira Yamada]
+* Preserve flags and internal date on COPY. [Akira Yamada]
+* Added \Answered, \Flagged, etc... to PERMANENTFLAGS. [Akira Yamada]
+* Added EnvelopeSearchBasedMailbox. [Akira Yamada]
+* Do not create a mailbox for ML if mailbox-id != 0.
+* Update mailing_lists on mailbox delete/rename.
+* Fixed a bug of NOT in SEARCH. [Akira Yamada]
+* Ignore case for search keys.
+* RENAME returns NO responses on mailbox errors. [Akira Yamada]
+* Supported KEYWORD/UNKEYWORD in SEARCH.
+* Supported SUBJECT, FROM, TO, CC, BCC in SEARCH.
+* Set timeout for non-authenticated sessions to 10 secs.
+* Added new option --edit-mailbox-db.
+* If --delete-ml-mailboxes specified, delete ML mailboxes before rebuild.
+* Added on_copied event.
 
 == Major changes in release 0.0.2 (2005-07-14)
 
