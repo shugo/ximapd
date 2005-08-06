@@ -412,6 +412,12 @@ class Ximapd
     end
   end
 
+  def edit_mailbox_db
+    open_mail_store do |mail_store|
+      system(ENV["EDITOR"] || "vi", mail_store.mailbox_db_path)
+    end
+  end
+
   def interactive
     @mail_store = Ximapd::MailStore.new(@config)
     begin
@@ -713,7 +719,8 @@ class Ximapd
     include QueryFormat
     include MonitorMixin
 
-    attr_reader :config, :path, :mailbox_db, :flags_db, :plugins
+    attr_reader :config, :path, :mailbox_db, :mailbox_db_path
+    attr_reader :flags_db, :plugins
     attr_reader :uid_seq, :uidvalidity_seq, :mailbox_id_seq
 
     def initialize(config)
@@ -729,12 +736,12 @@ class Ximapd
       @uidvalidity_seq = Sequence.new(uidvalidity_seq_path)
       mailbox_id_seq_path = File.expand_path("mailbox_id.seq", @path)
       @mailbox_id_seq = Sequence.new(mailbox_id_seq_path)
-      mailbox_db_path = File.expand_path("mailbox.db", @path)
+      @mailbox_db_path = File.expand_path("mailbox.db", @path)
       case @config["db_type"].to_s.downcase
       when "pstore"
-        @mailbox_db = PStore.new(mailbox_db_path)
+        @mailbox_db = PStore.new(@mailbox_db_path)
       else
-        @mailbox_db = YAML::Store.new(mailbox_db_path)
+        @mailbox_db = YAML::Store.new(@mailbox_db_path)
       end
       @flags_db_path = File.expand_path("flags.sdbm", @path)
       @flags_db = nil
@@ -835,23 +842,7 @@ class Ximapd
 
     def delete_mailbox(name)
       @mailbox_db.transaction do
-        pat = "\\A" + Regexp.quote(name) + "(/.*)?\\z"
-        re = Regexp.new(pat, nil, "n")
-        deleted_mailboxes = []
-        @mailbox_db["mailboxes"].delete_if { |k, v|
-          if re.match(k)
-            deleted_mailboxes.push(v)
-            true
-          else
-            false
-          end
-        }
-        for mbox in deleted_mailboxes
-          list_id = mbox["list_id"]
-          if list_id
-            @mailbox_db["mailing_lists"].delete(list_id)
-          end
-        end
+        delete_mailbox_internal(name)
       end
     end
 
@@ -1146,6 +1137,16 @@ class Ximapd
 
     def rebuild_index
       @logger.info("rebuilding index...")
+      if @config["delete_ml_mailboxes"]
+        @mailbox_db.transaction do
+          for k, v in @mailbox_db["mailing_lists"]
+            delete_mailbox_internal(v["mailbox"]) if v.key?("mailbox")
+          end
+          @mailbox_db["mailing_lists"].clear
+          delete_mailbox_internal("ml")
+          @mailbox_db["mailboxes"]["ml"] = DEFAULT_MAILBOXES["ml"]
+        end
+      end
       old_index_path = @index_path + ".old"
       begin
         File.rename(@index_path, old_index_path)
@@ -1324,6 +1325,26 @@ class Ximapd
       end
       if s
         uid = import_mail_internal(s, mailbox_name)
+      end
+    end
+
+    def delete_mailbox_internal(name)
+      pat = "\\A" + Regexp.quote(name) + "(/.*)?\\z"
+      re = Regexp.new(pat, nil, "n")
+      deleted_mailboxes = []
+      @mailbox_db["mailboxes"].delete_if { |k, v|
+        if re.match(k)
+          deleted_mailboxes.push(v)
+          true
+        else
+          false
+        end
+      }
+      for mbox in deleted_mailboxes
+        list_id = mbox["list_id"]
+        if list_id
+          @mailbox_db["mailing_lists"].delete(list_id)
+        end
       end
     end
 
@@ -4431,6 +4452,7 @@ class Ximapd
     StringOption.new("dest_mailbox", "destination mailbox name"),
     ArrayOption.new("ml_header_fields",
                     "header fields to handle same as X-ML-Name"),
+    BoolOption.new("delete_ml_mailboxes", "delete ml mailboxes before rebuild"),
     StringOption.new("default_charset", "default value for charset"),
     StringOption.new("log_level",
                      "log level (fatal, error, warn, info, debug)"),
@@ -4452,6 +4474,7 @@ class Ximapd
     Action.new("import_mbox", "import mbox"),
     Action.new("import_imap", "import from another imap server"),
     Action.new("rebuild_index", "rebuild index"),
+    Action.new("edit_mailbox_db", "edit mailbox.db"),
     Action.new("interactive", "interactive mode"),
     Action.new("version", "print version"),
     Action.new("help", "print this message"),

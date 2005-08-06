@@ -223,6 +223,30 @@ EOF
 
   def test_rebuild_index
     mail_store = Ximapd::MailStore.new(@config)
+    mail_store.mailbox_db.transaction do
+      mailing_lists = mail_store.mailbox_db["mailing_lists"]
+      mailing_lists["foo"] = {
+        "creater_uid" => 1,
+        "mailbox" => "ml/foo"
+      }
+      mailing_lists["bar"] = {
+        "creater_uid" => 1,
+        "mailbox" => "bar"
+      }
+      mailboxes = mail_store.mailbox_db["mailboxes"]
+      mailboxes["ml/foo"] = {
+        "flags" => "",
+        "last_peeked_uid" => 1,
+        "query" => 'x-ml-name = "foo"',
+        "list_id" => "foo"
+      }
+      mailboxes["bar"] = {
+        "flags" => "",
+        "last_peeked_uid" => 1,
+        "query" => 'x-ml-name = "bar"',
+        "list_id" => "bar"
+      }
+    end
     mail_store.create_mailbox("test")
     mail1 = <<EOF.gsub(/\n/, "\r\n")
 From foobar@ruby-lang.org  Sat Apr  2 00:07:54 2005
@@ -267,19 +291,71 @@ Content-Type: text/plain; charset=US-ASCII
 Goodbye world
 EOF
     uid3 = mail_store.import_mail(mail3, "test")
+    mail4 = <<EOF.gsub(/\n/, "\r\n")
+From foobar@ruby-lang.org  Sat Apr  2 00:07:54 2005
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+Message-ID: <41ECC569.8000603@ruby-lang.org>
+From: Shugo Maeda <shugo@ruby-lang.org>
+Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
+To: Foo <foo@ruby-lang.org>,
+        bar@ruby-lang.org
+Cc: Baz <"baz.."@ruby-lang.org>
+In-Reply-To: <41C448BF.7080605@ruby-lang.org>
+X-ML-Name: foo
+Content-Type: text/plain; charset=US-ASCII
+
+Hello world
+EOF
+    uid4 = mail_store.import_mail(mail4)
+    mail5 = <<EOF.gsub(/\n/, "\r\n")
+From foobar@ruby-lang.org  Sat Apr  2 00:07:54 2005
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+Message-ID: <41ECC569.8000603@ruby-lang.org>
+From: Shugo Maeda <shugo@ruby-lang.org>
+Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
+To: Foo <foo@ruby-lang.org>,
+        bar@ruby-lang.org
+Cc: Baz <"baz.."@ruby-lang.org>
+In-Reply-To: <41C448BF.7080605@ruby-lang.org>
+X-ML-Name: bar
+Content-Type: text/plain; charset=US-ASCII
+
+Hello world
+EOF
+    uid5 = mail_store.import_mail(mail5)
+
+    @config["delete_ml_mailboxes"] = true
     mail_store.rebuild_index
 
     status = mail_store.get_mailbox_status("INBOX", true)
     assert_equal(2, status.uidvalidity)
-    inbox = mail_store.mailbox_db.transaction {
-      mail_store.get_mailbox("INBOX")
-    }
+    inbox = nil
+    foo = nil
+    bar = nil
+    mail_store.mailbox_db.transaction do
+      mailing_lists = mail_store.mailbox_db["mailing_lists"]
+      assert_equal("ml/foo", mailing_lists["foo"]["mailbox"])
+      assert_equal("ml/bar", mailing_lists["bar"]["mailbox"])
+      mailboxes = mail_store.mailbox_db["mailboxes"]
+      inbox = mail_store.get_mailbox("INBOX")
+      foo = mail_store.get_mailbox("ml/foo")
+      assert_equal("foo", foo["list_id"])
+      bar = mail_store.get_mailbox("ml/bar")
+      assert_equal("bar", bar["list_id"])
+      assert_raise(Ximapd::NoMailboxError) do
+        mail_store.get_mailbox("bar")
+      end
+    end
     uids = inbox.uid_search("hello")
     assert_equal([uid1], uids)
     uids = inbox.uid_search("bye")
     assert_equal([uid2], uids)
     uids = inbox.uid_search("from : shugo")
     assert_equal([uid1, uid2], uids)
+    uids = foo.uid_search("hello")
+    assert_equal([uid4], uids)
+    uids = bar.uid_search("hello")
+    assert_equal([uid5], uids)
     test_mailbox = mail_store.mailbox_db.transaction {
       mail_store.get_mailbox("test")
     }
