@@ -49,11 +49,11 @@ class SpamFilter < Plugin
     end
   end
 
-  def on_copy(mail, mailbox_name)
-    if mailbox_name == "spam"
-      @logger.info("added to the spam token database: uid=#{mail.uid}")
+  def on_copied(src_mail, dest_mail)
+    if dest_mail.mailbox.name == "spam"
+      @logger.info("added to the spam token database: uid=#{src_mail.uid}")
       IO.popen("bsfilter --add-spam --update", "w") do |bsfilter|
-        bsfilter.print(mail)
+        bsfilter.print(src_mail)
       end
     end
   end

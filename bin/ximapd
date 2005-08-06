@@ -1570,6 +1570,10 @@ class Ximapd
     def uid_fetch(sequence_set)
       raise ScriptError.new("subclass must override Mailbox#uid_fetch")
     end
+
+    def get_mail(uid)
+      raise ScriptError.new("subclass must override Mailbox#get_mail")
+    end
   end
 
   class SearchBasedMailbox < Mailbox
@@ -1710,6 +1714,10 @@ class Ximapd
         }
       end
     end
+
+    def get_mail(uid)
+      return IndexedMail.new(@config, self, uid, uid)
+    end
   end
 
   class EnvelopeSearchBasedMailbox < SearchBasedMailbox
@@ -1849,6 +1857,10 @@ class Ximapd
         end
       end
       return mails
+    end
+
+    def get_mail(uid)
+      return StaticMail.new(@config, self, uid, uid)
     end
 
     def open_flags_db(&block)
@@ -2053,13 +2065,26 @@ class Ximapd
   end
 
   class IndexedMail < Mail
-    attr_reader :doc_id, :internal_date
+    attr_reader :doc_id
 
-    def initialize(config, mailbox, seqno, uid, doc_id, internal_date)
+    def initialize(config, mailbox, seqno, uid,
+                   doc_id = nil, internal_date = nil)
       super(config, mailbox, seqno, uid)
       @doc_id = doc_id
-      @internal_date = DateTime.strptime(internal_date[0, 19] + " " + TIMEZONE,
-                                         "%Y-%m-%dT%H:%M:%S %z")
+      if internal_date
+        @internal_date = DateTime.strptime(internal_date[0, 19] + " " +
+                                           TIMEZONE,
+                                           "%Y-%m-%dT%H:%M:%S %z")
+      else
+        @internal_date = nil
+      end
+    end
+
+    def internal_date
+      unless @internal_date
+        @internal_date = File.mtime(path)
+      end
+      return @internal_date
     end
 
     def flags(get_recent = true)
@@ -4236,16 +4261,24 @@ class Ximapd
 
     def exec
       mails = nil
+      dest_mailbox = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
         mails = mailbox.uid_fetch(@sequence_set)
+        @mail_store.mailbox_db.transaction(true) do
+          dest_mailbox = @mail_store.get_mailbox(@mailbox_name)
+        end
       end
       for mail in mails
         @session.synchronize do
-          @mail_store.import_mail(mail.to_s, @mailbox_name,
-                                  mail.flags(false), mail.internal_date)
           for plugin in @mail_store.plugins
-            plugin.on_copy(mail, @mailbox_name)
+            plugin.on_copy(mail, dest_mailbox)
+          end
+          uid = @mail_store.import_mail(mail.to_s, dest_mailbox.name,
+                                        mail.flags(false), mail.internal_date)
+          dest_mail = dest_mailbox.get_mail(uid)
+          for plugin in @mail_store.plugins
+            plugin.on_copied(mail, dest_mail)
           end
         end
       end
@@ -4306,7 +4339,10 @@ class Ximapd
       return nil
     end
 
-    def on_copy(mail, mailbox_name)
+    def on_copy(src_mail, dest_mailbox)
+    end
+
+    def on_copied(src_mail, dest_mail)
     end
 
     def on_delete_mail(mail)
