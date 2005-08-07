@@ -93,7 +93,7 @@ end
 class Ximapd
   attr_accessor :destination
 
-  VERSION = "0.0.2"
+  VERSION = "0.0.3"
   REVISION = "$Revision$".slice(/\A\$Revision: (.*) \$\z/, 1)
   DATE = "$Date$".slice(/\d\d\d\d-\d\d-\d\d/)
 
