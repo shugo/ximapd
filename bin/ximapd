@@ -517,7 +517,7 @@ class Ximapd
         "search" => true,
         "text_search" => false,
         "full_text_search" => false,
-        "unique" => false,
+        "unique" => true,
       },
       {
         "name" => "size",
@@ -1065,24 +1065,28 @@ class Ximapd
     end
 
     def index_mail(mail)
-      @index.register(mail.text, mail.properties)
-      s = mail.properties["x-ml-name"]
-      if !s.empty? && mail.properties["mailbox-id"] == 0 &&
-        !@mailbox_db["mailing_lists"].key?(s)
-        mbox_name = get_mailbox_name_from_x_ml_name(s)
-        mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox_name))
-        query = format("x-ml-name = %s",
-                       quote_query(mail.properties["x-ml-name"]))
-        begin
-          create_mailbox_internal(mailbox_name, query)
-          mailbox = get_mailbox(mailbox_name)
-          mailbox["list_id"] = s
-          @mailbox_db["mailing_lists"][s] = {
-            "creator_uid" => mail.uid,
-            "mailbox" => mailbox_name
-          }
-        rescue MailboxExistError
+      begin
+        @index.register(mail.text, mail.properties)
+        s = mail.properties["x-ml-name"]
+        if !s.empty? && mail.properties["mailbox-id"] == 0 &&
+          !@mailbox_db["mailing_lists"].key?(s)
+          mbox_name = get_mailbox_name_from_x_ml_name(s)
+          mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox_name))
+          query = format("x-ml-name = %s",
+                         quote_query(mail.properties["x-ml-name"]))
+          begin
+            create_mailbox_internal(mailbox_name, query)
+            mailbox = get_mailbox(mailbox_name)
+            mailbox["list_id"] = s
+            @mailbox_db["mailing_lists"][s] = {
+              "creator_uid" => mail.uid,
+              "mailbox" => mailbox_name
+            }
+          rescue MailboxExistError
+          end
         end
+      rescue Exception => e
+        @logger.log_exception(e, "index_mail")
       end
     end
 
@@ -2217,6 +2221,7 @@ class Ximapd
       f.rewind
       f.print(value.to_s)
       f.truncate(f.pos)
+      f.fsync
       File.unlink(@new_path)
     end
   end
