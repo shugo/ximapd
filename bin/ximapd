@@ -1597,11 +1597,13 @@ class Ximapd
       File.open(path, "w") do |f|
         f.flock(File::LOCK_EX)
         f.print(mail_data)
+        f.fsync
       end
       mailbox_id_path = path + ".mailbox-id"
       File.open(mailbox_id_path, "w") do |f|
         f.flock(File::LOCK_EX)
         f.print(mail_data.properties["mailbox-id"].to_s)
+        f.fsync
       end
       time = mail_data.internal_date.to_time
       File.utime(time, time, path)
@@ -1788,6 +1790,7 @@ class Ximapd
       File.open(path, "w") do |f|
         f.flock(File::LOCK_EX)
         f.print(mail_data)
+        f.fsync
       end
       time = mail_data.internal_date.to_time
       File.utime(time, time, path)
