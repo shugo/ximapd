@@ -901,8 +901,15 @@ class Ximapd
               filenames.push(filename)
             end
           end
+          if @config.key?("exclude")
+            pat = Regexp.new(@config["exclude"], nil, "n")
+            filenames = filenames.reject { |filename|
+              pat.match(filename)
+            }
+          end
           if @config["progress"]
-            progress_bar = ProgressBar.new(arg, filenames.length)
+            progress_bar = ProgressBar.new(arg.slice(/.{1,13}\z/n),
+                                           filenames.length)
           else
             progress_bar = NullObject.new
           end
@@ -4408,9 +4415,16 @@ class Ximapd
   end
 
   class Option
-    def initialize(name, description)
-      @name = name
-      @description = description
+    def initialize(*args)
+      case args.length
+      when 2
+        @name, @description = *args
+        @arg_name = nil
+      when 3
+        @name, @arg_name, @description = *args
+      else
+        raise ArgumentError.new("wrong # of arguments (#{args.length} for 2)")
+      end
     end
 
     def opt_name
@@ -4418,7 +4432,10 @@ class Ximapd
     end
 
     def arg_name
-      return @name.slice(/[a-z]*\z/ni).upcase
+      if @arg_name.nil?
+        @arg_name = @name.slice(/[a-z]*\z/ni).upcase
+      end
+      return @arg_name
     end
   end
 
@@ -4487,6 +4504,7 @@ class Ximapd
     StringOption.new("remote_auth", "auth type of remote IMAP server"),
     StringOption.new("remote_user", "user of remote IMAP server"),
     StringOption.new("remote_password", "password of remote IMAP server"),
+    StringOption.new("exclude", "PAT", "exclude files that match PAT"),
     BoolOption.new("import_all", "import all mails by --import-imap"),
     BoolOption.new("import_imap_flags", "import IMAP flags by --import-imap"),
     BoolOption.new("keep", "keep retrieved mails on the remote server"),
