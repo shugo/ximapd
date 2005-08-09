@@ -743,6 +743,7 @@ class Ximapd
       else
         @mailbox_db = YAML::Store.new(@mailbox_db_path)
       end
+      override_commit_new(@mailbox_db)
       @flags_db_path = File.expand_path("flags.sdbm", @path)
       @flags_db = nil
       @mail_parser = RMail::Parser.new
@@ -1189,6 +1190,20 @@ class Ximapd
     end
 
     private
+
+    def override_commit_new(db)
+      def db.commit_new(f)
+        f.truncate(0)
+        f.rewind
+        new_file = @filename + ".new"
+        File.open(new_file) do |nf|
+          nf.binmode
+          FileUtils.copy_stream(nf, f)
+        end
+        f.fsync
+        File.unlink(new_file)
+      end
+    end
 
     def convert_old_mailbox_db
       if @mailbox_db.root?("status")
