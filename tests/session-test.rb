@@ -1332,6 +1332,8 @@ A017 UID SEARCH 2:*\r
 A018 UID SEARCH BODY hello BODY "\\"hello, world\\""\r
 A019 UID SEARCH BODY hello NOT BODY "\\"hello, world\\""\r
 A020 UID SEARCH NOT BODY hello
+A021 UID SEARCH UID 2\r
+A022 UID SEARCH UID 2,3\r
 A101 UID STORE #{uid3} FLAGS (\\Flagged)\r
 A102 UID STORE #{uid5} FLAGS (\\Seen \\Flagged)\r
 A103 UID SEARCH SEEN\r
@@ -1412,6 +1414,10 @@ EOF
     assert_equal("A019 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid2} #{uid4} #{uid5}\r\n", sock.output.gets)
     assert_equal("A020 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A021 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 3\r\n", sock.output.gets)
+    assert_equal("A022 OK UID SEARCH completed\r\n", sock.output.gets)
 
     # uid1 S -, uid2 - -, uid3 - -, uid4 - -, uid5 - -
     assert_equal("* #{uid3} FETCH (FLAGS (\\Recent \\Flagged) UID #{uid3})\r\n",
@@ -1657,6 +1663,9 @@ A012 UID FETCH 1 BODY[1]\r
 A013 UID FETCH 1 BODY.PEEK[HEADER]\r
 A014 UID FETCH 1 INTERNALDATE\r
 A015 UID FETCH 2 BODY\r
+A016 UID FETCH 2 BODY[1]\r
+A017 UID FETCH 2 BODY[2]\r
+A018 UID FETCH 2 BODY[1]<5.10>\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
@@ -1747,9 +1756,21 @@ EOF
     assert_equal("* 1 FETCH (UID 1 INTERNALDATE \"02-Apr-2005 00:07:54 +0900\")\r\n",
                  sock.output.gets)
     assert_equal("A014 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 2 FETCH (UID 2 BODY ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" 18 2)(\"TEXT\" \"PLAIN\" (\"NAME\" \"HELLO.TXT\") NIL NIL \"BASE64\" 16 1) \"MIXED\"))\r\n",
+    assert_equal("* 2 FETCH (UID 2 BODY ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" 18 2)(\"TEXT\" \"PLAIN\" (\"NAME\" \"hello.txt\") NIL NIL \"BASE64\" 16 1) \"MIXED\" (\"BOUNDARY\" \"------------040107050003050408030009\") NIL NIL))\r\n",
                  sock.output.gets)
     assert_equal("A015 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY[1] {18}\r\n", sock.output.gets)
+    assert_equal("see hello.txt.\r\n\r\n", sock.output.read(18))
+    assert_equal(" FLAGS (\\Seen))\r\n", sock.output.gets)
+    assert_equal("A016 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY[2] {18}\r\n", sock.output.gets)
+    assert_equal("SGVsbG8gV29ybGQK\r\n", sock.output.read(18))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A017 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY[1]<5> {10}\r\n", sock.output.gets)
+    assert_equal("ello.txt.\r", sock.output.read(10))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A018 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 

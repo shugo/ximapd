@@ -2005,6 +2005,16 @@ class Ximapd
       return mail.multipart?
     end
 
+    def part(p)
+      part_data = parsed_mail.part(p-1).to_s.gsub(/\n/, "\r\n")
+      return part_data[part_data.index(/\r\n\r\n/)+4,part_data.length]
+    end
+
+    def mime(p)
+      mime_data = parsed_mail.part(p-1).to_s.gsub(/\n/, "\r\n")
+      return mime_data[0,mime_data.index(/\r\n\r\n/)+4]
+    end
+
     def delete
       begin
         File.unlink(path)
@@ -2062,13 +2072,24 @@ class Ximapd
         parts = mail.body.collect { |part|
           body_internal(part)
         }.join
-        return format("(%s %s)", parts, quoted(upcase(mail.header.subtype)))
+        params = "(" + mail.header.params("content-type", {}).collect { |k, v|
+            format("%s %s", quoted(upcase(k)), quoted(v))
+        }.join(" ") + ")"
+        return format("(%s %s %s NIL NIL)",
+            parts,
+            quoted(upcase(mail.header.subtype)),
+            params)
       else
         fields = []
         params = "(" + mail.header.params("content-type", {}).collect { |k, v|
-            format("%s %s", quoted(upcase(k)), quoted(upcase(v)))
+            v.gsub!(/\s/,"")
+            format("%s %s", quoted(upcase(k)), quoted(v))
         }.join(" ") + ")"
-        fields.push(params)
+        if params == "()"
+          fields.push("NIL")
+        else
+          fields.push(params)
+        end
         fields.push("NIL")
         fields.push("NIL")
         content_transfer_encoding =
@@ -2077,6 +2098,16 @@ class Ximapd
         fields.push(mail.body.gsub(/\n/, "\r\n").length.to_s)
         if mail.header.media_type == "text"
           fields.push(mail.body.to_a.length.to_s)
+        else
+          params = mail.header.params("content-disposition", {}).collect { |k, v|
+            v.gsub!(/\s/,"")
+            format("%s %s", quoted(upcase(k)), quoted(v))
+          }.join(" ")
+          if !params.empty?
+            fields.push("NIL")
+            fields.push("(\"ATTACHMENT\" (#{params}))")
+            fields.push("NIL")
+          end
         end
         return format("(%s %s %s)",
                       quoted(upcase(mail.header.media_type)),
@@ -2909,8 +2940,15 @@ class Ximapd
     end
 
     def search_key(charset)
+      token = lookahead
+      if /\A(\d+|\*)/.match(token.value)
+        return UidSearchKey.new(sequence_set)
+      end
       name = tokens([T_ATOM, T_NUMBER, T_NIL, T_PLUS, T_STAR])
       case name.upcase
+      when "UID"
+        match(T_SPACE)
+        return UidSearchKey.new(sequence_set)
       when "BODY"
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
@@ -2973,11 +3011,6 @@ class Ximapd
         match(T_SPACE)
         flag = atom
         return NoKeywordSearchKey.new(@session.mail_store, flag)
-      when /\A(\d+|\*)\z/
-        return UidSearchKey.new(parse_seq_number($1))
-      when /\A(\d+|\*):(\d+|\*)\z/
-        return UidRangeSearchKey.new(parse_seq_number($1),
-                                     parse_seq_number($2))
       when "NOT"
         match(T_SPACE)
         return NotSearchKey.new(search_key(charset))
@@ -3988,39 +4021,26 @@ class Ximapd
   end
 
   class UidSearchKey < NullSearchKey
-    def initialize(uid)
-      @uid = uid
+    def initialize(sequence_set)
+      @sequence_set = sequence_set
     end
 
     def to_query
-      if @uid == -1
+      if @sequence_set.empty?
         return ""
-      else
-        return format("uid = %d", @uid)
       end
-    end
-
-    def select(uids)
-      if @uid == -1
-        return [uids.sort.last]
-      else
-        return uids
-      end
-    end
-  end
-
-  class UidRangeSearchKey < NullSearchKey
-    def initialize(first, last)
-      @first = first
-      @last = last
-    end
-
-    def to_query
-      if @last == -1
-        return format("uid >= %d", @first)
-      else
-        return format("%d <= uid <= %d", @first, @last)
-      end
+      return "( " + @sequence_set.collect { |i|
+        case i
+        when Range
+          if i.last == -1
+            format("uid >= %d", i.first)
+          else
+            format("%d <= uid <= %d", i.first, i.last)
+          end
+        else
+          format("uid = %d", i)
+        end
+      }.join(" | ") + " )"
     end
   end
 
@@ -4175,19 +4195,24 @@ class Ximapd
     end
 
     def fetch(mail)
-      if @section.nil? ||
-        (@section.text.nil? &&
-         (@section.part.nil? || @section.part == "1") &&
-         !mail.multipart?)
+      if @section.nil? || @section.text.nil?
         if @section.nil?
           part = ""
         else
           part = @section.part
         end
         if @partial.nil?
-          result = format("BODY[%s] %s", part, literal(mail.to_s))
+          if mail.multipart? && (part.to_i >= 1)
+            result = format("BODY[%s] %s", part, literal(mail.part(part.to_i)))
+          else
+            result = format("BODY[%s] %s", part, literal(mail.to_s))
+          end
         else
-          s = mail.to_s[@partial.offset, @partial.size] 
+          if mail.multipart? && (part.to_i >= 1)
+            s = mail.part(part.to_i)[@partial.offset, @partial.size]
+          else
+            s = mail.to_s[@partial.offset, @partial.size]
+          end
           result = format("BODY[%s]<%d> %s",
                           part, @partial.offset, literal(s))
         end
@@ -4206,6 +4231,10 @@ class Ximapd
         return result
       end
       case @section.text
+      when "MIME"
+        part = @section.part
+        s = mail.mime(part.to_i)
+        return format("BODY[%d.MIME] %s", part, literal(s))
       when "HEADER"
         return format("BODY[HEADER] %s", literal(mail.header))
       when "HEADER.FIELDS"
