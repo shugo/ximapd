@@ -1033,7 +1033,7 @@ class Ximapd
                   end
                   imap.fetch(1 .. -1, fetch_attrs)
                 else
-                  uids = imap.uid_search(["UNSEEN"])
+                  uids = imap.uid_search("NOT KEYWORD XimapdImported")
                   @logger.info("#{uids.length} unseen messages " + 
                                "in #{folder.name}")
                   if @config["progress"]
@@ -1047,12 +1047,13 @@ class Ximapd
               ensure
                 imap.remove_response_handler(handler)
               end
+              flags = ["XimapdImported"]
               unless @config["keep"]
-                uids = imported_uids.to_a.sort
-                while uids.length > 0
-                  imap.uid_store(uids.slice!(0, 100),
-                                 "+FLAGS.SILENT", [:Deleted])
-                end
+                flags.push(:Deleted)
+              end
+              uids = imported_uids.to_a.sort
+              while uids.length > 0
+                imap.uid_store(uids.slice!(0, 100), "+FLAGS.SILENT", flags)
               end
             rescue StandardError => e
               @logger.log_exception(e, folder.name)
