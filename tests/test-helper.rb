@@ -24,15 +24,81 @@
 # SUCH DAMAGE.
 
 require "test/unit"
+require "stringio"
+require "tmpdir"
+require "logger"
+require "pp"
 
-runner = Test::Unit::AutoRunner.new(true)
-if !runner.process_args(ARGV)
-  runner.to_run << File.dirname(__FILE__)
+def require_plugin(name)
+  filename = File.expand_path("../plugins/#{name}.rb", File.dirname(__FILE__))
+  open(filename) do |f|
+    Ximapd.class_eval(f.read)
+  end
 end
-if runner.pattern.empty?
-  runner.pattern = [/-test\.rb\z/]
+
+def mkdtemp(prefix, mode = 0700)
+  retry_count = 0
+  begin
+    dir = File.join(Dir.tmpdir, 
+                    "#{prefix}-#{$$}.#{rand(10000)}")
+    Dir.mkdir(dir, mode)
+    return dir
+  rescue Errno::EEXIST
+    if retry_count < 3
+      retry_count += 1
+      retry
+    else
+      raise "can't create #{dir}"
+    end
+  end
 end
-runner.exclude.push(/\b\.svn\b/)
-exit runner.run
+
+class Time
+  @spoof_now = nil
+
+  class << self
+    alias real_now now
+    attr_accessor :spoof_now
+
+    klass = self
+
+    define_method(:use_spoof_now) do
+      klass.send(:alias_method, :now, :spoof_now)
+    end
+
+    define_method(:use_real_now) do
+      klass.send(:alias_method, :now, :real_now)
+    end
+
+    def replace_now(time)
+      self.spoof_now = time
+      use_spoof_now
+      begin
+        yield
+      ensure
+        use_real_now
+      end
+    end
+  end
+end
+
+module XimapdTestMixin
+  def setup
+    @tmpdir = mkdtemp("ximapd-test")
+    @config = {
+      "user" => "foo",
+      "password" => "bar",
+      "data_dir" => File.expand_path("data", @tmpdir),
+      "logger" => Ximapd::NullObject.new
+    }
+  end
+
+  def teardown
+    system("rm", "-rf", @tmpdir)
+  end
+end
+
+ximapd = File.expand_path("../bin/ximapd", File.dirname(__FILE__))
+load(ximapd)
 
 # vim: set filetype=ruby expandtab sw=2 :

@@ -8,8 +8,7 @@ ximapd is an eXperimental IMAP Daemon.
 
 * Ruby 1.8.2 or later
 * Rast 0.0.1 or later
-* Ruby interface for BDB 0.5.4 or later
-* TMail 0.10.8 or later
+* RubyMail 0.17 or later
 
 == Subversion Repository
 
@@ -24,13 +23,13 @@ Shugo Maeda <shugo@ruby-lang.org>
 
 == Install
 
-Copy ximapd under PATH.
+Copy bin/ximapd under PATH.
 
 == Setup
 
-(1) Copy sample.ximapd to ~/.ximapd.
+(1) Copy examples/dot.ximapd to ~/.ximapd.
 
-      $ cp sample.ximapd ~/.ximapd
+      $ cp examples/dot.ximapd ~/.ximapd
 
 (2) Edit ~/.ximapd.
 

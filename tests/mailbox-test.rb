@@ -23,16 +23,22 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-require "test/unit"
+require File.expand_path("test-helper", File.dirname(__FILE__))
 
-runner = Test::Unit::AutoRunner.new(true)
-if !runner.process_args(ARGV)
-  runner.to_run << File.dirname(__FILE__)
+class XimapdMailboxTest < Test::Unit::TestCase
+  include XimapdTestMixin
+
+  def test_save
+    mail_store = Ximapd::MailStore.new(@config)
+    mailbox = Ximapd::Mailbox.new(mail_store, "mailbox-test",
+                                  "flags" => "\\Noselect")
+    mail_store.mailbox_db.transaction do
+      mailbox.save
+      mailbox_data = mail_store.mailbox_db["mailboxes"]["mailbox-test"]
+      assert_equal("Mailbox", mailbox_data["class"])
+      assert_equal("\\Noselect", mailbox_data["flags"])
+    end
+  end
 end
-if runner.pattern.empty?
-  runner.pattern = [/-test\.rb\z/]
-end
-runner.exclude.push(/\b\.svn\b/)
-exit runner.run
 
 # vim: set filetype=ruby expandtab sw=2 :

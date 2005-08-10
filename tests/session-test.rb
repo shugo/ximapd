@@ -23,52 +23,35 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-dir = File.expand_path("..", File.dirname(__FILE__))
-if !$:.include?(dir)
-  $:.unshift(File.expand_path("..", File.dirname(__FILE__)))
-end
-
-require "test/unit"
-require "stringio"
-require "tmpdir"
-require "logger"
-
-if !defined?(Ximapd::Session)
-  ximapd = File.expand_path("../ximapd", File.dirname(__FILE__))
-  load(ximapd)
-end
+require File.expand_path("test-helper", File.dirname(__FILE__))
 
 Ximapd::Session.test = true
 
 class XimapdSessionTest < Test::Unit::TestCase
+  include XimapdTestMixin
+
   def setup
-    @tmpdir = mkdtemp("ximapd-test")
-    @config = {
-      "user" => "foo",
-      "password" => "bar",
-      "data_dir" => File.expand_path("data", @tmpdir),
-      "logger" => Logger.new("/dev/null")
-    }
+    super
     @challenge_generator =
       Ximapd::AuthenticateCramMD5Command.challenge_generator
     Ximapd::AuthenticateCramMD5Command.challenge_generator = Proc.new {
       "<12345@localhost>"
     }
-    #GC.disable # to avoid `BDB::Fatal: BUG : current_env not set'
+    @mail_store = Ximapd::MailStore.new(@config)
   end
 
   def teardown
-    #GC.enable
+    @mail_store.close
     Ximapd::AuthenticateCramMD5Command.challenge_generator =
       @challenge_generator
-    system("rm", "-rf", @tmpdir)
+    super
   end
 
   def test_capability
     sock = SpoofSocket.new(<<EOF)
 A001 CAPABILITY\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_match("* CAPABILITY IMAP4REV1 IDLE LOGINDISABLED AUTH=CRAM-MD5\r\n",
@@ -81,7 +64,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 NOOP\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 OK NOOP completed\r\n", sock.output.gets)
@@ -92,7 +75,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 LOGOUT\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_match(/\A\* BYE /, sock.output.gets)
@@ -106,7 +89,7 @@ EOF
 A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -119,7 +102,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 LOGIN foo bar\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 NO LOGIN failed\r\n", sock.output.gets)
@@ -131,7 +114,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 SELECT INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -144,7 +127,7 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 A003 SELECT inbox\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -155,7 +138,7 @@ EOF
     assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n", sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 0 EXISTS\r\n", sock.output.gets)
@@ -164,7 +147,7 @@ EOF
     assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n", sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -185,7 +168,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -197,7 +180,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -218,7 +201,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -230,7 +213,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -255,7 +238,7 @@ A003 SELECT ml/ximapd-users\r
 A004 SELECT foo\r
 A005 SELECT ml\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -267,7 +250,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 EXISTS\r\n", sock.output.gets)
@@ -277,7 +260,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("A004 NO no such mailbox\r\n", sock.output.gets)
@@ -304,7 +287,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT ml/ximapd\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -316,7 +299,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -327,7 +310,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 EXAMINE INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -340,7 +323,7 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 EXAMINE INBOX\r
 A003 EXAMINE inbox\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -351,7 +334,7 @@ EOF
     assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n", sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal("* 0 EXISTS\r\n", sock.output.gets)
@@ -360,7 +343,7 @@ EOF
     assert_equal("* OK [UIDNEXT 1] Predicted next UID\r\n", sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -381,7 +364,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 EXAMINE INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -393,7 +376,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -414,7 +397,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 EXAMINE INBOX\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -426,7 +409,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -452,7 +435,7 @@ A003 EXAMINE ml/ximapd-users\r
 A004 EXAMINE foo\r
 A005 EXAMINE ml\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -464,7 +447,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal("* 1 EXISTS\r\n", sock.output.gets)
@@ -474,7 +457,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal("A004 NO no such mailbox\r\n", sock.output.gets)
@@ -501,7 +484,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 EXAMINE ml/ximapd\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -513,7 +496,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-ONLY] EXAMINE completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -524,7 +507,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 CREATE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -543,7 +526,7 @@ A007 LIST "" "*"\r
 A008 CREATE queries/ruby\r
 A009 CREATE queries/&-\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -551,12 +534,14 @@ EOF
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A002 OK LIST completed\r\n", sock.output.gets)
     assert_equal("A003 OK CREATE completed\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"foo\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A004 OK LIST completed\r\n", sock.output.gets)
     assert_equal("* 0 EXISTS\r\n", sock.output.gets)
     assert_equal("* 0 RECENT\r\n", sock.output.gets)
@@ -565,7 +550,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A005 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("A006 OK CREATE completed\r\n", sock.output.gets)
@@ -576,6 +561,7 @@ EOF
     assert_equal("* LIST () \"/\" \"foo\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A007 OK LIST completed\r\n", sock.output.gets)
     assert_equal("A008 OK CREATE completed\r\n", sock.output.gets)
     assert_equal("A009 NO invalid query\r\n", sock.output.gets)
@@ -590,7 +576,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 DELETE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -607,7 +593,7 @@ A005 DELETE foo\r
 A006 LIST "" "*"\r
 A007 DELETE inbox\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -615,17 +601,20 @@ EOF
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A002 OK LIST completed\r\n", sock.output.gets)
     assert_equal("A003 OK CREATE completed\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"foo\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A004 OK LIST completed\r\n", sock.output.gets)
     assert_equal("A005 OK DELETE completed\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A006 OK LIST completed\r\n", sock.output.gets)
     assert_equal("A007 NO can't delete INBOX\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -635,7 +624,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 RENAME foo bar\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -653,7 +642,7 @@ A006 LIST "" "*"\r
 A007 RENAME bar baz/quux/quuux\r
 A008 LIST "" "*"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -661,18 +650,21 @@ EOF
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A002 OK LIST completed\r\n", sock.output.gets)
     assert_equal("A003 OK CREATE completed\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"foo\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A004 OK LIST completed\r\n", sock.output.gets)
     assert_equal("A005 OK RENAME completed\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"bar\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A006 OK LIST completed\r\n", sock.output.gets)
     assert_equal("A007 OK RENAME completed\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
@@ -681,6 +673,7 @@ EOF
     assert_equal("* LIST () \"/\" \"baz/quux/quuux\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A008 OK LIST completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
 
@@ -689,7 +682,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 CREATE queries/ruby\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -706,7 +699,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 RENAME queries/ruby ruby\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -721,16 +714,20 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
-A002 RENAME ruby queries/&-\r
-A003 RENAME ruby queries/perl\r
+A002 RENAME ruby ruby\r
+A003 RENAME ruby queries/&-\r
+A004 RENAME ruby queries/perl\r
+A005 RENAME ruby queries/python\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
-    assert_equal("A002 NO invalid query\r\n", sock.output.gets)
-    assert_equal("A003 OK RENAME completed\r\n", sock.output.gets)
+    assert_equal("A002 NO mailbox already exists\r\n", sock.output.gets)
+    assert_equal("A003 NO invalid query\r\n", sock.output.gets)
+    assert_equal("A004 OK RENAME completed\r\n", sock.output.gets)
+    assert_equal("A005 NO mailbox does not exist\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
     perl = mail_store.mailboxes["queries/perl"]
@@ -742,7 +739,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 SUBSCRIBE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -754,7 +751,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SUBSCRIBE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -766,7 +763,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UNSUBSCRIBE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -778,7 +775,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UNSUBSCRIBE foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -790,7 +787,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 LIST "" ""\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -806,7 +803,7 @@ A004 LIST "" %\r
 A005 LIST "" "INBOX"\r
 A006 LIST "" "InBox"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -816,10 +813,12 @@ EOF
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A003 OK LIST completed\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LIST (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A004 OK LIST completed\r\n", sock.output.gets)
     assert_equal("* LIST () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("A005 OK LIST completed\r\n", sock.output.gets)
@@ -832,7 +831,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 LSUB "" ""\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -846,7 +845,7 @@ A002 LSUB "" ""\r
 A003 LSUB "" "*"\r
 A004 LSUB "" "%"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -856,10 +855,12 @@ EOF
     assert_equal("* LSUB () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LSUB (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LSUB (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LSUB (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A003 OK LSUB completed\r\n", sock.output.gets)
     assert_equal("* LSUB () \"/\" \"INBOX\"\r\n", sock.output.gets)
     assert_equal("* LSUB (\\Noselect) \"/\" \"ml\"\r\n", sock.output.gets)
     assert_equal("* LSUB (\\Noselect) \"/\" \"queries\"\r\n", sock.output.gets)
+    assert_equal("* LSUB (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A004 OK LSUB completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
@@ -880,7 +881,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 STATUS "INBOX" (MESSAGES UNSEEN UIDNEXT)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -895,7 +896,7 @@ A003 SELECT "INBOX"\r
 A004 UID STORE #{uid1} FLAGS (\\Seen)\r
 A005 STATUS "INBOX" (MESSAGES UNSEEN UIDNEXT)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -910,10 +911,11 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen) UID #{uid1})\r\n",
+                 sock.output.gets)
     assert_equal("A004 OK UID STORE completed\r\n", sock.output.gets)
     assert_equal("* STATUS \"INBOX\" (MESSAGES 1 UNSEEN 0 UIDNEXT 2)\r\n",
                  sock.output.gets)
@@ -938,7 +940,7 @@ EOF
 A001 APPEND INBOX {#{mail.length}}\r
 #{mail}\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ Ready for additional command text\r\n",
@@ -960,7 +962,7 @@ A006 APPEND foo (\\Seen) {#{mail.length}}\r
 A007 SELECT foo\r
 A008 FETCH 1 (BODY[] FLAGS)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -975,7 +977,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A003 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (BODY[] {#{mail.length}}\r\n",
@@ -997,7 +999,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A007 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (BODY[] {#{mail.length}}\r\n",
@@ -1012,7 +1014,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 IDLE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1025,7 +1027,7 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 IDLE\r
 DONE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1039,7 +1041,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID CHECK\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1051,7 +1053,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID CHECK\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1066,7 +1068,7 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 A003 CHECK\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1078,7 +1080,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("A003 OK CHECK completed\r\n", sock.output.gets)
@@ -1089,7 +1091,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID CLOSE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1101,7 +1103,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID CLOSE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1116,7 +1118,7 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 A003 CLOSE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1128,7 +1130,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("A003 OK CLOSE completed\r\n", sock.output.gets)
@@ -1161,7 +1163,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID EXPUNGE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1173,7 +1175,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID EXPUNGE\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1195,7 +1197,7 @@ A008 UID SEARCH HEADER SUBJECT bye\r
 A009 UID SEARCH HEADER SUBJECT hello\r
 A010 UID SEARCH HEADER "X-Mail-Count" "12345"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1207,7 +1209,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* SEARCH 2 3 4 7\r\n", sock.output.gets)
@@ -1235,6 +1237,7 @@ EOF
     mail1 = <<EOF.gsub(/\n/, "\r\n")
 From: shugo@ruby-lang.org
 To: ruby-list@ruby-lang.org
+Cc: foo@ruby-lang.org
 Subject: hello
 Date: Wed, 30 Mar 2005 17:34:46 +0900
 
@@ -1244,6 +1247,7 @@ EOF
     mail2 = <<EOF.gsub(/\n/, "\r\n")
 From: foo@ruby-lang.org
 To: ruby-list@ruby-lang.org
+Bcc: foo@ruby-lang.org
 Subject: bye
 Date: Fri, 01 Apr 2005 12:51:06 +0900
 
@@ -1269,12 +1273,23 @@ Content-Type: text/plain; charset=iso-2022-jp
 こんにちは、みなさん
 EOF
     uid4 = mail_store.import_mail(mail4)
+    mail5 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
+Date: Sun, 03 Apr 2005 03:06:39 +0900
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: base64
+
+#{["こんにちは、みなさん"].pack("m").chop}
+EOF
+    uid5 = mail_store.import_mail(mail5)
     mail_store.close
 
     sock = SpoofSocket.new(<<EOF)
 A001 UID SEARCH BODY "hello world"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1286,7 +1301,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID SEARCH BODY "hello world"\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1314,20 +1329,49 @@ A014 UID SEARCH BODY hello NOT SEEN\r
 A015 UID SEARCH 2\r
 A016 UID SEARCH 2:3\r
 A017 UID SEARCH 2:*\r
+A018 UID SEARCH BODY hello BODY "\\"hello, world\\""\r
+A019 UID SEARCH BODY hello NOT BODY "\\"hello, world\\""\r
+A020 UID SEARCH NOT BODY hello
+A021 UID SEARCH UID 2\r
+A022 UID SEARCH UID 2,3\r
+A101 UID STORE #{uid3} FLAGS (\\Flagged)\r
+A102 UID STORE #{uid5} FLAGS (\\Seen \\Flagged)\r
+A103 UID SEARCH SEEN\r
+A104 UID SEARCH NOT SEEN\r
+A105 UID SEARCH FLAGGED\r
+A106 UID SEARCH NOT FLAGGED\r
+A107 UID SEARCH SEEN FLAGGED\r
+A108 UID SEARCH FLAGGED SEEN\r
+A109 UID SEARCH SEEN NOT FLAGGED\r
+A110 UID SEARCH NOT FLAGGED SEEN\r
+A111 UID SEARCH NOT SEEN FLAGGED\r
+A112 UID SEARCH FLAGGED NOT SEEN\r
+A113 UID SEARCH NOT SEEN NOT FLAGGED\r
+A114 UID SEARCH NOT FLAGGED NOT SEEN\r
+A115 UID SEARCH not flagged not seen\r
+A201 UID STORE #{uid1},#{uid2} +FLAGS.SILENT ($Forwarded)\r
+A202 UID SEARCH KEYWORD $Forwarded\r
+A203 UID SEARCH UNKEYWORD $Forwarded\r
+A301 UID SEARCH SUBJECT hello\r
+A302 UID SEARCH SUBJECT "hello"\r
+A303 UID SEARCH FROM foo\r
+A304 UID SEARCH TO foo\r
+A305 UID SEARCH CC foo\r
+A306 UID SEARCH BCC foo\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
-    assert_equal("* 4 EXISTS\r\n", sock.output.gets)
-    assert_equal("* 4 RECENT\r\n", sock.output.gets)
+    assert_equal("* 5 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 5 RECENT\r\n", sock.output.gets)
     assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
-    assert_equal("* OK [UIDNEXT #{uid4 + 1}] Predicted next UID\r\n",
+    assert_equal("* OK [UIDNEXT #{uid5 + 1}] Predicted next UID\r\n",
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1} #{uid3}\r\n", sock.output.gets)
@@ -1342,15 +1386,16 @@ EOF
     assert_equal("A007 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1} #{uid3}\r\n", sock.output.gets)
     assert_equal("A008 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("* #{uid1} FETCH (FLAGS (\\Recent \\Seen) UID #{uid1})\r\n",
+                 sock.output.gets)
     assert_equal("A009 OK UID STORE completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
     assert_equal("A010 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
     assert_equal("A011 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH #{uid4}\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid4} #{uid5}\r\n", sock.output.gets)
     assert_equal("A012 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH #{uid4}\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid4} #{uid5}\r\n", sock.output.gets)
     assert_equal("A013 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
     assert_equal("A014 OK UID SEARCH completed\r\n", sock.output.gets)
@@ -1360,9 +1405,75 @@ EOF
     assert_equal("* SEARCH 2 3\r\n",
                  sock.output.gets)
     assert_equal("A016 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH 2 3 4\r\n",
+    assert_equal("* SEARCH 2 3 4 5\r\n",
                  sock.output.gets)
     assert_equal("A017 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
+    assert_equal("A018 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
+    assert_equal("A019 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid2} #{uid4} #{uid5}\r\n", sock.output.gets)
+    assert_equal("A020 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A021 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 3\r\n", sock.output.gets)
+    assert_equal("A022 OK UID SEARCH completed\r\n", sock.output.gets)
+
+    # uid1 S -, uid2 - -, uid3 - -, uid4 - -, uid5 - -
+    assert_equal("* #{uid3} FETCH (FLAGS (\\Recent \\Flagged) UID #{uid3})\r\n",
+                 sock.output.gets)
+    assert_equal("A101 OK UID STORE completed\r\n", sock.output.gets)
+    # uid1 S -, uid2 - -, uid3 - F, uid4 - -, uid5 - -
+    assert_equal("* #{uid5} FETCH (FLAGS (\\Recent \\Seen \\Flagged) UID #{uid5})\r\n",
+                 sock.output.gets)
+    assert_equal("A102 OK UID STORE completed\r\n", sock.output.gets)
+    # uid1 S -, uid2 - -, uid3 - F, uid4 - -, uid5 S F
+    assert_equal("* SEARCH #{uid1} #{uid5}\r\n", sock.output.gets)
+    assert_equal("A103 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid2} #{uid3} #{uid4}\r\n", sock.output.gets)
+    assert_equal("A104 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid3} #{uid5}\r\n", sock.output.gets)
+    assert_equal("A105 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1} #{uid2} #{uid4}\r\n", sock.output.gets)
+    assert_equal("A106 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid5}\r\n", sock.output.gets)
+    assert_equal("A107 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid5}\r\n", sock.output.gets)
+    assert_equal("A108 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
+    assert_equal("A109 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
+    assert_equal("A110 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
+    assert_equal("A111 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
+    assert_equal("A112 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid2} #{uid4}\r\n", sock.output.gets)
+    assert_equal("A113 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid2} #{uid4}\r\n", sock.output.gets)
+    assert_equal("A114 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid2} #{uid4}\r\n", sock.output.gets)
+    assert_equal("A115 OK UID SEARCH completed\r\n", sock.output.gets)
+
+    assert_equal("A201 OK UID STORE completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1} #{uid2}\r\n", sock.output.gets)
+    assert_equal("A202 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid3} #{uid4} #{uid5}\r\n", sock.output.gets)
+    assert_equal("A203 OK UID SEARCH completed\r\n", sock.output.gets)
+
+    assert_equal("* SEARCH #{uid1} #{uid3}\r\n", sock.output.gets)
+    assert_equal("A301 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1} #{uid3}\r\n", sock.output.gets)
+    assert_equal("A302 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid2}\r\n", sock.output.gets)
+    assert_equal("A303 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid3} #{uid4} #{uid5}\r\n", sock.output.gets)
+    assert_equal("A304 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
+    assert_equal("A305 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid2}\r\n", sock.output.gets)
+    assert_equal("A306 OK UID SEARCH completed\r\n", sock.output.gets)
+
     assert_equal(nil, sock.output.gets)
   end
 
@@ -1406,7 +1517,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 FETCH 1:* (UID FLAGS RFC822.SIZE)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1418,7 +1529,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 FETCH 1:* (UID FLAGS RFC822.SIZE)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1434,7 +1545,7 @@ A002 SELECT INBOX\r
 A003 FETCH 1:* (UID FLAGS RFC822.SIZE)\r
 A004 FETCH 1,2 (UID FLAGS RFC822.SIZE)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1446,7 +1557,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID #{uid1} FLAGS (\\Recent) RFC822.SIZE #{mail1.length})\r\n",
@@ -1514,7 +1625,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID FETCH 1 (FLAGS)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1526,7 +1637,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID FETCH 1 (FLAGS)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1551,8 +1662,12 @@ A011 UID FETCH 1 ENVELOPE\r
 A012 UID FETCH 1 BODY[1]\r
 A013 UID FETCH 1 BODY.PEEK[HEADER]\r
 A014 UID FETCH 1 INTERNALDATE\r
+A015 UID FETCH 2 BODY\r
+A016 UID FETCH 2 BODY[1]\r
+A017 UID FETCH 2 BODY[2]\r
+A018 UID FETCH 2 BODY[1]<5.10>\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1564,7 +1679,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID 1 FLAGS (\\Recent) RFC822.SIZE #{mail1_without_unix_from.length})\r\n",
@@ -1641,6 +1756,21 @@ EOF
     assert_equal("* 1 FETCH (UID 1 INTERNALDATE \"02-Apr-2005 00:07:54 +0900\")\r\n",
                  sock.output.gets)
     assert_equal("A014 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" 18 2)(\"TEXT\" \"PLAIN\" (\"NAME\" \"hello.txt\") NIL NIL \"BASE64\" 16 1) \"MIXED\" (\"BOUNDARY\" \"------------040107050003050408030009\") NIL NIL))\r\n",
+                 sock.output.gets)
+    assert_equal("A015 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY[1] {18}\r\n", sock.output.gets)
+    assert_equal("see hello.txt.\r\n\r\n", sock.output.read(18))
+    assert_equal(" FLAGS (\\Seen))\r\n", sock.output.gets)
+    assert_equal("A016 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY[2] {18}\r\n", sock.output.gets)
+    assert_equal("SGVsbG8gV29ybGQK\r\n", sock.output.read(18))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A017 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY[1]<5> {10}\r\n", sock.output.gets)
+    assert_equal("ello.txt.\r", sock.output.read(10))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A018 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
@@ -1659,7 +1789,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID STORE 1 FLAGS (\\Seen NonJunk)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1671,7 +1801,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID STORE 1 FLAGS (\\Seen NonJunk)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1694,7 +1824,7 @@ A009 UID FETCH 1 (FLAGS)\r
 A010 UID STORE 1 -FLAGS.SILENT (NonJunk)\r
 A011 UID FETCH 1 (FLAGS)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1706,16 +1836,16 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk))\r\n",
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk) UID 1)\r\n",
                  sock.output.gets)
     assert_equal("A003 OK UID STORE completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk \\Deleted))\r\n",
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk \\Deleted) UID 1)\r\n",
                  sock.output.gets)
     assert_equal("A004 OK UID STORE completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen \\Deleted))\r\n",
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen \\Deleted) UID 1)\r\n",
                  sock.output.gets)
     assert_equal("A005 OK UID STORE completed\r\n", sock.output.gets)
     assert_equal("A006 OK UID STORE completed\r\n", sock.output.gets)
@@ -1760,7 +1890,7 @@ EOF
     sock = SpoofSocket.new(<<EOF)
 A001 UID COPY 1:2 Trash\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 BAD Command unrecognized/login please\r\n",
@@ -1772,7 +1902,7 @@ A001 AUTHENTICATE CRAM-MD5\r
 Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 UID COPY 1:2 Trash\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1789,7 +1919,7 @@ A003 UID COPY 1:2 Trash\r
 A004 SELECT Trash\r
 A005 FETCH 1:* (UID BODY[] FLAGS)\r
 EOF
-    session = Ximapd::Session.new(@config, sock)
+    session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
@@ -1801,7 +1931,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("A003 OK UID COPY completed\r\n", sock.output.gets)
@@ -1812,7 +1942,7 @@ EOF
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
-    assert_equal("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n",
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
                  sock.output.gets)
     assert_equal("A004 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID #{uid2 + 1} BODY[] {#{mail1.length}}\r\n",
@@ -1831,25 +1961,6 @@ EOF
                  sock.output.gets)
     assert_equal("A005 OK FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
-  end
-
-  private
-
-  def mkdtemp(prefix, mode = 0700)
-    retry_count = 0
-    begin
-      dir = File.join(Dir.tmpdir, 
-                      "#{prefix}-#{$$}.#{rand(10000)}")
-      Dir.mkdir(dir, mode)
-      return dir
-    rescue Errno::EEXIST
-      if retry_count < 3
-        retry_count += 1
-        retry
-      else
-        raise "can't create #{dir}"
-      end
-    end
   end
 
   class SpoofSocket
@@ -1881,6 +1992,9 @@ EOF
 
     def close
       @output.rewind
+    end
+
+    def fcntl(cmd, arg)
     end
   end
 end

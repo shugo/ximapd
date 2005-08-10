@@ -25,66 +25,58 @@
 # SUCH DAMAGE.
 
 require "socket"
+require "fcntl"
 require "monitor"
 require "net/imap"
 require "pstore"
 require "yaml/store"
 require "find"
 require "fileutils"
-require "bdb"
 require "digest/md5"
 require "iconv"
 require "nkf"
 require "date"
 require "set"
 require "logger"
-require "tmail"
-require "rast"
+require "timeout"
 require "optparse"
+require "sdbm"
+require "rast"
+require "rmail/parser"
 
 now = DateTime.now
 unless defined?(now.to_time)
   class DateTime
     def to_time
       d = new_offset(0)
-      d.instance_eval do
+      d.instance_eval {
         Time.utc(year, mon, mday, hour, min, sec,
                  (sec_fraction * 86400000000).to_i)
-      end.
-          getlocal
+      }.getlocal
+    end
+
+    def to_datetime
+      return self
+    end
+  end
+
+  class Time
+    def to_time
+      return getlocal
+    end
+
+    def to_datetime
+      jd = DateTime.civil_to_jd(year, mon, mday, DateTime::ITALY)
+      fr = DateTime.time_to_day_fraction(hour, min, [sec, 59].min) +
+           usec.to_r/86400000000
+      of = utc_offset.to_r/86400
+      DateTime.new0(DateTime.jd_to_ajd(jd, fr, of), of, DateTime::ITALY)
     end
   end
 end
 
-class NullObject
-  def initialize(*args)
-  end
-
-  def method_missing(mid, *args)
-    return self
-  end
-
-  def self.method_missing(mid, *args)
-    return new
-  end
-end
-
-begin
-  require "progressbar"
-rescue LoadError
-  ProgressBar = NullObject
-end
-
-Thread.abort_on_exception = true
-
-module TMail
-  def Decoder.decode(str, encoding = nil)
-    return str
-  end
-end
-
 module Rast
-  if !defined?(RESULT_ALL_ITEMS)
+  unless defined?(RESULT_ALL_ITEMS)
     if Rast::VERSION < "0.1.0"
       RESULT_ALL_ITEMS = 0
     else
@@ -101,48 +93,49 @@ end
 class Ximapd
   attr_accessor :destination
 
-  VERSION = "0.0.1"
+  VERSION = "0.0.3"
+  REVISION = "$Revision$".slice(/\A\$Revision: (.*) \$\z/, 1)
+  DATE = "$Date$".slice(/\d\d\d\d-\d\d-\d\d/)
 
   LOG_SHIFT_AGE = 10
   LOG_SHIFT_SIZE = 1 * 1024 * 1024
-
-  @@debug = false
-
-  def self.debug
-    return @@debug
-  end
-
-  def self.debug=(debug)
-    @@debug = debug
-  end
+  MAX_CLIENTS = 10
+  TIMEZONE = Time.now.strftime("%z")
 
   def initialize
     @args = nil
     @config = {}
     @server = nil
+    @mail_store = nil
     @logger = nil
     @threads = []
     @sessions = {}
-    @monitor = Monitor.new
     @option_parser = OptionParser.new { |opts|
-      opts.banner = "usage: #{File.basename($0)} [options]"
+      opts.banner = "usage: ximapd [options]"
       opts.separator("")
       opts.separator("options:")
       define_options(opts, @config, OPTIONS)
       opts.separator("")
       define_options(opts, @config, ACTIONS)
     }
+    @max_clients = nil
   end
 
   def run(args)
-    @args = args
-    parse_options(@args)
-    @server = nil
-    @logger = open_logger
-    @config["logger"] = @logger
-    @threads = []
-    @sessions = {}
-    send(@config["action"] || "help")
+    begin
+      @args = args
+      parse_options(@args)
+      @server = nil
+      @config["logger"] = @logger
+      @max_clients = @config["max_clients"] || MAX_CLIENTS
+      @threads = []
+      @sessions = {}
+      init_profiler if @config["profile"]
+      send(@config["action"])
+    rescue StandardError => e
+      STDERR.printf("ximapd: %s\n", e)
+      @logger.log_exception(e)
+    end
   end
 
   private
@@ -156,19 +149,59 @@ class Ximapd
   def parse_options(args)
     begin
       @option_parser.parse!(args)
-      config_file = File.expand_path(@config["config_file"] || "~/.ximapd")
-      config = File.open(config_file) { |f|
-        if f.stat.mode & 0004 != 0
-          raise format("%s is world readable", config_file)
-        end
-        YAML.load(f)
-      }
-      @config = config.merge(@config)
-      check_config(@config)
-    rescue
+      @config["action"] ||= "help"
+      if @config["action"] != "help" && @config["action"] != "version"
+        config_file = File.expand_path(@config["config_file"] || "~/.ximapd")
+        config = File.open(config_file) { |f|
+          if f.stat.mode & 0004 != 0
+            raise format("%s is world readable", config_file)
+          end
+          YAML.load(f)
+        }
+        @config = config.merge(@config)
+        check_config(@config)
+        path = @config["plugin_path"] ||
+          File.join(@config["data_dir"], "plugins")
+        Plugin.directories = path.split(File::PATH_SEPARATOR).collect { |dir|
+          File.expand_path(dir)
+        }
+        @logger = open_logger
+      end
+    rescue StandardError => e
       raise if @config["debug"]
-      STDERR.printf("%s: %s\n", $0, $!)
+      STDERR.printf("ximapd: %s\n", e)
       exit(1)
+    end
+  end
+
+  def init_profiler
+    require "prof"
+    case @config["profiler_clock_mode"] || ENV["RUBY_PROF_CLOCK_MODE"]
+    when "gettimeofday"
+      Prof.clock_mode = Prof::GETTIMEOFDAY
+      $stderr.puts("use gettimeofday(2) for profiling") if @config["verbose"]
+    when "cpu"
+      if ENV.key?("RUBY_PROF_CPU_FREQUENCY")
+        Prof.cpu_frequency = ENV["RUBY_PROF_CPU_FREQUENCY"].to_f
+      else
+        begin
+          open("/proc/cpuinfo") do |f|
+            f.each_line do |line|
+              s = line.slice(/cpu MHz\s*:\s*(.*)/, 1)
+              if s
+                Prof.cpu_frequency = s.to_f * 1000000
+                break
+              end
+            end
+          end
+        rescue Errno::ENOENT
+        end
+      end
+      Prof.clock_mode = Prof::CPU
+      $stderr.puts("use CPU clock counter for profiling") if @config["verbose"]
+    else
+      Prof.clock_mode = Prof::CLOCK
+      $stderr.puts("use clock(3) for profiling") if @config["verbose"]
     end
   end
 
@@ -186,12 +219,29 @@ class Ximapd
       log_level = (@config["log_level"] || "INFO").upcase
       logger.level = Logger.const_get(log_level)
     end
+    logger.datetime_format = "%Y-%m-%dT%H:%M:%S "
     if @config["action"] != "start"
       for m in [:fatal, :error, :warn]
         class << logger; self; end.send(:define_method, m) do |s|
-          STDERR.printf("%s: %s\n", $0, s)
+          STDERR.printf("ximapd: %s\n", s)
           super(s)
         end
+      end
+      if @config["verbose"]
+        def logger.info(s)
+          puts(s)
+          super(s)
+        end
+      end
+    end
+    def logger.log_exception(e, msg = nil, severity = Logger::ERROR)
+      if msg
+        add(severity, "#{msg}: #{e.class}: #{e.message}")
+      else
+        add(severity, "#{e.class}: #{e.message}")
+      end
+      for line in e.backtrace
+        debug("  #{line}")
       end
     end
     return logger
@@ -200,35 +250,57 @@ class Ximapd
   def start
     @server = open_server
     @logger.info("started")
-    daemon if !@config["debug"]
+    daemon unless @config["debug"]
     @main_thread = Thread.current
     Signal.trap("TERM", &method(:terminate))
     Signal.trap("INT", &method(:terminate))
     begin
-      loop do
-        begin
-          sock = @server.accept
-        rescue Exception
-          if @config["ssl"] && $!.kind_of?(OpenSSL::SSL::SSLError)
-            retry
-          else
-            raise
+      @mail_store = Ximapd::MailStore.new(@config)
+      begin
+        loop do
+          begin
+            sock = @server.accept
+          rescue Exception => e
+            if @config["ssl"] && e.kind_of?(OpenSSL::SSL::SSLError)
+              retry
+            else
+              raise
+            end
+          end
+          unless @config["ssl"]
+            sock.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1)
+            if defined?(Fcntl::FD_CLOEXEC)
+              sock.fcntl(Fcntl::F_SETFD, Fcntl::FD_CLOEXEC) 
+            end
+            if defined?(Fcntl::O_NONBLOCK)
+              sock.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK)
+            end
+          end
+          if @sessions.length >= @max_clients
+            sock.print("* BYE too many clients\r\n")
+            peeraddr = sock.peeraddr[3]
+            sock.close
+            @logger.info("rejected connection from #{peeraddr}: " +
+                         "too many clients")
+            next
+          end
+          Thread.start(sock) do |socket|
+            session = Session.new(@config, socket, @mail_store)
+            @sessions[Thread.current] = session
+            begin
+              session.start
+            ensure
+              @sessions.delete(Thread.current)
+            end
           end
         end
-        Thread.start(sock) do |socket|
-          session = Session.new(@config, sock, @monitor)
-          @sessions[Thread.current] = session
-          session.start
-          @sessions.delete(Thread.current)
-        end
+      ensure
+        @mail_store.close
       end
     rescue SystemExit
       raise
-    rescue Exception
-      @logger.error("#{$!.class}: #{$!}")
-      for line in $@
-        @logger.error("  #{line}")
-      end
+    rescue Exception => e
+      @logger.log_exception(e)
     ensure
       @logger.close
       @server.close
@@ -238,14 +310,14 @@ class Ximapd
   def open_server
     server = TCPServer.new(@config["port"])
     if @config["ssl"]
-      require 'openssl'
+      require "openssl"
       ssl_ctx = OpenSSL::SSL::SSLContext.new
       if @config.key?("ssl_key") && @config.key?("ssl_cert")
-      ssl_ctx.key = File.open(@config["ssl_key"], 'r') { |f|
+      ssl_ctx.key = File.open(File.expand_path(@config["ssl_key"]), 'r') { |f|
         OpenSSL::PKey::RSA.new(f)
       }
-      ssl_ctx.cert = File.open(@config["ssl_cert"], 'r') { |f|
-        OpenSSL::X509::Certificate.new(i)
+      ssl_ctx.cert = File.open(File.expand_path(@config["ssl_cert"]), 'r') { |f|
+        OpenSSL::X509::Certificate.new(f)
       }
       else
         require 'webrick/ssl'
@@ -271,7 +343,18 @@ class Ximapd
   end
 
   def version
-    printf("ximapd version %s\n", VERSION)
+    printf("ximapd version %s (r%s %s)\n", VERSION, REVISION, DATE)
+    puts
+    printf("  Platform    : %s\n", RUBY_PLATFORM)
+    printf("  Ruby        : %s (%s)\n", RUBY_VERSION, RUBY_RELEASE_DATE)
+    printf("  Rast        : %s\n", Rast::VERSION)
+    begin
+      require "openssl"
+      printf("  OpenSSL     : %s\n", OpenSSL::VERSION)
+    rescue LoadError
+      printf("  OpenSSL     : not available\n")
+    end
+    printf("  ProgressBar : %s\n", ProgressBar::VERSION)
   end
 
   def help
@@ -323,6 +406,29 @@ class Ximapd
     end
   end
 
+  def rebuild_index
+    open_mail_store do |mail_store|
+      mail_store.rebuild_index
+    end
+  end
+
+  def edit_mailbox_db
+    open_mail_store do |mail_store|
+      system(ENV["EDITOR"] || "vi", mail_store.mailbox_db_path)
+    end
+  end
+
+  def interactive
+    @mail_store = Ximapd::MailStore.new(@config)
+    begin
+      sock = ConsoleSocket.new
+      session = Ximapd::Session.new(@config, sock, @mail_store, true)
+      session.start
+    ensure
+      @mail_store.close
+    end
+  end
+
   def check_config(config)
     unless config.key?("data_dir")
       raise "data_dir is not specified"
@@ -336,11 +442,11 @@ class Ximapd
     open_pid_file("w") do |f|
       f.puts(Process.pid)
     end
-    Dir.chdir("/")
+    Dir.chdir(File.expand_path(@config["data_dir"]))
     STDIN.reopen("/dev/null")
     STDOUT.reopen("/dev/null", "w")
     path = File.expand_path("stderr", @config["data_dir"])
-    STDERR.reopen(path, "w")
+    STDERR.reopen(path, "a")
   end
 
   def open_pid_file(mode = "r")
@@ -355,19 +461,23 @@ class Ximapd
     i = 1
     @sessions.each_key do |t|
       @logger.debug("close session \##{i}")
-      @monitor.synchronize do
+      @mail_store.synchronize do
         @logger.debug("raise TerminateException to #{t}")
         t.raise(TerminateException.new)
         @logger.debug("raised TerminateException to #{t}")
       end
       begin
         @logger.debug("join #{t}")
-        t.join
-        @logger.debug("joined #{t}")
+        begin
+          t.join
+        rescue TerminateException
+        end
       rescue SystemExit
         raise
-      rescue Exception
-        @logger.error($!)
+      rescue Exception => e
+        @logger.log_exception(e)
+      ensure
+        @logger.debug("joined #{t}")
       end
       @logger.debug("closed session \##{i}")
       i += 1
@@ -376,8 +486,7 @@ class Ximapd
 
   def terminate(sig)
     @logger.info("signal #{sig}")
-    @logger.debug(@sessions.keys.inspect)
-    @logger.debug(@monitor.inspect)
+    @logger.debug("sessions: #{@sessions.keys.inspect}")
     close_sessions
     @logger.info("terminated")
     exit
@@ -385,13 +494,14 @@ class Ximapd
 
   def open_mail_store
     mail_store = Ximapd::MailStore.new(@config)
-    mail_store.lock
-    if @config["dest_mailbox"] &&
-      !mail_store.mailboxes.include?(@config["dest_mailbox"])
-      mail_store.create_mailbox(@config["dest_mailbox"])
-    end
     begin
-      yield(mail_store)
+      mail_store.synchronize do
+        if @config["dest_mailbox"] &&
+          !mail_store.mailboxes.include?(@config["dest_mailbox"])
+          mail_store.create_mailbox(@config["dest_mailbox"])
+        end
+        yield(mail_store)
+      end
     ensure
       mail_store.close
     end
@@ -407,7 +517,7 @@ class Ximapd
         "search" => true,
         "text_search" => false,
         "full_text_search" => false,
-        "unique" => false,
+        "unique" => true,
       },
       {
         "name" => "size",
@@ -482,6 +592,14 @@ class Ximapd
         "unique" => false,
       },
       {
+        "name" => "bcc",
+        "type" => Rast::PROPERTY_TYPE_STRING,
+        "search" => false,
+        "text_search" => true,
+        "full_text_search" => false,
+        "unique" => false,
+      },
+      {
         "name" => "x-ml-name",
         "type" => Rast::PROPERTY_TYPE_STRING,
         "search" => true,
@@ -507,12 +625,6 @@ class Ximapd
     "list-id",
     "mailing-list"
   ]
-
-  DEFAULT_STATUS = {
-    "uidvalidity" => 1,
-    "last_uid" => 0,
-    "last_mailbox_id" => 1
-  }
   DEFAULT_MAILBOXES = {
     "INBOX" => {
       "flags" => "",
@@ -524,6 +636,9 @@ class Ximapd
       "flags" => "\\Noselect"
     },
     "queries" => {
+      "flags" => "\\Noselect"
+    },
+    "static" => {
       "flags" => "\\Noselect"
     }
   }
@@ -552,68 +667,126 @@ class Ximapd
     end
   end
 
+  class MailData
+    attr_reader :raw_data, :uid, :flags, :internal_date, :text, :properties
+    attr_reader :parsed_mail
+
+    def initialize(raw_data, uid, flags, internal_date, text, properties,
+                   parsed_mail)
+      @raw_data = raw_data
+      @uid = uid
+      @flags = flags
+      @internal_date = internal_date
+      @text = text
+      @properties = properties
+      @parsed_mail = parsed_mail
+    end
+
+    def to_s
+      return @raw_data
+    end
+
+    def header
+      return @parsed_mail.header
+    end
+
+    def multipart?
+      return @parsed_mail.multipart?
+    end
+
+    def body
+      return @parsed_mail.body
+    end
+  end
+
+  class NullMessage
+    attr_reader :header, :body
+
+    def initialize
+      @header = {}
+      @body = ""
+    end
+
+    def multipart?
+      return false
+    end
+  end
+
+  MailboxStatus = Struct.new(:messages, :recent, :uidnext, :uidvalidity,
+                             :unseen)
+
   class MailStore
     include QueryFormat
+    include MonitorMixin
 
-    attr_reader :flags_db
-    attr_accessor :read_only
+    attr_reader :config, :path, :mailbox_db, :mailbox_db_path
+    attr_reader :flags_db, :plugins
+    attr_reader :uid_seq, :uidvalidity_seq, :mailbox_id_seq
 
     def initialize(config)
+      super()
       @config = config
       @logger = @config["logger"]
       @path = File.expand_path(@config["data_dir"])
-      @mail_path = File.expand_path("mails", @path)
-      @db_path = File.expand_path("db", @path)
       FileUtils.mkdir_p(@path)
-      FileUtils.mkdir_p(@mail_path)
-      FileUtils.mkdir_p(@db_path)
-      mailbox_db_path = File.expand_path("mailbox.db", @path)
+      FileUtils.mkdir_p(File.expand_path("mails", @path))
+      uid_seq_path = File.expand_path("uid.seq", @path)
+      @uid_seq = Sequence.new(uid_seq_path)
+      uidvalidity_seq_path = File.expand_path("uidvalidity.seq", @path)
+      @uidvalidity_seq = Sequence.new(uidvalidity_seq_path)
+      mailbox_id_seq_path = File.expand_path("mailbox_id.seq", @path)
+      @mailbox_id_seq = Sequence.new(mailbox_id_seq_path)
+      @mailbox_db_path = File.expand_path("mailbox.db", @path)
       case @config["db_type"].to_s.downcase
       when "pstore"
-        @mailbox_db = PStore.new(mailbox_db_path)
+        @mailbox_db = PStore.new(@mailbox_db_path)
       else
-        @mailbox_db = YAML::Store.new(mailbox_db_path)
+        @mailbox_db = YAML::Store.new(@mailbox_db_path)
       end
-      @mailbox_db.transaction do
-        @mailbox_db["status"] ||= DEFAULT_STATUS.dup
-        @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
-        @mailbox_db["mailing-lists"] ||= {}
-      end
-      @db_env = BDB::Env.new(@db_path,
-                             BDB::CREATE | BDB::INIT_MPOOL | BDB::INIT_LOG)
-      @flags_db = BDB::Recno.open("flags.db", nil, BDB::CREATE,
-                                  "env" => @db_env)
-      @index_path = File.expand_path("index", @path)
-      if !File.exist?(@index_path)
-        Rast::DB.create(@index_path, INDEX_OPTIONS)
-      end
+      override_commit_new(@mailbox_db)
+      @flags_db_path = File.expand_path("flags.sdbm", @path)
+      @flags_db = nil
+      @mail_parser = RMail::Parser.new
       @default_charset = @config["default_charset"] || DEFAULT_CHARSET
       @sync_threshold_chars =
         @config["sync_threshold_chars"] || DEFAULT_SYNC_THRESHOLD_CHARS
       @ml_header_fields =
         @config["ml_header_fields"] || DEFAULT_ML_HEADER_FIELDS
       @last_peeked_uids = {}
+      @index_path = File.expand_path("index", @path)
       @index = nil
       @index_ref_count = 0
       lock_path = File.expand_path("lock", @path)
       @lock = File.open(lock_path, "w+")
       @lock_count = 0
-      @read_only = false
+      synchronize do
+        if @uidvalidity_seq.current.nil?
+          @uidvalidity_seq.current = 1
+        end
+        if @mailbox_id_seq.current.nil?
+          @mailbox_id_seq.current = 1
+        end
+        @mailbox_db.transaction do
+          @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
+          @mailbox_db["mailing_lists"] ||= {}
+          convert_old_mailbox_db
+          @plugins = Plugin.create_plugins(@config, self)
+        end
+        unless File.exist?(@index_path)
+          Rast::DB.create(@index_path, INDEX_OPTIONS)
+        end
+      end
     end
 
     def close
-      @mailbox_db.transaction do
-        @last_peeked_uids.each do |name, uid|
-          @mailbox_db["mailboxes"][name]["last_peeked_uid"] = uid
-        end
-      end
-      @flags_db.close
       @lock.close
     end
 
     def lock
+      mon_enter
       if @lock_count == 0
         @lock.flock(File::LOCK_EX)
+        @flags_db = SDBM.open(@flags_db_path)
       end
       @lock_count += 1
     end
@@ -621,16 +794,37 @@ class Ximapd
     def unlock
       @lock_count -= 1
       if @lock_count == 0 && !@lock.closed?
+        @flags_db.close
+        @flags_db = nil
         @lock.flock(File::LOCK_UN)
+      end
+      mon_exit
+    end
+
+    def synchronize
+      lock
+      begin
+        yield
+      ensure
+        unlock
       end
     end
 
-    def sync
-      @flags_db.sync
+    def write_last_peeked_uids
+      return if @last_peeked_uids.empty?
+      @mailbox_db.transaction do
+        @last_peeked_uids.each do |name, uid|
+          mailbox = @mailbox_db["mailboxes"][name]
+          if mailbox && mailbox["last_peeked_uid"] < uid
+            mailbox["last_peeked_uid"] = uid
+          end
+        end
+        @last_peeked_uids.clear
+      end
     end
 
     def mailboxes
-      @mailbox_db.transaction do
+      @mailbox_db.transaction(true) do
         return @mailbox_db["mailboxes"]
       end
     end
@@ -649,18 +843,14 @@ class Ximapd
 
     def delete_mailbox(name)
       @mailbox_db.transaction do
-        pat = "\\A" + Regexp.quote(name) + "(/.*)?\\z"
-        re = Regexp.new(pat, nil, "n")
-        @mailbox_db["mailboxes"].delete_if do |k, v|
-          re.match(k)
-        end
+        delete_mailbox_internal(name)
       end
     end
 
     def rename_mailbox(name, new_name)
       @mailbox_db.transaction do
         if @mailbox_db["mailboxes"].include?(new_name)
-          raise format("%s already exists", new_name)
+          raise MailboxExistError, format("%s already exists", new_name)
         end
         mkdir_p(File.dirname(new_name))
         pat = "\\A" + Regexp.quote(name) + "(/.*)?\\z"
@@ -668,10 +858,17 @@ class Ximapd
         mailboxes = @mailbox_db["mailboxes"].select { |k, v|
           re.match(k)
         }
+        if mailboxes.empty?
+          raise NoMailboxError, format("%s does not exist", name)
+        end
         for k, v in mailboxes
           new_key = k.sub(re) { $1 ? new_name + $1 : new_name }
           @mailbox_db["mailboxes"].delete(k)
           @mailbox_db["mailboxes"][new_key] = v
+          list_id = v["list_id"]
+          if list_id
+            @mailbox_db["mailing_lists"][list_id]["mailbox"] = new_key
+          end
         end
         query = extract_query(new_name)
         if query
@@ -680,64 +877,58 @@ class Ximapd
       end
     end
 
-    def get_mailbox_status(mailbox_name)
-      mailbox = nil
-      status = nil
-      @mailbox_db.transaction do
-        mailboxes = @mailbox_db["mailboxes"]
-        mailbox = mailboxes[mailbox_name]
-        status = @mailbox_db["status"]
-      end
-      if mailbox.nil?
-        raise NoMailboxError.new("no such mailbox")
-      end
-      if /\\Noselect/ni.match(mailbox["flags"])
-        raise NotSelectableMailboxError.new("can't open #{mailbox_name}: not a selectable mailbox")
-      end
-      open_index do |index|
-        mailbox_status = MailboxStatus.new
-        result = index.search(mailbox["query"],
-                              "properties" => ["uid"],
-                              "start_no" => 0)
-        mailbox_status.messages = result.hit_count
-        mailbox_status.unseen = result.items.select { |i|
-          !/\\Seen\b/ni.match(@flags_db[i.properties[0]])
-        }.length
-        query = format("%s uid > %d",
-                       mailbox["query"], mailbox["last_peeked_uid"])
-        result = index.search(query,
-                              "properties" => ["uid"],
-                              "start_no" => 0,
-                              "num_items" => Rast::RESULT_MIN_ITEMS)
-        mailbox_status.recent = result.hit_count
-        mailbox_status.uidnext = status["last_uid"] + 1
-        mailbox_status.uidvalidity = status["uidvalidity"]
-        if !@read_only
-          @last_peeked_uids[mailbox_name] = status["last_uid"]
+    def get_mailbox_status(mailbox_name, read_only)
+      @mailbox_db.transaction(true) do
+        mailbox = get_mailbox(mailbox_name)
+        if /\\Noselect/ni.match(mailbox["flags"])
+          raise NotSelectableMailboxError.new("can't open #{mailbox_name}: not a selectable mailbox")
+        end
+        mailbox_status = mailbox.status
+        mailbox_status.uidnext = @uid_seq.peek_next
+        mailbox_status.uidvalidity = @uidvalidity_seq.current
+        unless read_only
+          @last_peeked_uids[mailbox_name] = @uid_seq.current.to_i
         end
         return mailbox_status
       end
     end
 
-    MailboxStatus = Struct.new(:messages, :recent, :uidnext, :uidvalidity,
-                               :unseen)
-
     def import(args, mailbox_name = nil)
       open_index do |index|
         for arg in args
+          filenames = []
           Find.find(arg) do |filename|
             if File.file?(filename)
-              open(filename) do |f|
-                uid = import_mail_internal(index, f.read, mailbox_name)
-              end
+              filenames.push(filename)
             end
           end
+          if @config.key?("exclude")
+            pat = Regexp.new(@config["exclude"], nil, "n")
+            filenames = filenames.reject { |filename|
+              pat.match(filename)
+            }
+          end
+          if @config["progress"]
+            progress_bar = ProgressBar.new(arg.slice(/.{1,13}\z/n),
+                                           filenames.length)
+          else
+            progress_bar = NullObject.new
+          end
+          for filename in filenames
+            File.open(filename) do |f|
+              import_mail_internal(f.read, mailbox_name, "", f.mtime)
+            end
+            progress_bar.inc
+          end
+          progress_bar.finish
         end
       end
     end
 
     def import_file(f, mailbox_name = nil)
-      return import_mail(f.read, mailbox_name)
+      open_index do |index|
+        return import_mail_internal(f.read, mailbox_name)
+      end
     end
 
     def import_mbox(args, mailbox_name = nil)
@@ -745,7 +936,7 @@ class Ximapd
         for arg in args
           Find.find(arg) do |filename|
             if File.file?(filename)
-              open(filename) do |f|
+              File.open(filename) do |f|
                 import_mbox_internal(index, f, mailbox_name)
               end
             end
@@ -777,7 +968,6 @@ class Ximapd
       end
       user = @config["remote_user"]
       pass = @config["remote_password"]
-      import_all = @config["import_all"]
 
       @logger.info("importing from #{host} via IMAP...")
       imap = Net::IMAP.new(host, port, ssl)
@@ -796,10 +986,12 @@ class Ximapd
             begin
               imap.select(folder.name)
               mail_count = imap.responses["EXISTS"][-1]
-              next if mail_count == 0
-              #imported_uids = []
+              if mail_count == 0
+                @logger.info("0 messages in #{folder.name}")
+                next
+              end
               imported_uids = Set.new
-              progress_bar = nil
+              progress_bar = NullObject.new
               handler = Proc.new { |resp|
                 if resp.kind_of?(Net::IMAP::UntaggedResponse) &&
                   resp.name == "FETCH"
@@ -820,10 +1012,8 @@ class Ximapd
                     else
                       flags = ""
                     end
-                    import_mail_internal(index,
-                                         mail.attr["BODY[]"], mailbox_name,
+                    import_mail_internal(mail.attr["BODY[]"], mailbox_name,
                                          flags, indate)
-                    #imported_uids.push(mail.attr["UID"])
                     imported_uids.add(mail.attr["UID"])
                     progress_bar.inc
                     imap.responses["FETCH"].clear
@@ -836,36 +1026,37 @@ class Ximapd
                 if @config["import_imap_flags"]
                   fetch_attrs.push("FLAGS")
                 end
-                if import_all
+                if @config["import_all"]
                   @logger.info("#{mail_count} messages in #{folder.name}")
-                  if @config["verbose"]
+                  if @config["progress"]
                     progress_bar = ProgressBar.new(folder.name, mail_count)
-                  else
-                    progress_bar = NullObject.new
                   end
                   imap.fetch(1 .. -1, fetch_attrs)
                 else
-                  uids = imap.uid_search(["UNSEEN"])
+                  uids = imap.uid_search("NOT KEYWORD XimapdImported")
                   @logger.info("#{uids.length} unseen messages " + 
                                "in #{folder.name}")
-                  if @config["verbose"]
+                  if @config["progress"]
                     progress_bar = ProgressBar.new(folder.name, uids.length)
-                  else
-                    progress_bar = NullObject.new
                   end
                   while uids.length > 0
                     imap.uid_fetch(uids.slice!(0, 100), fetch_attrs)
                   end
                 end
+                progress_bar.finish
               ensure
                 imap.remove_response_handler(handler)
               end
-              #while imported_uids.length > 0
-              #  imap.uid_store(imported_uids.slice!(0, 100),
-              #                 "+FLAGS.SILENT", [:Seen])
-              #end
-            rescue
-              @logger.error("#{$!}: #{folder.name}")
+              flags = ["XimapdImported"]
+              unless @config["keep"]
+                flags.push(:Deleted)
+              end
+              uids = imported_uids.to_a.sort
+              while uids.length > 0
+                imap.uid_store(uids.slice!(0, 100), "+FLAGS.SILENT", flags)
+              end
+            rescue StandardError => e
+              @logger.log_exception(e, folder.name)
             ensure
               visited_folders.add(folder.name)
               imap.close
@@ -876,15 +1067,596 @@ class Ximapd
       @logger.info("imported from #{host}")
     end
 
-    def import_mail(str, mailbox_name = nil, flags = "")
-      open_index do |index|
-        return import_mail_internal(index, str, mailbox_name, flags)
+    def import_mail(str, mailbox_name = nil, flags = "", indate = nil)
+      open_index do
+        import_mail_internal(str, mailbox_name, flags, indate)
       end
     end
 
-    def uid_search(mailbox_name, query)
-      mailbox = get_mailbox(mailbox_name)
+    def index_mail(mail)
+      begin
+        @index.register(mail.text, mail.properties)
+        s = mail.properties["x-ml-name"]
+        if !s.empty? && mail.properties["mailbox-id"] == 0 &&
+          !@mailbox_db["mailing_lists"].key?(s)
+          mbox_name = get_mailbox_name_from_x_ml_name(s)
+          mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox_name))
+          query = format("x-ml-name = %s",
+                         quote_query(mail.properties["x-ml-name"]))
+          begin
+            create_mailbox_internal(mailbox_name, query)
+            mailbox = get_mailbox(mailbox_name)
+            mailbox["list_id"] = s
+            @mailbox_db["mailing_lists"][s] = {
+              "creator_uid" => mail.uid,
+              "mailbox" => mailbox_name
+            }
+          rescue MailboxExistError
+          end
+        end
+      rescue Exception => e
+        @logger.log_exception(e, "index_mail")
+      end
+    end
+
+    def get_mailbox(name)
+      if name == "DEFAULT"
+        return DefaultMailbox.new(self)
+      end
+      data = @mailbox_db["mailboxes"][name]
+      unless data
+        raise NoMailboxError.new("no such mailbox")
+      end
+      class_name = data["class"]
+      if class_name
+        return Ximapd.const_get(class_name).new(self, name,
+                                                @mailbox_db["mailboxes"][name])
+      else
+        return SearchBasedMailbox.new(self, name,
+                                      @mailbox_db["mailboxes"][name])
+      end
+    end
+
+    def delete_mails(mails)
       open_index do |index|
+        for mail in mails
+          for plugin in @plugins
+            plugin.on_delete_mail(mail)
+          end
+          mail.delete
+        end
+      end
+    end
+
+    def open_index(flags = Rast::DB::RDWR)
+      synchronize do
+        if @index_ref_count == 0
+          @index = Rast::DB.open(@index_path, flags,
+                                 "sync_threshold_chars" =>
+                                   @sync_threshold_chars)
+        end
+        @index_ref_count += 1
+        begin
+          yield(@index)
+        ensure
+          @index_ref_count -= 1
+          if @index_ref_count == 0
+            @index.close
+            @index = nil
+          end
+        end
+      end
+    end
+
+    def rebuild_index
+      @logger.info("rebuilding index...")
+      if @config["delete_ml_mailboxes"]
+        @mailbox_db.transaction do
+          for k, v in @mailbox_db["mailing_lists"]
+            delete_mailbox_internal(v["mailbox"]) if v.key?("mailbox")
+          end
+          @mailbox_db["mailing_lists"].clear
+          delete_mailbox_internal("ml")
+          @mailbox_db["mailboxes"]["ml"] = DEFAULT_MAILBOXES["ml"]
+        end
+      end
+      old_index_path = @index_path + ".old"
+      begin
+        File.rename(@index_path, old_index_path)
+      rescue Errno::ENOENT
+      end
+      Rast::DB.create(@index_path, INDEX_OPTIONS)
+      mailbox_names = {}
+      @mailbox_db.transaction do
+        for mailbox_name, mailbox_data in @mailbox_db["mailboxes"]
+          id = mailbox_data["id"]
+          if id
+            mailbox_names[id] = mailbox_name
+          end
+        end
+      end
+      open_index do
+        mail_dir = File.expand_path("mails", @path)
+        Dir.glob(mail_dir + "/*/*").sort.each do |dir|
+          reindex_month(dir)
+        end
+      end
+      FileUtils.rm_rf(old_index_path)
+      @uidvalidity_seq.next
+      @logger.info("rebuilt index")
+    end
+
+    def get_next_mailbox_id
+      return @mailbox_id_seq.next
+    end
+
+    private
+
+    def override_commit_new(db)
+      def db.commit_new(f)
+        f.truncate(0)
+        f.rewind
+        new_file = @filename + ".new"
+        File.open(new_file) do |nf|
+          nf.binmode
+          FileUtils.copy_stream(nf, f)
+        end
+        f.fsync
+        File.unlink(new_file)
+      end
+    end
+
+    def convert_old_mailbox_db
+      if @mailbox_db.root?("status")
+        @uid_seq.current = @mailbox_db["status"]["last_uid"]
+        @uidvalidity_seq.current = @mailbox_db["status"]["uidvalidity"]
+        @mailbox_id_seq.current = @mailbox_db["status"]["last_mailbox_id"]
+        @mailbox_db.delete("status")
+      end
+      if @mailbox_db.root?("mailing-lists")
+        for key, val in @mailbox_db["mailing-lists"]
+          @mailbox_db["mailing_lists"][key] = {
+            "creator_uid" => val
+          }
+        end
+        @mailbox_db.delete("mailing-lists")
+      end
+      @mailbox_db["mailboxes"]["static"] ||= {
+        "flags" => "\\Noselect"
+      }
+    end
+
+    def strip_unix_from(str, indate)
+      str.sub!(/\AFrom\s+\S+\s+(.*)\r\n/) do
+        if indate.nil?
+          begin
+            indate = DateTime.strptime($1 + " " + TIMEZONE,
+                                       "%a %b %d %H:%M:%S %Y %z")
+          rescue
+          end
+        end
+        ""
+      end
+      return indate
+    end
+
+    def mkdir_p(dirname)
+      if /\A\//n.match(dirname)
+        raise "can't specify absolute path"
+      end
+      if dirname == "." ||
+        @mailbox_db["mailboxes"].include?(dirname)
+        return
+      end
+      mkdir_p(File.dirname(dirname))
+      @mailbox_db["mailboxes"][dirname] = {
+        "flags" => "\\Noselect"
+      }
+    end
+
+    def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil)
+      uid = get_next_uid
+      mail = parse_mail(str, uid, flags, indate)
+      @mailbox_db.transaction do
+        if mailbox_name
+          mailbox = get_mailbox(mailbox_name)
+        else
+          mailbox = nil
+          for plugin in @plugins
+            begin
+              mbox_name = plugin.filter(mail)
+              if mbox_name == "REJECT"
+                @logger.add(Logger::INFO, "rejected: from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}>")
+                return 0
+              end
+              if mbox_name
+                mailbox = get_mailbox(mbox_name)
+                break
+              end
+            rescue Exception => e
+              @logger.log_exception(e)
+            end
+          end
+          mailbox ||= DefaultMailbox.new(self)
+        end
+        mailbox.import(mail)
+        @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}> mailbox=<#{mailbox.name}>")
+      end
+      return mail.uid
+    end
+
+    def get_mailbox_name_from_x_ml_name(s)
+      mbox = s.slice(/(.*) <.*>/u, 1) 
+      if mbox.nil?
+        mbox = s.slice(/<(.*)>/u, 1) 
+        if mbox.nil?
+          mbox = s.slice(/\S+@[^ \t;]+/u) 
+          if mbox.nil?
+            mbox = s
+          end
+        end
+      end
+      return mbox
+    end
+
+    def create_mailbox_internal(name, query = nil)
+      if @mailbox_db["mailboxes"].key?(name)
+        raise MailboxExistError, format("mailbox already exist - %s", name)
+      end
+      if /\Astatic\//u.match(name)
+        mailbox = StaticMailbox.new(self, name, "flags" => "")
+        mailbox.save
+        return
+      end
+      mailbox = {
+        "flags" => "",
+        "last_peeked_uid" => 0
+      }
+      if query.nil?
+        query = extract_query(name)
+        if query.nil?
+          mailbox_id = get_next_mailbox_id
+          query = format('mailbox-id = %d', mailbox_id)
+          mailbox["id"] = mailbox_id
+        end
+      end
+      mailbox["query"] = query
+      @mailbox_db["mailboxes"][name] = mailbox
+    end
+
+    def extract_query(mailbox_name)
+      s = mailbox_name.slice(/\Aqueries\/(.*)/u, 1)
+      return nil if s.nil?
+      query = Net::IMAP.decode_utf7(s)
+      begin
+        open_index do |index|
+          result = index.search(query, "num_items" => Rast::RESULT_MIN_ITEMS)
+        end
+        return query
+      rescue
+        raise InvalidQueryError.new("invalid query")
+      end
+    end
+
+    def import_mbox_internal(index, f, mailbox_name = nil)
+      s = nil
+      f.each_line do |line|
+        if /\AFrom\s+\S+\s+[A-Z][a-z]{2} [A-Z][a-z]{2}\s+\d+ \d\d:\d\d:\d\d \d+/.match(line)
+          if s
+            uid = import_mail_internal(s, mailbox_name)
+          end
+          s = line
+        else
+          s.concat(line) if s
+        end
+      end
+      if s
+        uid = import_mail_internal(s, mailbox_name)
+      end
+    end
+
+    def delete_mailbox_internal(name)
+      pat = "\\A" + Regexp.quote(name) + "(/.*)?\\z"
+      re = Regexp.new(pat, nil, "n")
+      deleted_mailboxes = []
+      @mailbox_db["mailboxes"].delete_if { |k, v|
+        if re.match(k)
+          deleted_mailboxes.push(v)
+          true
+        else
+          false
+        end
+      }
+      for mbox in deleted_mailboxes
+        list_id = mbox["list_id"]
+        if list_id
+          @mailbox_db["mailing_lists"].delete(list_id)
+        end
+      end
+    end
+
+    def reindex_month(dir)
+      filenames = []
+      Find.find(dir) do |filename|
+        if File.file?(filename) && /\/\d+\z/.match(filename)
+          filenames.push(filename)
+        end
+      end
+      if @config["progress"]
+        month = dir.slice(/\d+\/\d+\z/)
+        progress_bar = ProgressBar.new(month, filenames.length)
+      else
+        progress_bar = NullObject.new
+      end
+      for filename in filenames
+        reindex_mail(filename)
+        progress_bar.inc
+      end
+      progress_bar.finish
+    end
+
+    def reindex_mail(filename)
+      begin
+        str = File.read(filename)
+        uid = filename.slice(/\/(\d+)\z/, 1).to_i
+        flags = @flags_db[uid.to_s] || "\\Seen"
+        indate = File.mtime(filename)
+        mail = parse_mail(str, uid, flags, indate)
+        begin
+          mail.properties["mailbox-id"] =
+            File.read(filename + ".mailbox-id").to_i
+        rescue Errno::ENOENT
+        end
+        @mailbox_db.transaction do
+          index_mail(mail)
+        end
+      rescue StandardError => e
+        @logger.log_exception(e)
+      end
+    end
+
+    def parse_mail(mail, uid, flags, indate)
+      mail.gsub!(/\r?\n/, "\r\n")
+      indate = strip_unix_from(mail, indate)
+      if indate.nil?
+        indate = DateTime.now
+      end
+      properties = Hash.new("")
+      properties["uid"] = uid
+      properties["size"] = mail.size
+      properties["flags"] = ""
+      properties["internal-date"] = indate.strftime("%Y-%m-%dT%H:%M:%S")
+      properties["date"] = properties["internal-date"]
+      properties["x-mail-count"] = 0
+      properties["mailbox-id"] = 0
+      begin
+        m = @mail_parser.parse(mail.gsub(/\r\n/, "\n"))
+        properties = extract_properties(m, properties)
+        body = extract_body(m)
+      rescue Exception => e
+        @logger.log_exception(e, "failed to parse mail uid=#{uid}",
+                              Logger::WARN)
+        header, body = *mail.split(/^\r\n/)
+        body = to_utf8(body, @default_charset)
+      end
+      return MailData.new(mail, uid, flags, indate, body, properties,
+                          m || NullMessage.new)
+    end
+
+    def get_mailbox_id(mailbox_name)
+      if mailbox_name.nil?
+        mailbox_id = 0
+      else
+        mailbox = @mailbox_db["mailboxes"][mailbox_name]
+        if mailbox.nil?
+          raise NoMailboxError.new("no such mailbox")
+        end
+        mailbox_id = mailbox["id"]
+        if mailbox_id.nil?
+          raise MailboxAccessError.new("can't import to mailbox without id")
+        end
+      end
+      return mailbox_id
+    end
+
+    def get_next_uid
+      return @uid_seq.next
+    end
+
+    def extract_body(mail)
+      if mail.multipart?
+        return mail.body.collect { |part|
+          extract_body(part)
+        }.join("\n")
+      else
+        case mail.header.content_type("text/plain")
+        when "text/plain"
+          return decode_body(mail)
+        when "text/html", "text/xml"
+          return decode_body(mail).gsub(/<.*?>/um, "")
+        else
+          return ""
+        end
+      end
+    end
+
+    def decode_body(mail)
+      charset = mail.header.params("content-type", {})["charset"] ||
+        @default_charset
+      return to_utf8(mail.decode, charset)
+    end
+
+    def to_utf8(src, charset)
+      begin
+        return Iconv.conv("utf-8", charset, src)
+      rescue
+        return NKF.nkf("-m0 -w", src)
+      end
+    end
+
+    def guess_list_name(fname, mail)
+      ret = nil
+
+      if mail.header.include?(fname)
+        value = mail.header[fname]
+        ret = value
+        case fname
+        when 'list-id'
+          ret = $1 if /<([^<>]+)>/ =~ value
+        when 'x-ml-address'
+          ret = $& if /\b[^<>@\s]+@[^<>@\s]+\b/ =~ value
+        when 'x-mailing-list', 'mailing-list'
+          ret = $1 if /<([^<>@]+@[^<>@]+)>/ =~ value
+        when 'x-ml-name'
+          # noop
+        when 'sender'
+          if /\bowner-([^<>@\s]+@[^<>@\s]+)\b/ =~ value
+            ret = $1
+          else
+            ret = nil
+          end
+        when 'x-loop'
+          ret = $& if /\b[^<>@\s]+@[^<>@\s]+\b/ =~ value
+        end
+      end
+
+      ret
+    end
+
+    def extract_properties(mail, properties)
+      for field in ["subject", "from", "to", "cc", "bcc"]
+        properties[field] = get_header_field(mail, field)
+      end
+      begin
+        properties["date"] = DateTime.parse(mail.header["date"].to_s).to_s
+      rescue Exception => e
+        @logger.log_exception(e, "failed to parse Date", Logger::WARN)
+      end
+      s = nil
+      @ml_header_fields.each do |field_name|
+        s = guess_list_name(field_name, mail)
+        break if s
+      end
+      properties["x-ml-name"] = decode_encoded_word(s.to_s)
+      properties["x-mail-count"] = mail.header["x-mail-count"].to_s.to_i
+      return properties
+    end
+
+    def get_header_field(mail, field)
+      return decode_encoded_word(mail.header[field].to_s)
+    end
+
+    def decode_encoded_word(s)
+      return NKF.nkf("-w", s)
+    end
+  end
+
+  class Mailbox
+    attr_reader :mail_store, :name
+
+    def initialize(mail_store, name, data)
+      @mail_store = mail_store
+      @name = name
+      @data = data
+      @config = mail_store.config
+    end
+
+    def [](key)
+      return @data[key]
+    end
+
+    def []=(key, val)
+      @data[key] = val
+    end
+
+    def save
+      @data["class"] = self.class.name.slice(/\AXimapd::(.*)\z/, 1)
+      @mail_store.mailbox_db["mailboxes"][@name] = @data
+    end
+
+    def import(mail_data)
+      raise ScriptError.new("subclass must override Mailbox#import")
+    end
+
+    def get_mail_path(mail)
+      raise ScriptError.new("subclass must override Mailbox#get_mail_path")
+    end
+
+    def status
+      raise ScriptError.new("subclass must override Mailbox#status")
+    end
+
+    def uid_search(query)
+      raise ScriptError.new("subclass must override Mailbox#uid_search")
+    end
+
+    def fetch(sequence_set)
+      raise ScriptError.new("subclass must override Mailbox#fetch")
+    end
+
+    def uid_fetch(sequence_set)
+      raise ScriptError.new("subclass must override Mailbox#uid_fetch")
+    end
+
+    def get_mail(uid)
+      raise ScriptError.new("subclass must override Mailbox#get_mail")
+    end
+  end
+
+  class SearchBasedMailbox < Mailbox
+    def import(mail_data)
+      if @data.key?("id")
+        mail_data.properties["mailbox-id"] = @data["id"]
+      end
+      path = get_mail_path(mail_data)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.open(path, "w") do |f|
+        f.flock(File::LOCK_EX)
+        f.print(mail_data)
+        f.fsync
+      end
+      mailbox_id_path = path + ".mailbox-id"
+      File.open(mailbox_id_path, "w") do |f|
+        f.flock(File::LOCK_EX)
+        f.print(mail_data.properties["mailbox-id"].to_s)
+        f.fsync
+      end
+      time = mail_data.internal_date.to_time
+      File.utime(time, time, path)
+      @mail_store.flags_db[mail_data.uid.to_s] = mail_data.flags
+      @mail_store.index_mail(mail_data)
+    end
+
+    def get_mail_path(mail)
+      relpath = format("mails/%s/%d",
+                       mail.internal_date.strftime("%Y/%m/%d"),
+                       mail.uid)
+      return File.expand_path(relpath, @mail_store.path)
+    end
+
+    def status
+      @mail_store.open_index do |index|
+        mailbox_status = MailboxStatus.new
+        result = index.search(self["query"],
+                              "properties" => ["uid"],
+                              "start_no" => 0)
+        mailbox_status.messages = result.hit_count
+        mailbox_status.unseen = result.items.select { |i|
+          !/\\Seen\b/ni.match(@mail_store.flags_db[i.properties[0].to_s])
+        }.length
+        query = format("%s uid > %d",
+                       self["query"], self["last_peeked_uid"])
+        result = index.search(query,
+                              "properties" => ["uid"],
+                              "start_no" => 0,
+                              "num_items" => Rast::RESULT_MIN_ITEMS)
+        mailbox_status.recent = result.hit_count
+        return mailbox_status
+      end
+    end
+
+    def uid_search(query)
+      @mail_store.open_index do |index|
         options = {
           "properties" => ["uid"],
           "start_no" => 0,
@@ -893,19 +1665,15 @@ class Ximapd
           "sort_property" => "uid",
           "sort_order" => Rast::SORT_ORDER_ASCENDING
         }
-        #if mailbox_name != "INBOX"
-        #  query += " " + mailbox["query"]
-        #end
-        query += " " + mailbox["query"]
+        query += " " + self["query"]
         result = index.search(query, options)
         return result.items.collect { |i| i.properties[0] }
       end
     end
 
-    def fetch(mailbox_name, sequence_set)
-      mailbox = get_mailbox(mailbox_name)
-      open_index do |index|
-        result = index.search(mailbox["query"],
+    def fetch(sequence_set)
+      @mail_store.open_index do |index|
+        result = index.search(self["query"],
                               "properties" => ["uid", "internal-date"],
                               "start_no" => 0,
                               "num_items" => Rast::RESULT_ALL_ITEMS,
@@ -919,16 +1687,17 @@ class Ximapd
             first = seq_number.first
             last = seq_number.last == -1 ? result.items.length : seq_number.last
             for i in first .. last
-              mail = mailbox.get_mail(i, result.items[i - 1].properties[0])
-              mail.internal_date = result.items[i - 1].properties[1]
+              item = result.items[i - 1]
+              mail = IndexedMail.new(@config, self, i, item.properties[0],
+                                     item.doc_id, item.properties[1])
               mails.push(mail)
             end
           else
             item = result.items[seq_number - 1]
             next if item.nil?
-            uid = item.properties[0]
-            mail = mailbox.get_mail(seq_number, uid)
-            mail.internal_date = item.properties[1]
+            mail = IndexedMail.new(@config, self, seq_number,
+                                   item.properties[0], item.doc_id,
+                                   item.properties[1])
             mails.push(mail)
           end
         end
@@ -936,9 +1705,8 @@ class Ximapd
       end
     end
 
-    def uid_fetch(mailbox_name, sequence_set)
-      mailbox = get_mailbox(mailbox_name)
-      open_index do |index|
+    def uid_fetch(sequence_set)
+      @mail_store.open_index do |index|
         options = {
           "properties" => ["uid", "internal-date"],
           "start_no" => 0,
@@ -963,286 +1731,185 @@ class Ximapd
           end
         }.reject { |q| q.empty? }
         if additional_queries.empty?
-          query = mailbox["query"]
+          query = self["query"]
         else
-          query = mailbox["query"] +
+          query = self["query"] +
             " ( " + additional_queries.join(" | ") + " )"
         end
         result = index.search(query, options)
         return result.items.collect { |i|
           uid = i.properties[0]
-          mail = mailbox.get_mail(uid, uid)
-          mail.internal_date = i.properties[1]
-          mail
+          IndexedMail.new(@config, self, uid, uid, i.doc_id, i.properties[1])
         }
       end
     end
 
-    def get_mailbox(name)
-      @mailbox_db.transaction do
-        return Mailbox.new(@config, name,
-                           @mailbox_db["mailboxes"][name], self)
+    def get_mail(uid)
+      return IndexedMail.new(@config, self, uid, uid)
+    end
+  end
+
+  class EnvelopeSearchBasedMailbox < SearchBasedMailbox
+    def import(mail_data)
+      faked_mail_data =
+        MailData.new(mail_data.raw_data, mail_data.uid,
+                     mail_data.flags, mail_data.internal_date,
+                     '', mail_data.properties,
+                     mail_data.parsed_mail)
+      super(faked_mail_data)
+    end
+
+    def save
+      unless @mail_store.mailbox_db["mailboxes"].key?(@name)
+        @data["id"] = @mail_store.get_next_mailbox_id
+        @data["last_peeked_uid"] ||= 0
+        @data["query"] = format('mailbox-id = %d', @data["id"])
+      end
+      super
+    end
+  end
+
+  class DefaultMailbox < SearchBasedMailbox
+    def initialize(mail_store)
+      super(mail_store, "DEFAULT", {})
+    end
+
+    def import(mail_data)
+      if mail_data.properties["x-ml-name"].empty?
+        mail_data.properties["mailbox-id"] = 1
+      else
+        mail_data.properties["mailbox-id"] = 0
+      end
+      super(mail_data)
+    end
+  end
+
+  class StaticMailbox < Mailbox
+    def initialize(mail_store, name, data)
+      super(mail_store, name, data)
+      relpath = format("mailboxes/%d/flags.sdbm", data["id"])
+      @flags_db_path = File.expand_path(relpath, mail_store.path)
+    end
+
+    def save
+      unless @mail_store.mailbox_db["mailboxes"].key?(@name)
+        @data["id"] = @mail_store.get_next_mailbox_id
+        @data["last_peeked_uid"] ||= 0
+      end
+      super
+      FileUtils.mkdir_p(get_mailbox_dir)
+    end
+
+    def import(mail_data)
+      path = get_mail_path(mail_data)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.open(path, "w") do |f|
+        f.flock(File::LOCK_EX)
+        f.print(mail_data)
+        f.fsync
+      end
+      time = mail_data.internal_date.to_time
+      File.utime(time, time, path)
+      open_flags_db do |db|
+        db[mail_data.uid.to_s] = mail_data.flags
       end
     end
 
-    def delete_from_index(uid)
-      open_index do |index|
-        result = index.search("uid = #{uid}")
-        result.items.each do |i|
-          index.delete(i.doc_id)
+    def get_mail_path(mail)
+      return File.expand_path(mail.uid.to_s, get_mailbox_dir)
+    end
+
+    def status
+      mailbox_status = MailboxStatus.new
+      uids = get_uids
+      mailbox_status.messages = uids.length
+      open_flags_db do |db|
+        mailbox_status.unseen = uids.select { |uid|
+          !/\\Seen\b/ni.match(db[uid.to_s])
+        }.length
+      end
+      mailbox_status.recent = uids.select { |uid|
+        uid > self["last_peeked_uid"]
+      }.length
+      return mailbox_status
+    end
+
+    def uid_search(query)
+      return []
+    end
+
+    def fetch(sequence_set)
+      uids = get_uids
+      mails = []
+      sequence_set.each do |seq_number|
+        case seq_number
+        when Range
+          first = seq_number.first
+          last = seq_number.last == -1 ? uids.length : seq_number.last
+          for i in first .. last
+            uid = uids[i - 1]
+            next if uid.nil?
+            mail = StaticMail.new(@config, self, i, uid)
+            mails.push(mail)
+          end
+        else
+          uid = uids[seq_number - 1]
+          next if uid.nil?
+          mail = StaticMail.new(@config, self, seq_number, uid)
+          mails.push(mail)
         end
       end
+      return mails
+    end
+
+    def uid_fetch(sequence_set)
+      uids = get_uids
+      return uids if uids.empty?
+      uid_set = Set.new(uids)
+      mails = []
+      sequence_set.each do |seq_number|
+        case seq_number
+        when Range
+          first = seq_number.first
+          last = seq_number.last == -1 ? uids.last : seq_number.last
+          if last > uids.last
+            last = uids.last
+          end
+
+          for uid in (first..last).to_a & uids
+            mail = StaticMail.new(@config, self, uid, uid)
+            mails.push(mail)
+          end
+        else
+          next unless uid_set.include?(seq_number)
+          mail = StaticMail.new(@config, self, seq_number, seq_number)
+          mails.push(mail)
+        end
+      end
+      return mails
+    end
+
+    def get_mail(uid)
+      return StaticMail.new(@config, self, uid, uid)
+    end
+
+    def open_flags_db(&block)
+      SDBM.open(@flags_db_path, &block)
     end
 
     private
 
-    def open_index(flags = Rast::DB::RDWR)
-      if @index_ref_count == 0
-        @index = Rast::DB.open(@index_path, flags,
-                               "sync_threshold_chars" => @sync_threshold_chars)
-      end
-      @index_ref_count += 1
-      begin
-        yield(@index)
-      ensure
-        @index_ref_count -= 1
-        if @index_ref_count == 0
-          @index.close
-          @index = nil
-        end
-      end
+    def get_mailbox_dir
+      relpath = format("mailboxes/%d", self["id"])
+      return File.expand_path(relpath, @mail_store.path)
     end
 
-    def mkdir_p(dirname)
-      if /\A\//n.match(dirname)
-        raise "can't specify absolute path"
-      end
-      if dirname == "." ||
-        @mailbox_db["mailboxes"].include?(dirname)
-        return
-      end
-      mkdir_p(File.dirname(dirname))
-      @mailbox_db["mailboxes"][dirname] = {
-        "flags" => "\\Noselect"
+    def get_uids
+      dirpath = File.expand_path(format("mailboxes/%d", self["id"]),
+                                 @mail_store.path)
+      return Dir.open(dirpath) { |dir|
+        dir.grep(/\A\d+\z/).collect { |uid| uid.to_i }.sort
       }
-    end
-
-    def create_mailbox_internal(name, query = nil)
-      if @mailbox_db["mailboxes"].key?(name)
-        raise MailboxExistError, format("mailbox already exist - %s", name)
-      end
-      mailbox = {
-        "flags" => "",
-        "last_peeked_uid" => 0
-      }
-      if query.nil?
-        query = extract_query(name)
-        if query.nil?
-          @mailbox_db["status"]["last_mailbox_id"] += 1
-          query = format('mailbox-id = %d',
-                         @mailbox_db["status"]["last_mailbox_id"])
-          mailbox["id"] = @mailbox_db["status"]["last_mailbox_id"]
-        end
-      end
-      mailbox["query"] = query
-      @mailbox_db["mailboxes"][name] = mailbox
-    end
-
-    def extract_query(mailbox_name)
-      s = mailbox_name.slice(/\Aqueries\/(.*)/, 1)
-      return nil if s.nil?
-      query = Net::IMAP.decode_utf7(s)
-      begin
-        open_index do |index|
-          result = index.search(query, "num_items" => Rast::RESULT_MIN_ITEMS)
-        end
-        return query
-      rescue
-        raise InvalidQueryError.new("invalid query")
-      end
-    end
-
-    def import_mbox_internal(index, f, mailbox_name = nil)
-      s = nil
-      f.each_line do |line|
-        if /\AFrom /.match(line)
-          if s
-            uid = import_mail_internal(index, s, mailbox_name)
-          end
-          s = line
-        else
-          s.concat(line) if s
-        end
-      end
-      if s
-        uid = import_mail_internal(index, s, mailbox_name)
-      end
-    end
-
-    def import_mail_internal(index, str, mailbox_name = nil, flags = "",
-                             indate = nil)
-      @mailbox_db.transaction do
-        if mailbox_name.nil?
-          mailbox_id = 0
-        else
-          mailbox = @mailbox_db["mailboxes"][mailbox_name]
-          if mailbox.nil?
-            raise NoMailboxError.new("no such mailbox")
-          end
-          mailbox_id = mailbox["id"]
-          if mailbox_id.nil?
-            raise MailboxAccessError.new("can't import to mailbox without id")
-          end
-        end
-        s = str.gsub(/\r?\n/, "\r\n").sub(/\AFrom\s+\S+\s+(.*)\r\n/) {
-          if indate.nil?
-            indate = DateTime.strptime($1 + " " + Time.now.strftime("%z"),
-                                       "%a %b %d %H:%M:%S %Y %z")
-          end
-          ""
-        }
-        if indate.nil?
-          indate = DateTime.now
-        end
-        @mailbox_db["status"]["last_uid"] += 1
-        uid = @mailbox_db["status"]["last_uid"]
-        path = get_mail_path(uid, indate)
-        FileUtils.mkdir_p(File.dirname(path))
-        File.open(path, "w") do |f|
-          f.flock(File::LOCK_EX)
-          f.print(s)
-        end
-        time = indate.to_time
-        File.utime(time, time, path)
-        @flags_db[uid] = flags
-        @flags_db.sync
-        properties = index_mail(index, uid, s, mailbox_id, indate)
-        @logger.info("imported: uid=#{uid} from=<#{properties['from']}> subject=<#{properties['subject']}> date=<#{properties['date']}>")
-        return uid
-      end
-    end
-
-    def get_mail_path(uid, indate)
-      relpath = format("%s/%d", indate.strftime("%Y/%m/%d"), uid)
-      return File.expand_path(relpath, @mail_path)
-    end
-
-    def index_mail(index, uid, mail, mailbox_id, indate)
-      properties = Hash.new("")
-      properties["uid"] = uid
-      properties["size"] = mail.size
-      properties["flags"] = ""
-      properties["internal-date"] = indate.to_s
-      properties["date"] = properties["internal-date"]
-      properties["x-mail-count"] = 0
-      properties["mailbox-id"] = mailbox_id
-      begin
-        m = TMail::Mail.parse(mail)
-        text = extract_text(m)
-        properties = extract_properties(m, properties)
-      rescue
-        header, body = *mail.split(/^\r\n/)
-        text = to_utf8(body, @default_charset)
-      end
-      index.register(text, properties)
-      s = properties["x-ml-name"]
-      if !s.empty? && !@mailbox_db["mailing-lists"].key?(s)
-        mbox = s.slice(/(.*) <.*>/u, 1) 
-        if mbox.nil?
-          mbox = s.slice(/<(.*)>/u, 1) 
-          if mbox.nil?
-            mbox = s.slice(/\S+@[^ \t;]+/u) 
-            if mbox.nil?
-              mbox = s
-            end
-          end
-        end
-        @mailbox_db["mailing-lists"][s] = uid
-        mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox))
-        query = format("x-ml-name = %s", quote_query(properties["x-ml-name"]))
-        begin
-          create_mailbox_internal(mailbox_name, query)
-        rescue MailboxExistError
-        end
-      end
-      return properties
-    end
-
-    def extract_text(mail)
-      if mail.multipart?
-        return mail.parts.collect { |part|
-          extract_text(part)
-        }.join("\n")
-      else
-        case mail.content_type("text/plain")
-        when "text/plain"
-          return get_body(mail)
-        when "text/html", "text/xml"
-          return get_body(mail).gsub(/<.*?>/um, "")
-        else
-          return ""
-        end
-      end
-    end
-
-    def get_body(mail)
-      charset = mail.type_param("charset", @default_charset)
-      return to_utf8(mail.body, charset)
-    end
-
-    def to_utf8(src, charset)
-      begin
-        return Iconv.conv("utf-8", charset, src)
-      rescue
-        return NKF.nkf("-m0 -w", src)
-      end
-    end
-
-    def extract_properties(mail, properties)
-      for field in ["subject", "from", "to", "cc"]
-        properties[field] = get_header_field(mail, field)
-      end
-      begin
-        properties["date"] = DateTime.parse(mail["date"].to_s).to_s
-      rescue
-      end
-      s = nil
-      @ml_header_fields.each do |field_name|
-        s ||= mail[field_name]
-      end
-      properties["x-ml-name"] = decode_encoded_word(s.to_s)
-      properties["x-mail-count"] = mail["x-mail-count"].to_s.to_i
-      if properties["mailbox-id"] == 0 && properties["x-ml-name"].empty?
-        properties["mailbox-id"] = 1
-      end
-      return properties
-    end
-
-    def get_header_field(mail, field)
-      return decode_encoded_word(mail[field].to_s)
-    end
-
-    def decode_encoded_word(s)
-      return NKF.nkf("-w", s)
-    end
-  end
-
-  class Mailbox
-    attr_reader :name, :mail_store
-
-    def initialize(config, name, data, mail_store)
-      @config = config
-      @name = name
-      @data = data
-      @mail_store = mail_store
-    end
-
-    def [](key)
-      return @data[key]
-    end
-
-    def get_mail(seqno, uid)
-      return Mail.new(@config, self, seqno, uid)
     end
   end
 
@@ -1250,64 +1917,48 @@ class Ximapd
     include DataFormat
 
     attr_reader :mailbox, :seqno, :uid
-    attr_accessor :internal_date
 
     def initialize(config, mailbox, seqno, uid)
       @config = config
       @mailbox = mailbox
       @seqno = seqno
       @uid = uid
-      @flags_db = @mailbox.mail_store.flags_db
+      @mail_store = @mailbox.mail_store
       @parsed_mail = nil
     end
 
     def envelope
       mail = parsed_mail
       s = "("
-      s.concat(quoted(mail["date"]))
+      s.concat(quoted(mail.header["date"]))
       s.concat(" ")
-      s.concat(quoted(mail["subject"]))
+      s.concat(quoted(mail.header["subject"]))
       s.concat(" ")
-      s.concat(envelope_addrs(mail.from_addrs))
+      s.concat(envelope_addrs(mail.header.from))
       s.concat(" ")
-      s.concat(envelope_addrs(mail.from_addrs))
+      s.concat(envelope_addrs(mail.header.from))
       s.concat(" ")
-      s.concat(envelope_addrs(mail.reply_to_addrs || mail.from_addrs))
+      if mail.header.reply_to.empty?
+        s.concat(envelope_addrs(mail.header.from))
+      else
+        s.concat(envelope_addrs(mail.header.reply_to))
+      end
       s.concat(" ")
-      s.concat(envelope_addrs(mail.to_addrs))
+      s.concat(envelope_addrs(mail.header.to))
       s.concat(" ")
-      s.concat(envelope_addrs(mail.cc_addrs))
+      s.concat(envelope_addrs(mail.header.cc))
       s.concat(" ")
-      s.concat(envelope_addrs(mail.bcc_addrs))
+      s.concat(envelope_addrs(mail.header.bcc))
       s.concat(" ")
-      s.concat(quoted(mail.in_reply_to))
+      s.concat(quoted(mail.header["in-reply-to"]))
       s.concat(" ")
-      s.concat(quoted(mail.message_id))
+      s.concat(quoted(mail.header["message-id"]))
       s.concat(")")
       return s
     end
 
-    def flags(get_recent = true)
-      s = @flags_db[@uid].to_s
-      if get_recent && uid > @mailbox["last_peeked_uid"]
-        if s.empty?
-          return "\\Recent"
-        else
-          return "\\Recent " + s
-        end
-      else
-        return s
-      end
-    end
-
-    def flags=(s)
-      @flags_db[@uid] = s
-      @flags_db.sync
-    end
-
     def path
-      relpath = format("mails/%s/%d", internal_date[0, 10].tr("-", "/"), uid)
-      return File.expand_path(relpath, @config["data_dir"])
+      return @mailbox.get_mail_path(self)
     end
 
     def old_path
@@ -1355,8 +2006,17 @@ class Ximapd
       return mail.multipart?
     end
 
+    def part(p)
+      part_data = parsed_mail.part(p-1).to_s.gsub(/\n/, "\r\n")
+      return part_data[part_data.index(/\r\n\r\n/)+4,part_data.length]
+    end
+
+    def mime(p)
+      mime_data = parsed_mail.part(p-1).to_s.gsub(/\n/, "\r\n")
+      return mime_data[0,mime_data.index(/\r\n\r\n/)+4]
+    end
+
     def delete
-      @mailbox.mail_store.delete_from_index(@uid)
       begin
         File.unlink(path)
       rescue Errno::ENOENT
@@ -1368,11 +2028,11 @@ class Ximapd
 
     def open_file(mode = "r")
       begin
-        open(path, mode) do |f|
+        File.open(path, mode) do |f|
           yield(f)
         end
       rescue Errno::ENOENT
-        open(old_path, mode) do |f|
+        File.open(old_path, mode) do |f|
           yield(f)
         end
       end
@@ -1380,7 +2040,7 @@ class Ximapd
 
     def parsed_mail
       if @parsed_mail.nil?
-        @parsed_mail = TMail::Mail.parse(to_s)
+        @parsed_mail = RMail::Parser.read(to_s.gsub(/\r\n/, "\n"))
       end
       return @parsed_mail
     end
@@ -1390,24 +2050,14 @@ class Ximapd
         return "NIL"
       else
         return "(" + addrs.collect { |addr|
-          if addr.address_group?
-            addr.flatten
-          else
-            addr
-          end
-        }.flatten.collect { |addr|
           envelope_addr(addr)
         }.join(" ") + ")"
       end
     end
 
     def envelope_addr(addr)
-      name = addr.phrase
-      if addr.routes.empty?
-        adl = nil
-      else
-        adl = addr.routes.collect { |i| "@" + i }.join(",") + ":"
-      end
+      name = addr.display_name
+      adl = nil
       if addr.local
         mailbox = addr.local.tr('"', '')
       else
@@ -1420,33 +2070,49 @@ class Ximapd
 
     def body_internal(mail)
       if mail.multipart?
-        parts = mail.parts.collect { |part|
+        parts = mail.body.collect { |part|
           body_internal(part)
         }.join
-        return format("(%s %s)", parts, quoted(upcase(mail.sub_type)))
+        params = "(" + mail.header.params("content-type", {}).collect { |k, v|
+            format("%s %s", quoted(upcase(k)), quoted(v))
+        }.join(" ") + ")"
+        return format("(%s %s %s NIL NIL)",
+            parts,
+            quoted(upcase(mail.header.subtype)),
+            params)
       else
         fields = []
-        content_type = mail["content-type"]
-        if content_type.nil?
-          params = "()"
+        params = "(" + mail.header.params("content-type", {}).collect { |k, v|
+            v.gsub!(/\s/,"")
+            format("%s %s", quoted(upcase(k)), quoted(v))
+        }.join(" ") + ")"
+        if params == "()"
+          fields.push("NIL")
         else
-          params = "(" + content_type.params.collect { |k, v|
-            format("%s %s", quoted(upcase(k)), quoted(upcase(v)))
-          }.join(" ") + ")"
+          fields.push(params)
         end
-        fields.push(params)
         fields.push("NIL")
         fields.push("NIL")
         content_transfer_encoding =
-          (mail["content-transfer-encoding"] || "7BIT").to_s.upcase
+          (mail.header["content-transfer-encoding"] || "7BIT").to_s.upcase
         fields.push(quoted(content_transfer_encoding))
-        fields.push(mail.body.length.to_s)
-        if mail.main_type == "text"
+        fields.push(mail.body.gsub(/\n/, "\r\n").length.to_s)
+        if mail.header.media_type == "text"
           fields.push(mail.body.to_a.length.to_s)
+        else
+          params = mail.header.params("content-disposition", {}).collect { |k, v|
+            v.gsub!(/\s/,"")
+            format("%s %s", quoted(upcase(k)), quoted(v))
+          }.join(" ")
+          if !params.empty?
+            fields.push("NIL")
+            fields.push("(\"ATTACHMENT\" (#{params}))")
+            fields.push("NIL")
+          end
         end
         return format("(%s %s %s)",
-                      quoted(upcase(mail.main_type)),
-                      quoted(upcase(mail.sub_type)),
+                      quoted(upcase(mail.header.media_type)),
+                      quoted(upcase(mail.header.subtype)),
                       fields.join(" "))
       end
     end
@@ -1459,13 +2125,174 @@ class Ximapd
     end
   end
 
+  class IndexedMail < Mail
+    attr_reader :doc_id
+
+    def initialize(config, mailbox, seqno, uid,
+                   doc_id = nil, internal_date = nil)
+      super(config, mailbox, seqno, uid)
+      @doc_id = doc_id
+      if internal_date
+        @internal_date = DateTime.strptime(internal_date[0, 19] + " " +
+                                           TIMEZONE,
+                                           "%Y-%m-%dT%H:%M:%S %z")
+      else
+        @internal_date = nil
+      end
+    end
+
+    def internal_date
+      unless @internal_date
+        @internal_date = File.mtime(path)
+      end
+      return @internal_date
+    end
+
+    def flags(get_recent = true)
+      s = @mail_store.flags_db[@uid.to_s].to_s
+      if get_recent && uid > @mailbox["last_peeked_uid"]
+        if s.empty?
+          return "\\Recent"
+        else
+          return "\\Recent " + s
+        end
+      else
+        return s
+      end
+    end
+
+    def flags=(s)
+      @mail_store.flags_db[@uid.to_s] = s
+    end
+
+    def delete
+      super
+      @mail_store.flags_db.delete(@uid.to_s)
+      @mail_store.open_index do |index|
+        index.delete(@doc_id)
+      end
+    end
+  end
+
+  class StaticMail < Mail
+    def internal_date
+      return File.mtime(path)
+    end
+
+    def flags(get_recent = true)
+      @mailbox.open_flags_db do |db|
+        s = db[@uid.to_s].to_s
+        if get_recent && uid > @mailbox["last_peeked_uid"]
+          if s.empty?
+            return "\\Recent"
+          else
+            return "\\Recent " + s
+          end
+        else
+          return s
+        end
+      end
+    end
+
+    def flags=(s)
+      @mailbox.open_flags_db do |db|
+        db[@uid.to_s] = s
+      end
+    end
+
+    def delete
+      super
+      @mailbox.open_flags_db do |db|
+        db.delete(@uid.to_s)
+      end
+    end
+  end
+
+  class Sequence
+    def initialize(path, initial_value = 1)
+      @path = path
+      @new_path = path + ".new"
+      @tmp_path = path + ".tmp"
+      @initial_value = initial_value
+    end
+
+    def current
+      File.open(@path, File::RDWR | File::CREAT) do |f|
+        f.flock(File::LOCK_SH)
+        return get_current_value(f)
+      end
+    end
+
+    def current=(value)
+      File.open(@path, File::RDWR | File::CREAT) do |f|
+        f.flock(File::LOCK_EX)
+        write_value(f, value)
+        return value
+      end
+    end
+
+    def next
+      File.open(@path, File::RDWR | File::CREAT) do |f|
+        f.flock(File::LOCK_EX)
+        value = get_next_value(f)
+        write_value(f, value)
+        return value
+      end
+    end
+
+    def peek_next
+      File.open(@path, File::RDWR | File::CREAT) do |f|
+        f.flock(File::LOCK_SH)
+        return get_next_value(f)
+      end
+    end
+
+    private
+
+    def get_current_value(f)
+      begin
+        s = File.read(@new_path)
+        File.unlink(@new_path)
+      rescue Errno::ENOENT
+        s = f.read
+      end
+      if s.empty?
+        return nil
+      end
+      return s.to_i
+    end
+
+    def get_next_value(f)
+      n = get_current_value(f)
+      if n.nil?
+        return @initial_value
+      end
+      return n + 1
+    end
+
+    def write_value(f, value)
+      File.open(@tmp_path, "w") do |tmp|
+        tmp.print(value.to_s)
+      end
+      File.rename(@tmp_path, @new_path)
+      f.rewind
+      f.print(value.to_s)
+      f.truncate(f.pos)
+      f.fsync
+      File.unlink(@new_path)
+    end
+  end
+
   NON_AUTHENTICATED_STATE = :NON_AUTHENTICATED_STATE
   AUTHENTICATED_STATE = :AUTHENTICATED_STATE
   SELECTED_STATE = :SELECTED_STATE
   LOGOUT_STATE = :LOGOUT_STATE
 
   class Session
-    attr_reader :config, :state, :mail_store, :current_mailbox
+    attr_reader :config, :state, :mail_store, :current_mailbox, :peeraddr
+
+    NON_AUTEHNTICATED_MAX_IDLE_SECONDS = 10
+    AUTEHNTICATED_MAX_IDLE_SECONDS = 30 * 60
 
     @@test = false
 
@@ -1477,52 +2304,69 @@ class Ximapd
       @@test = test
     end
 
-    def initialize(config, sock, monitor = Monitor.new)
+    def initialize(config, sock, mail_store, pre_authenticated = false)
       @config = config
       @sock = sock
+      @mail_store = mail_store
+      @pre_authenticated = pre_authenticated
       @logger = @config["logger"]
       @parser = CommandParser.new(self, @logger)
       @logout = false
       @peeraddr = nil
-      @state = NON_AUTHENTICATED_STATE
-      @mail_store = nil
+      if pre_authenticated
+        @state = AUTHENTICATED_STATE
+        @max_idle_seconds = AUTEHNTICATED_MAX_IDLE_SECONDS
+      else
+        @state = NON_AUTHENTICATED_STATE
+        @max_idle_seconds = NON_AUTEHNTICATED_MAX_IDLE_SECONDS
+      end
       @current_mailbox = nil
-      @examine = false
-      @monitor = monitor
+      @read_only = false
     end
 
     def start
-      @peeraddr = @sock.peeraddr[3]
-      @logger.info("connect from #{@peeraddr}")
-      send_ok("ximapd version %s", VERSION)
-      while !@logout
-        begin
+      synchronize do
+        @peeraddr = @sock.peeraddr[3]
+        @logger.info("connect from #{@peeraddr}")
+        if @pre_authenticated
+          send_preauth("ximapd version %s (r%s %s)", VERSION, REVISION, DATE)
+        else
+          send_ok("ximapd version %s (r%s %s)", VERSION, REVISION, DATE)
+        end
+      end
+      begin
+        while !@logout
           begin
             cmd = recv_cmd
-          rescue
-            send_bad("parse error: %s", $!)
+          rescue StandardError => e
+            send_bad("parse error: %s", e)
             next
           end
           break if cmd.nil?
-          @logger.debug("received #{cmd.name} command from #{@peeraddr}")
+          @logger.debug("received #{cmd.tag} #{cmd.name} from #{@peeraddr}")
           begin
-            cmd.exec
-          rescue
-            raise if @@test
-            send_tagged_no(cmd.tag, "%s failed - %s", cmd.name, $!)
-            @logger.error("#{$!.class}: #{$!}")
-            for line in $@
-              @logger.error("  #{line}")
+            if @config["profile"] && cmd.name != "IDLE"
+              profile(cmd) do
+                cmd.exec
+              end
+            else
+              cmd.exec
             end
+          rescue StandardError => e
+            raise if @@test
+            send_tagged_no(cmd.tag, "%s failed - %s", cmd.name, e)
+            @logger.log_exception(e)
           end
-          @logger.debug("sent #{cmd.name} response to #{@peeraddr}")
-        rescue TerminateException
-          send_data("BYE IMAP server terminating connection")
-          break
+          @logger.debug("processed #{cmd.tag} #{cmd.name} from #{@peeraddr}")
         end
+      rescue Timeout::Error
+        @logger.info("autologout #{@peeraddr}")
+        send_data("BYE Autologout; idle for too long")
+      rescue TerminateException
+        send_data("BYE IMAP server terminating connection")
       end
       synchronize do
-        @mail_store.close if @mail_store
+        sync
         @sock.close
         @logger.info("disconnect from #{@peeraddr}")
       end
@@ -1534,26 +2378,30 @@ class Ximapd
     end
 
     def login
-      @mail_store = MailStore.new(@config)
       @state = AUTHENTICATED_STATE
+      @max_idle_seconds = AUTEHNTICATED_MAX_IDLE_SECONDS
     end
 
     def select(mailbox)
       @current_mailbox = mailbox
-      @examine = false
-      @mail_store.read_only = false
+      @read_only = false
       @state = SELECTED_STATE
     end
 
     def examine(mailbox)
       @current_mailbox = mailbox
-      @examine = true
-      @mail_store.read_only = true
+      @read_only = true
       @state = SELECTED_STATE
     end
 
-    def examine?
-      return @examine
+    def get_current_mailbox
+      @mail_store.mailbox_db.transaction(true) do
+        return @mail_store.get_mailbox(@current_mailbox)
+      end
+    end
+
+    def read_only?
+      return @read_only
     end
 
     def close_mailbox
@@ -1562,34 +2410,43 @@ class Ximapd
     end
 
     def sync
-      @mail_store.sync if @mail_store
+      @mail_store.write_last_peeked_uids
     end
 
     def recv_line
-      s = @sock.gets("\r\n")
-      return s if s.nil?
-      line = s.sub(/\r\n\z/n, "")
-      @logger.debug(line.gsub(/^/n, "C: ")) if @config["debug"]
-      return line
+      timeout(@max_idle_seconds) do
+        s = @sock.gets
+        return s if s.nil?
+        line = s.sub(/\r\n\z/n, "")
+        @logger.debug(line.gsub(/^/n, "C: ")) if @config["debug"]
+        return line
+      end
     end
 
     def recv_cmd
-      buf = ""
-      loop do
-        s = @sock.gets("\r\n")
-        break unless s
-        buf.concat(s)
-        if /\{(\d+)\}\r\n/n =~ s
-          send_continue_req("Ready for additional command text")
-          s = @sock.read($1.to_i)
+      timeout(@max_idle_seconds) do
+        buf = ""
+        loop do
+          s = @sock.gets
+          break unless s
+          s.gsub!(/\r?\n\z/, "\r\n")
           buf.concat(s)
-        else
-          break
+          if len = s.slice(/\{(\d+)\}\r\n/n, 1)
+            send_continue_req("Ready for additional command text")
+            n = len.to_i
+            while n > 0
+              tmp = @sock.read(n)
+              n -= tmp.length
+              buf.concat(tmp)
+            end
+          else
+            break
+          end
         end
+        return nil if buf.length == 0
+        @logger.debug(buf.gsub(/^/n, "C: ")) if @config["debug"]
+        return @parser.parse(buf)
       end
-      return nil if buf.length == 0
-      @logger.debug(buf.gsub(/^/n, "C: ")) if @config["debug"]
-      return @parser.parse(buf)
     end
 
     def send_line(line)
@@ -1631,22 +2488,58 @@ class Ximapd
       send_data("BAD " + fmt, *args)
     end
 
+    def send_preauth(fmt, *args)
+      send_data("PREAUTH " + fmt, *args)
+    end
+
     def send_continue_req(fmt, *args)
       msg = format(fmt, *args)
       send_line("+ " + msg)
     end
 
-    def synchronize
-      @monitor.enter
-      if @mail_store
-        @mail_store.lock
-        mail_store_locked = true
+    def synchronize(&block)
+      @mail_store.synchronize(&block)
+    end
+
+    private
+
+    def profile(cmd)
+      begin
+        Prof.start
+      rescue
+        return yield
       end
       begin
         yield
       ensure
-        mail_store.unlock if mail_store_locked
-        @monitor.exit
+        result = Prof.stop
+        total = result.detect { |i|
+          i.method_class.nil? && i.method_id == :"#toplevel"
+        }.total_time
+        if total == 0.0
+          total = 0.001
+        end
+        sum = 0
+        path = File.expand_path("profile.log", @config["data_dir"])
+        File.open(path, "a") do |f|
+          f.printf(">>> %s %s\n", cmd.tag, cmd.name)
+          f.print("  %%   cumulative   self              self     total\n")
+          f.print(" time   seconds   seconds    calls  ms/call  ms/call  name\n")
+          for r in result
+            sum += r.self_time
+            if r.method_class.nil?
+              name = r.method_id.to_s
+            elsif r.method_class.is_a?(Class)
+              name = r.method_class.to_s + "#" + r.method_id.to_s
+            else
+              name = r.method_class.to_s + "." + r.method_id.to_s
+            end
+            f.printf("%6.2f %8.3f  %8.3f %8d %8.2f %8.2f  %s\n",
+                     r.self_time / total * 100, sum, r.self_time, r.count,
+                     r.self_time * 1000 / r.count, r.total_time * 1000 / r.count,
+                     name)
+          end
+        end
       end
     end
   end
@@ -1965,7 +2858,7 @@ class Ximapd
 
     def status_att
       att = atom.upcase
-      if !/\A(MESSAGES|RECENT|UIDNEXT|UIDVALIDITY|UNSEEN)\z/.match(att)
+      unless /\A(MESSAGES|RECENT|UIDNEXT|UIDVALIDITY|UNSEEN)\z/.match(att)
         parse_error("unknown att `%s'", att)
       end
       return att
@@ -2048,8 +2941,15 @@ class Ximapd
     end
 
     def search_key(charset)
+      token = lookahead
+      if /\A(\d+|\*)/.match(token.value)
+        return UidSearchKey.new(sequence_set)
+      end
       name = tokens([T_ATOM, T_NUMBER, T_NIL, T_PLUS, T_STAR])
-      case name
+      case name.upcase
+      when "UID"
+        match(T_SPACE)
+        return UidSearchKey.new(sequence_set)
       when "BODY"
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
@@ -2060,35 +2960,58 @@ class Ximapd
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
         return HeaderSearchKey.new(header_name, s)
+      when "SUBJECT"
+        match(T_SPACE)
+        s = Iconv.conv("utf-8", charset, astring)
+        return HeaderSearchKey.new("subject", s)
+      when "FROM"
+        match(T_SPACE)
+        s = Iconv.conv("utf-8", charset, astring)
+        return HeaderSearchKey.new("from", s)
+      when "TO"
+        match(T_SPACE)
+        s = Iconv.conv("utf-8", charset, astring)
+        return HeaderSearchKey.new("to", s)
+      when "CC"
+        match(T_SPACE)
+        s = Iconv.conv("utf-8", charset, astring)
+        return HeaderSearchKey.new("cc", s)
+      when "BCC"
+        match(T_SPACE)
+        s = Iconv.conv("utf-8", charset, astring)
+        return HeaderSearchKey.new("bcc", s)
       when "ANSWERED"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Answered")
+        return FlagSearchKey.new(@session.mail_store, "\\Answered")
       when "DELETED"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Deleted")
+        return FlagSearchKey.new(@session.mail_store, "\\Deleted")
       when "DRAFT"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Draft")
+        return FlagSearchKey.new(@session.mail_store, "\\Draft")
       when "FLAGGED"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Flagged")
+        return FlagSearchKey.new(@session.mail_store, "\\Flagged")
       when "RECENT", "NEW"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Recent")
+        return FlagSearchKey.new(@session.mail_store, "\\Recent")
       when "SEEN"
-        return FlagSearchKey.new(@session.mail_store.flags_db, "\\Seen")
+        return FlagSearchKey.new(@session.mail_store, "\\Seen")
+      when "KEYWORD"
+        match(T_SPACE)
+        flag = atom
+        return KeywordSearchKey.new(@session.mail_store, flag)
       when "UNANSWERED"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Answered")
+        return NoFlagSearchKey.new(@session.mail_store, "\\Answered")
       when "UNDELETED"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Deleted")
+        return NoFlagSearchKey.new(@session.mail_store, "\\Deleted")
       when "UNDRAFT"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Draft")
+        return NoFlagSearchKey.new(@session.mail_store, "\\Draft")
       when "UNFLAGGED"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Flagged")
+        return NoFlagSearchKey.new(@session.mail_store, "\\Flagged")
       when "UNSEEN"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Seen")
+        return NoFlagSearchKey.new(@session.mail_store, "\\Seen")
       when "OLD"
-        return NoFlagSearchKey.new(@session.mail_store.flags_db, "\\Recent")
-      when /\A(\d+|\*)\z/
-        return UidSearchKey.new(parse_seq_number($1))
-      when /\A(\d+|\*):(\d+|\*)\z/
-        return UidRangeSearchKey.new(parse_seq_number($1),
-                                     parse_seq_number($2))
+        return NoFlagSearchKey.new(@session.mail_store, "\\Recent")
+      when "UNKEYWORD"
+        match(T_SPACE)
+        flag = atom
+        return NoKeywordSearchKey.new(@session.mail_store, flag)
       when "NOT"
         match(T_SPACE)
         return NotSearchKey.new(search_key(charset))
@@ -2302,7 +3225,7 @@ class Ximapd
 
     def flag
       result = atom
-      if !EXACT_FLAG_REGEXP.match(s)
+      unless EXACT_FLAG_REGEXP.match(s)
         parse_error("invalid flag")
       end
       return result
@@ -2490,7 +3413,7 @@ class Ximapd
           elsif $16
             return Token.new(T_EOF, $+)
           else
-            parse_error("[Net::IMAP BUG] BEG_REGEXP is invalid")
+            parse_error("[ximapd BUG] BEG_REGEXP is invalid")
           end
         else
           @str.index(/\S*/n, @pos)
@@ -2518,7 +3441,7 @@ class Ximapd
           elsif $7
             return Token.new(T_RPAR, $+)
           else
-            parse_error("[Net::IMAP BUG] BEG_REGEXP is invalid")
+            parse_error("[ximapd BUG] BEG_REGEXP is invalid")
           end
         else
           @str.index(/\S*/n, @pos)
@@ -2530,7 +3453,7 @@ class Ximapd
           if $1
             return Token.new(T_TEXT, $+)
           else
-            parse_error("[Net::IMAP BUG] TEXT_REGEXP is invalid")
+            parse_error("[ximapd BUG] TEXT_REGEXP is invalid")
           end
         else
           @str.index(/\S*/n, @pos)
@@ -2544,7 +3467,7 @@ class Ximapd
           elsif $2
             return Token.new(T_TEXT, $+)
           else
-            parse_error("[Net::IMAP BUG] RTEXT_REGEXP is invalid")
+            parse_error("[ximapd BUG] RTEXT_REGEXP is invalid")
           end
         else
           @str.index(/\S*/n, @pos)
@@ -2556,7 +3479,7 @@ class Ximapd
           if $1
             return Token.new(T_TEXT, $+)
           else
-            parse_error("[Net::IMAP BUG] CTEXT_REGEXP is invalid")
+            parse_error("[ximapd BUG] CTEXT_REGEXP is invalid")
           end
         else
           @str.index(/\S*/n, @pos) #/
@@ -2596,6 +3519,8 @@ class Ximapd
     def session=(session)
       @session = session
       @config = session.config
+      @mail_store = session.mail_store
+      @logger = @config["logger"]
     end
 
     def send_tagged_ok(code = nil)
@@ -2647,6 +3572,9 @@ class Ximapd
 
   class LogoutCommand < Command
     def exec
+      @session.synchronize do
+        @session.sync
+      end
       @session.send_data("BYE IMAP server terminating connection")
       send_tagged_ok
       @session.logout
@@ -2724,17 +3652,18 @@ class Ximapd
       begin
         status = nil
         @session.synchronize do
-          status = @session.mail_store.get_mailbox_status(@mailbox_name)
+          status = @mail_store.get_mailbox_status(@mailbox_name,
+                                                  @session.read_only?)
         end
         @session.send_data("%d EXISTS", status.messages)
         @session.send_data("%d RECENT", status.recent)
         @session.send_ok("[UIDVALIDITY %d] UIDs valid", status.uidvalidity)
         @session.send_ok("[UIDNEXT %d] Predicted next UID", status.uidnext)
         @session.send_data("FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
-        @session.send_ok("[PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited")
+        @session.send_ok("[PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited")
         send_tagged_response
-      rescue MailboxError
-        @session.send_tagged_no(@tag, "%s", $!)
+      rescue MailboxError => e
+        @session.send_tagged_no(@tag, "%s", e)
       end
     end
 
@@ -2750,6 +3679,7 @@ class Ximapd
 
     def send_tagged_response
       @session.synchronize do
+        #@session.sync
         @session.select(@mailbox_name)
       end
       send_tagged_ok("READ-WRITE")
@@ -2761,6 +3691,7 @@ class Ximapd
 
     def send_tagged_response
       @session.synchronize do
+        #@session.sync
         @session.examine(@mailbox_name)
       end
       send_tagged_ok("READ-ONLY")
@@ -2775,7 +3706,7 @@ class Ximapd
     def exec
       begin
         @session.synchronize do
-          @session.mail_store.create_mailbox(@mailbox_name)
+          @mail_store.create_mailbox(@mailbox_name)
         end
         send_tagged_ok
       rescue InvalidQueryError
@@ -2795,7 +3726,7 @@ class Ximapd
         return
       end
       @session.synchronize do
-        @session.mail_store.delete_mailbox(@mailbox_name)
+        @mail_store.delete_mailbox(@mailbox_name)
       end
       send_tagged_ok
     end
@@ -2814,11 +3745,15 @@ class Ximapd
       end
       begin
         @session.synchronize do
-          @session.mail_store.rename_mailbox(@mailbox_name, @new_mailbox_name)
+          @mail_store.rename_mailbox(@mailbox_name, @new_mailbox_name)
         end
         send_tagged_ok
       rescue InvalidQueryError
         @session.send_tagged_no(@tag, "invalid query")
+      rescue MailboxExistError
+        @session.send_tagged_no(@tag, "mailbox already exists")
+      rescue NoMailboxError
+        @session.send_tagged_no(@tag, "mailbox does not exist")
       end
     end
   end
@@ -2832,7 +3767,7 @@ class Ximapd
     end
 
     def exec
-      if !@reference_name.empty?
+      unless @reference_name.empty?
         @session.send_tagged_no(@tag, "%s failed", @name)
         return
       end
@@ -2854,7 +3789,7 @@ class Ximapd
       re = Regexp.new("\\A" + pat + "\\z", nil, "n")
       mailboxes = nil
       @session.synchronize do
-        mailboxes = @session.mail_store.mailboxes.to_a.select { |mbox_name,|
+        mailboxes = @mail_store.mailboxes.to_a.select { |mbox_name,|
           re.match(mbox_name)
         }
       end
@@ -2877,7 +3812,8 @@ class Ximapd
     def exec
       status = nil
       @session.synchronize do
-        status = @session.mail_store.get_mailbox_status(@mailbox_name)
+        status = @mail_store.get_mailbox_status(@mailbox_name,
+                                                @session.read_only?)
       end
       s = @atts.collect { |att|
         format("%s %d", att, status.send(att.downcase))
@@ -2897,8 +3833,7 @@ class Ximapd
 
     def exec
       @session.synchronize do
-        @session.mail_store.import_mail(@message, @mailbox_name,
-                                        @flags.join(" "))
+        @mail_store.import_mail(@message, @mailbox_name, @flags.join(" "))
       end
       send_tagged_ok
     end
@@ -2906,9 +3841,16 @@ class Ximapd
 
   class IdleCommand < Command
     def exec
-      @session.sync
       @session.send_continue_req("Waiting for DONE")
-      line = @session.recv_line
+      @session.synchronize do
+        @session.sync
+        @mail_store.mailbox_db.transaction do
+          for plugin in @mail_store.plugins
+            plugin.on_idle
+          end
+        end
+      end
+      @session.recv_line
       send_tagged_ok
     end
   end
@@ -2916,12 +3858,13 @@ class Ximapd
   class CloseCommand < Command
     def exec
       @session.synchronize do
-        mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
-        mails.each do |mail|
-          if /\\Deleted\b/ni.match(mail.flags(false))
-            mail.delete
-          end
-        end
+        @session.sync
+        mailbox = @session.get_current_mailbox
+        mails = mailbox.fetch([1..-1])
+        deleted_mails = mails.select { |mail|
+          /\\Deleted\b/ni.match(mail.flags(false))
+        }
+        @mail_store.delete_mails(deleted_mails)
       end
       @session.close_mailbox
       send_tagged_ok
@@ -2930,20 +3873,21 @@ class Ximapd
 
   class ExpungeCommand < Command
     def exec
-      mails = nil
+      deleted_seqnos = nil
       @session.synchronize do
-        mails = @session.mail_store.fetch(@session.current_mailbox, [1..-1])
+        @session.sync
+        mailbox = @session.get_current_mailbox
+        mails = mailbox.fetch([1..-1])
+        deleted_mails = mails.select { |mail|
+          /\\Deleted\b/ni.match(mail.flags(false))
+        }.reverse
+        deleted_seqnos = deleted_mails.collect { |mail|
+          mail.seqno
+        }
+        @mail_store.delete_mails(deleted_mails)
       end
-      seqno = mails.length
-      mails.reverse_each do |mail|
-        mail = mails[seqno - 1]
-        if /\\Deleted\b/ni.match(mail.flags(false))
-          @session.synchronize do
-            mail.delete
-          end
-          @session.send_data("%d EXPUNGE", seqno)
-        end
-        seqno -= 1
+      for seqno in deleted_seqnos
+        @session.send_data("%d EXPUNGE", seqno)
       end
       send_tagged_ok
     end
@@ -2958,12 +3902,14 @@ class Ximapd
       query = @keys.collect { |key| key.to_query }.reject { |q|
         q.empty?
       }.join(" ")
+      query = "uid > 0 " + query if /\A\s*!/ =~ query
       uids = nil
       @session.synchronize do
-        uids = @session.mail_store.uid_search(@session.current_mailbox, query)
-      end
-      for key in @keys
-        uids = key.select(uids)
+        mailbox = @session.get_current_mailbox
+        uids = mailbox.uid_search(query)
+        for key in @keys
+          uids = key.select(uids)
+        end
       end
       if uids.empty?
         @session.send_data("SEARCH")
@@ -2980,6 +3926,10 @@ class Ximapd
     end
 
     def select(uids)
+      return uids
+    end
+
+    def reject(uids)
       return uids
     end
   end
@@ -3004,7 +3954,7 @@ class Ximapd
 
     def to_query
       case @name
-      when "subject", "from", "to", "cc"
+      when "subject", "from", "to", "cc", "bcc"
         return format("%s : %s", @name, quote_query(@value))
       when "x-ml-name", "x-mail-count"
         return format("%s = %s", @name, quote_query(@value))
@@ -3015,60 +3965,83 @@ class Ximapd
   end
 
   class FlagSearchKey < NullSearchKey
-    def initialize(flags_db, flag)
-      @flags_db = flags_db
+    def initialize(mail_store, flag)
+      @mail_store = mail_store
       @flag_re = Regexp.new(Regexp.quote(flag) + "\\b", true, "n")
     end
 
     def select(uids)
       return uids.select { |uid|
-        @flag_re.match(@flags_db[uid])
+        @flag_re.match(@mail_store.flags_db[uid.to_s])
+      }
+    end
+
+    def reject(uids)
+      return uids.reject { |uid|
+        @flag_re.match(@mail_store.flags_db[uid.to_s])
       }
     end
   end
 
   class NoFlagSearchKey < FlagSearchKey
+    alias super_select select
+    alias super_reject reject
+    alias select super_reject
+    alias reject super_select
+  end
+
+  class KeywordSearchKey < NullSearchKey
+    def initialize(mail_store, flag)
+      @mail_store = mail_store
+      if /\A\w/n.match(flag)
+        s = "\\b"
+      else
+        s = ""
+      end
+      @flag_re = Regexp.new(s + Regexp.quote(flag) + "\\b", true, "n")
+    end
+
     def select(uids)
       return uids.select { |uid|
-        !@flag_re.match(@flags_db[uid])
+        @flag_re.match(@mail_store.flags_db[uid.to_s])
+      }
+    end
+
+    def reject(uids)
+      return uids.reject { |uid|
+        @flag_re.match(@mail_store.flags_db[uid.to_s])
       }
     end
   end
 
-  class UidSearchKey < NullSearchKey
-    def initialize(uid)
-      @uid = uid
-    end
-
-    def to_query
-      if @uid == -1
-        return ""
-      else
-        return format("uid = %d", @uid)
-      end
-    end
-
-    def select(uids)
-      if @uid == -1
-        return [uids.sort.last]
-      else
-        return uids
-      end
-    end
+  class NoKeywordSearchKey < KeywordSearchKey
+    alias super_select select
+    alias super_reject reject
+    alias select super_reject
+    alias reject super_select
   end
 
-  class UidRangeSearchKey < NullSearchKey
-    def initialize(first, last)
-      @first = first
-      @last = last
+  class UidSearchKey < NullSearchKey
+    def initialize(sequence_set)
+      @sequence_set = sequence_set
     end
 
     def to_query
-      if @last == -1
-        return format("uid >= %d", @first)
-      else
-        return format("%d <= uid <= %d", @first, @last)
+      if @sequence_set.empty?
+        return ""
       end
+      return "( " + @sequence_set.collect { |i|
+        case i
+        when Range
+          if i.last == -1
+            format("uid >= %d", i.first)
+          else
+            format("%d <= uid <= %d", i.first, i.last)
+          end
+        else
+          format("uid = %d", i)
+        end
+      }.join(" | ") + " )"
     end
   end
 
@@ -3087,8 +4060,11 @@ class Ximapd
     end
 
     def select(uids)
-      rejected = @key.select(uids)
-      return uids - rejected
+      return @key.reject(uids)
+    end
+
+    def reject(uids)
+      return @key.select(uids)
     end
   end
 
@@ -3101,13 +4077,16 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mails = @session.mail_store.fetch(@session.current_mailbox,
-                                          @sequence_set)
+        mailbox = @session.get_current_mailbox
+        mails = mailbox.fetch(@sequence_set)
       end
       for mail in mails
-        data = @atts.collect { |att|
-          att.fetch(mail)
-        }.join(" ")
+        data = nil
+        @session.synchronize do
+          data = @atts.collect { |att|
+            att.fetch(mail)
+          }.join(" ")
+        end
         @session.send_data("%d FETCH (%s)", mail.seqno, data)
       end
       send_tagged_ok
@@ -3117,7 +4096,7 @@ class Ximapd
   class UidFetchCommand < FetchCommand
     def initialize(sequence_set, atts)
       super(sequence_set, atts)
-      if !@atts[0].kind_of?(UidFetchAtt)
+      unless @atts[0].kind_of?(UidFetchAtt)
         @atts.unshift(UidFetchAtt.new)
       end
     end
@@ -3125,13 +4104,16 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mails = @session.mail_store.uid_fetch(@session.current_mailbox,
-                                              @sequence_set)
+        mailbox = @session.get_current_mailbox
+        mails = mailbox.uid_fetch(@sequence_set)
       end
       for mail in mails
-        data = @atts.collect { |att|
-          att.fetch(mail)
-        }.join(" ")
+        data = nil
+        @session.synchronize do
+          data = @atts.collect { |att|
+            att.fetch(mail)
+          }.join(" ")
+        end
         @session.send_data("%d FETCH (%s)", mail.uid, data)
       end
       send_tagged_ok
@@ -3154,9 +4136,8 @@ class Ximapd
     include DataFormat
 
     def fetch(mail)
-      datetime = DateTime.strptime(mail.internal_date)
-      return format("INTERNALDATE %s",
-                    quoted(datetime.strftime("%d-%b-%Y %H:%M:%S %z")))
+      indate = mail.internal_date.strftime("%d-%b-%Y %H:%M:%S %z")
+      return format("INTERNALDATE %s", quoted(indate))
     end
   end
 
@@ -3215,25 +4196,30 @@ class Ximapd
     end
 
     def fetch(mail)
-      if @section.nil? ||
-        (@section.text.nil? &&
-         (@section.part.nil? || @section.part == "1") &&
-         !mail.multipart?)
+      if @section.nil? || @section.text.nil?
         if @section.nil?
           part = ""
         else
           part = @section.part
         end
         if @partial.nil?
-          result = format("BODY[%s] %s", part, literal(mail.to_s))
+          if mail.multipart? && (part.to_i >= 1)
+            result = format("BODY[%s] %s", part, literal(mail.part(part.to_i)))
+          else
+            result = format("BODY[%s] %s", part, literal(mail.to_s))
+          end
         else
-          s = mail.to_s[@partial.offset, @partial.size] 
+          if mail.multipart? && (part.to_i >= 1)
+            s = mail.part(part.to_i)[@partial.offset, @partial.size]
+          else
+            s = mail.to_s[@partial.offset, @partial.size]
+          end
           result = format("BODY[%s]<%d> %s",
                           part, @partial.offset, literal(s))
         end
         unless @peek
           flags = mail.flags(false)
-          if !/\\Seen\b/ni.match(flags)
+          unless /\\Seen\b/ni.match(flags)
             if flags.empty?
               flags = "\\Seen"
             else
@@ -3246,6 +4232,10 @@ class Ximapd
         return result
       end
       case @section.text
+      when "MIME"
+        part = @section.part
+        s = mail.mime(part.to_i)
+        return format("BODY[%d.MIME] %s", part, literal(s))
       when "HEADER"
         return format("BODY[HEADER] %s", literal(mail.header))
       when "HEADER.FIELDS"
@@ -3270,16 +4260,19 @@ class Ximapd
     def exec
       mails = nil
       @session.synchronize do
-        mails = @session.mail_store.uid_fetch(@session.current_mailbox,
-                                              @sequence_set)
+        mailbox = @session.get_current_mailbox
+        mails = mailbox.uid_fetch(@sequence_set)
       end
-      if !@session.examine?
+      unless @session.read_only?
         for mail in mails
+          flags = nil
           @session.synchronize do
             @att.store(mail)
+            flags = mail.flags
           end
-          if !@att.silent?
-            @session.send_data("%d FETCH (FLAGS (%s))", mail.uid, mail.flags)
+          unless @att.silent?
+            @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
+                               mail.uid, flags, mail.uid)
           end
         end
       end
@@ -3328,13 +4321,25 @@ class Ximapd
 
     def exec
       mails = nil
+      dest_mailbox = nil
       @session.synchronize do
-        mails = @session.mail_store.uid_fetch(@session.current_mailbox,
-                                              @sequence_set)
+        mailbox = @session.get_current_mailbox
+        mails = mailbox.uid_fetch(@sequence_set)
+        @mail_store.mailbox_db.transaction(true) do
+          dest_mailbox = @mail_store.get_mailbox(@mailbox_name)
+        end
       end
       for mail in mails
         @session.synchronize do
-          @session.mail_store.import_mail(mail.to_s, @mailbox_name)
+          for plugin in @mail_store.plugins
+            plugin.on_copy(mail, dest_mailbox)
+          end
+          uid = @mail_store.import_mail(mail.to_s, dest_mailbox.name,
+                                        mail.flags(false), mail.internal_date)
+          dest_mail = dest_mailbox.get_mail(uid)
+          for plugin in @mail_store.plugins
+            plugin.on_copied(mail, dest_mail)
+          end
         end
       end
       send_tagged_ok
@@ -3349,10 +4354,125 @@ class Ximapd
   class NotSelectableMailboxError < MailboxError; end
   class InvalidQueryError < StandardError; end
 
+  class Plugin
+    @@directories = nil
+    @@loaded = false
+
+    def self.directories=(dirs)
+      @@directories = dirs
+    end
+
+    def self.create_plugins(config, mail_store)
+      return [] unless config.key?("plugins")
+      if !@@loaded && @@directories
+        logger = config["logger"]
+        for plugin in config["plugins"]
+          basename = plugin["name"].downcase + ".rb"
+          filename = @@directories.collect { |dir|
+            File.expand_path(basename, dir)
+          }.detect { |filename| File.exist?(filename) }
+          raise "#{basename} not found" unless filename
+          File.open(filename) do |f|
+            Ximapd.class_eval(f.read)
+          end
+          logger.debug("loaded plugin: #{filename}")
+        end
+        @@loaded = true
+      end
+      return config["plugins"].collect { |plugin|
+        Ximapd.const_get(plugin["name"]).new(plugin, mail_store,
+                                             config["logger"])
+      }
+    end
+
+    def initialize(config, mail_store, logger)
+      @config = config
+      @mail_store = mail_store
+      @logger = logger
+      init_plugin
+    end
+
+    def init_plugin
+    end
+
+    def filter(mail)
+      return nil
+    end
+
+    def on_copy(src_mail, dest_mailbox)
+    end
+
+    def on_copied(src_mail, dest_mail)
+    end
+
+    def on_delete_mail(mail)
+    end
+
+    def on_idle
+    end
+  end
+
+  class ConsoleSocket
+    [:read, :gets, :getc].each do |mid|
+      define_method(mid) do |*args|
+        STDIN.send(mid, *args)
+      end
+    end
+
+    [:write, :print].each do |mid|
+      define_method(mid) do |*args|
+        STDOUT.send(mid, *args)
+      end
+    end
+
+    def peeraddr
+      return ["AF_TTY", 0, "tty", "tty"]
+    end
+
+    def shutdown
+    end
+
+    def close
+      STDIN.close
+      STDOUT.close
+    end
+
+    def fcntl(cmd, arg)
+    end
+  end
+
+  class NullObject
+    def initialize(*args)
+    end
+
+    def method_missing(mid, *args)
+      return self
+    end
+
+    def self.method_missing(mid, *args)
+      return new
+    end
+  end
+
+  begin
+    require "progressbar"
+  rescue LoadError
+    class ProgressBar < NullObject
+      VERSION = "not available"
+    end
+  end
+
   class Option
-    def initialize(name, description)
-      @name = name
-      @description = description
+    def initialize(*args)
+      case args.length
+      when 2
+        @name, @description = *args
+        @arg_name = nil
+      when 3
+        @name, @arg_name, @description = *args
+      else
+        raise ArgumentError.new("wrong # of arguments (#{args.length} for 2)")
+      end
     end
 
     def opt_name
@@ -3360,7 +4480,10 @@ class Ximapd
     end
 
     def arg_name
-      return @name.slice(/[a-z]*\z/ni).upcase
+      if @arg_name.nil?
+        @arg_name = @name.slice(/[a-z]*\z/ni).upcase
+      end
+      return @arg_name
     end
   end
 
@@ -3417,7 +4540,9 @@ class Ximapd
     StringOption.new("user", "user"),
     StringOption.new("password", "password"),
     StringOption.new("data_dir", "data directory"),
+    StringOption.new("plugin_path", "path for plugins"),
     StringOption.new("db_type", "database type (yaml, pstore)"),
+    IntOption.new("max_clients", "max number of clients"),
     BoolOption.new("ssl", "use SSL"),
     StringOption.new("ssl_key", "path to SSL private key"),
     StringOption.new("ssl_cert", "path to SSL certificate"),
@@ -3427,11 +4552,14 @@ class Ximapd
     StringOption.new("remote_auth", "auth type of remote IMAP server"),
     StringOption.new("remote_user", "user of remote IMAP server"),
     StringOption.new("remote_password", "password of remote IMAP server"),
+    StringOption.new("exclude", "PAT", "exclude files that match PAT"),
     BoolOption.new("import_all", "import all mails by --import-imap"),
     BoolOption.new("import_imap_flags", "import IMAP flags by --import-imap"),
+    BoolOption.new("keep", "keep retrieved mails on the remote server"),
     StringOption.new("dest_mailbox", "destination mailbox name"),
     ArrayOption.new("ml_header_fields",
                     "header fields to handle same as X-ML-Name"),
+    BoolOption.new("delete_ml_mailboxes", "delete ml mailboxes before rebuild"),
     StringOption.new("default_charset", "default value for charset"),
     StringOption.new("log_level",
                      "log level (fatal, error, warn, info, debug)"),
@@ -3440,7 +4568,10 @@ class Ximapd
     IntOption.new("sync_threshold_chars",
                   "number of characters to start index sync"),
     BoolOption.new("debug", "turn on debug mode"),
+    BoolOption.new("profile", "turn on profile mode"),
+    StringOption.new("profiler_clock_mode", "profiler clock mode"),
     BoolOption.new("verbose", "turn on verbose mode"),
+    BoolOption.new("progress", "show progress"),
   ]
 
   ACTIONS = [
@@ -3449,12 +4580,16 @@ class Ximapd
     Action.new("import", "import mail"),
     Action.new("import_mbox", "import mbox"),
     Action.new("import_imap", "import from another imap server"),
+    Action.new("rebuild_index", "rebuild index"),
+    Action.new("edit_mailbox_db", "edit mailbox.db"),
+    Action.new("interactive", "interactive mode"),
     Action.new("version", "print version"),
     Action.new("help", "print this message"),
   ]
 end
 
 if $0 == __FILE__
+  File.umask(0077)
   imapd = Ximapd.new
   imapd.run(ARGV)
 end

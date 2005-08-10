@@ -23,16 +23,45 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-require "test/unit"
-
-runner = Test::Unit::AutoRunner.new(true)
-if !runner.process_args(ARGV)
-  runner.to_run << File.dirname(__FILE__)
+class Expirer < Plugin
+  def on_idle
+    expired_mailboxes = Set.new
+    for pattern, limit in @config["expires"]
+      re = Regexp.new(pattern, nil, "u")
+      mboxes = @mail_store.mailbox_db["mailboxes"].keys.select { |mailbox_name|
+        re.match(mailbox_name) && !expired_mailboxes.include?(mailbox_name)
+      }
+      for mailbox_name in mboxes
+        mailbox = @mail_store.get_mailbox(mailbox_name)
+        count = mailbox.expire_by_date(limit["days"])
+        if count > 0
+          @logger.info("expired #{count} mails in #{mailbox_name}")
+        end
+        expired_mailboxes.add(mailbox_name)
+      end
+    end
+  end
 end
-if runner.pattern.empty?
-  runner.pattern = [/-test\.rb\z/]
-end
-runner.exclude.push(/\b\.svn\b/)
-exit runner.run
 
-# vim: set filetype=ruby expandtab sw=2 :
+class Mailbox
+  def expire_by_date(days)
+    return 0
+  end
+end
+
+class StaticMailbox
+  def expire_by_date(days)
+    limit_date = Time.now - days * 24 * 60 * 60
+    uids = get_uids
+    count = 0
+    for uid in uids
+      mail = StaticMail.new(@config, self, uid, uid)
+      break if mail.internal_date >= limit_date
+      if /\\Seen\b/ni.match(mail.flags(false))
+        mail.delete
+        count += 1
+      end
+    end
+    return count
+  end
+end

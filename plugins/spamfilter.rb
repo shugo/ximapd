@@ -23,16 +23,47 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-require "test/unit"
+class SpamFilter < Plugin
+  def init_plugin
+    begin
+      @mail_store.get_mailbox("spam")
+    rescue NoMailboxError
+      mailbox_class = Ximapd.const_get(@config["spam_mailbox_class"] ||
+                                       "StaticMailbox")
+      mailbox = mailbox_class.new(@mail_store, "spam", "flags" => "")
+      mailbox.save
+      @logger.info("mailbox created: spam")
+    end
+  end
 
-runner = Test::Unit::AutoRunner.new(true)
-if !runner.process_args(ARGV)
-  runner.to_run << File.dirname(__FILE__)
-end
-if runner.pattern.empty?
-  runner.pattern = [/-test\.rb\z/]
-end
-runner.exclude.push(/\b\.svn\b/)
-exit runner.run
+  def filter(mail)
+    IO.popen("bsfilter", "w") do |bsfilter|
+      bsfilter.print(mail)
+    end
+    if $?.exitstatus == 0
+      @logger.debug("spam: uid=#{mail.uid}")
+      return "spam"
+    else
+      @logger.debug("clean: uid=#{mail.uid}")
+      return nil
+    end
+  end
 
-# vim: set filetype=ruby expandtab sw=2 :
+  def on_copied(src_mail, dest_mail)
+    if dest_mail.mailbox.name == "spam"
+      @logger.info("added to the spam token database: uid=#{src_mail.uid}")
+      IO.popen("bsfilter --add-spam --update", "w") do |bsfilter|
+        bsfilter.print(src_mail)
+      end
+    end
+  end
+
+  def on_delete_mail(mail)
+    if mail.mailbox.name == "spam"
+      @logger.info("added to the clean token database: uid=#{mail.uid}")
+      IO.popen("bsfilter --add-clean --update", "w") do |bsfilter|
+        bsfilter.print(mail)
+      end
+    end
+  end
+end

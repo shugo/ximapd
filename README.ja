@@ -8,8 +8,7 @@ ximapdは実験的なIMAPデーモンです。
 
 * Ruby 1.8.2 以降
 * Rast 0.0.1 以降
-* Ruby interface for BDB 0.5.4 以降
-* TMail 0.10.8 以降
+* RubyMail 0.17 以降
 
 == Subversionレポジトリ
 
@@ -23,13 +22,13 @@ http://projects.netlab.jp/svn/ximapd/trunkから最新のソースコードを取得できます。
 
 == インストール
 
-ximapdをPATHにコピーしてください。
+bin/ximapdをPATHにコピーしてください。
 
 == セットアップ
 
-(1) sample.ximapdを~/.ximapdにコピーしてください。
+(1) examples/dot.ximapdを~/.ximapdにコピーしてください。
 
-      $ cp sample.ximapd ~/.ximapd
+      $ cp examples/dot.ximapd ~/.ximapd
 
 (2) ~/.ximapdを編集してください。
 
