@@ -1666,6 +1666,8 @@ A015 UID FETCH 2 BODY\r
 A016 UID FETCH 2 BODY[1]\r
 A017 UID FETCH 2 BODY[2]\r
 A018 UID FETCH 2 BODY[1]<5.10>\r
+A019 UID FETCH 2 BODY[1.MIME]\r
+A020 UID FETCH 2 BODY[2.MIME]\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
@@ -1771,6 +1773,14 @@ EOF
     assert_equal("ello.txt.\r", sock.output.read(10))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A018 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY[1.MIME] {79}\r\n", sock.output.gets)
+    assert_equal("Content-Type: text/plain; charset=US-ASCII\r\nContent-Transfer-Encoding: 7bit\r\n\r\n", sock.output.read(79))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A019 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY[2.MIME] {136}\r\n", sock.output.gets)
+    assert_equal("Content-Type: text/plain;\r\n name=\"hello.txt\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: inline;\r\n filename=\"hello.txt\"\r\n\r\n", sock.output.read(136))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A020 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
