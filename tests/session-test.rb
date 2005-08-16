@@ -1591,7 +1591,7 @@ Hello world
 EOF
     uid1 = mail_store.import_mail(mail1)
     mail1_without_unix_from = mail1.sub(/\AFrom.*\n/, "")
-    mail2= <<EOF.gsub(/\n/, "\r\n")
+    mail2 = <<EOF.gsub(/\n/, "\r\n")
 Message-ID: <4263685A.6090203@ruby-lang.org>
 Date: Mon, 18 Apr 2005 16:57:14 +0900
 From: Shugo Maeda <shugo@ruby-lang.org>
@@ -1620,6 +1620,65 @@ SGVsbG8gV29ybGQK
 --------------040107050003050408030009--
 EOF
     uid2 = mail_store.import_mail(mail2)
+    mail3= <<EOF.gsub(/\n/, "\r\n")
+Message-ID: <430186F7.5090804@ruby-lang.org>
+Date: Tue, 16 Aug 2005 15:25:59 +0900
+From: Foo <foo@ruby-lang.org>
+MIME-Version: 1.0
+To: foo@netlab.jp
+Subject: [Fwd: hello]
+X-Enigmail-Version: 0.92.0.0
+Content-Type: multipart/mixed;
+ boundary="------------020008030500060306020306"
+
+This is a multi-part message in MIME format.
+--------------020008030500060306020306
+Content-Type: text/plain; charset=US-ASCII
+Content-Transfer-Encoding: 7bit
+
+This is a forwarded message.
+
+--------------020008030500060306020306
+Content-Type: message/rfc822;
+ name="hello"
+Content-Transfer-Encoding: 7bit
+Content-Disposition: inline;
+ filename="hello"
+
+Message-ID: <43018636.3020908@ruby-lang.org>
+Date: Tue, 16 Aug 2005 15:22:46 +0900
+From: Bar <bar@ruby-lang.org>
+User-Agent: Debian Thunderbird 1.0.6 (X11/20050802)
+X-Accept-Language: en-us, en
+MIME-Version: 1.0
+To: baz@ruby-lang.org
+Subject: hello
+X-Enigmail-Version: 0.92.0.0
+Content-Type: multipart/mixed;
+ boundary="------------040505010403090308050103"
+
+This is a multi-part message in MIME format.
+--------------040505010403090308050103
+Content-Type: text/plain; charset=ISO-2022-JP
+Content-Transfer-Encoding: 7bit
+
+hello, world
+
+--------------040505010403090308050103
+Content-Type: text/plain;
+ name="hello.txt"
+Content-Transfer-Encoding: base64
+Content-Disposition: inline;
+ filename="hello.txt"
+
+aGVsbG8gd29ybGQK
+--------------040505010403090308050103--
+
+
+--------------020008030500060306020306--
+EOF
+    mail3_part2 = mail3.slice(/^Message-ID: <43018636.3020908@ruby-lang.org>.*^--------------040505010403090308050103--\r\n\r\n/m)
+    uid3 = mail_store.import_mail(mail3)
     mail_store.close
 
     sock = SpoofSocket.new(<<EOF)
@@ -1668,16 +1727,21 @@ A017 UID FETCH 2 BODY[2]\r
 A018 UID FETCH 2 BODY[1]<5.10>\r
 A019 UID FETCH 2 BODY[1.MIME]\r
 A020 UID FETCH 2 BODY[2.MIME]\r
+A021 UID FETCH 3 BODYSTRUCTURE\r
+A022 UID FETCH 3 BODY[1]\r
+A023 UID FETCH 3 BODY[2]\r
+A024 UID FETCH 3 BODY[2.1]\r
+A025 UID FETCH 3 BODY[2.2]\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
-    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
-    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* 3 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 3 RECENT\r\n", sock.output.gets)
     assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
-    assert_equal("* OK [UIDNEXT #{uid2 + 1}] Predicted next UID\r\n",
+    assert_equal("* OK [UIDNEXT #{uid3 + 1}] Predicted next UID\r\n",
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
@@ -1716,7 +1780,7 @@ EOF
     assert_equal("* 1 FETCH (UID 1 BODY (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" #{body.length} #{body.to_a.length}))\r\n",
                  sock.output.gets)
     assert_equal("A006 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (UID 1 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" #{body.length} #{body.to_a.length}))\r\n",
+    assert_equal("* 1 FETCH (UID 1 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" #{body.length} #{body.to_a.length} NIL NIL NIL))\r\n",
                  sock.output.gets)
     assert_equal("A007 OK UID FETCH completed\r\n", sock.output.gets)
     header_fields = <<EOF.gsub(/\n/, "\r\n")
@@ -1758,7 +1822,7 @@ EOF
     assert_equal("* 1 FETCH (UID 1 INTERNALDATE \"02-Apr-2005 00:07:54 +0900\")\r\n",
                  sock.output.gets)
     assert_equal("A014 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 2 FETCH (UID 2 BODY ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" 18 2)(\"TEXT\" \"PLAIN\" (\"NAME\" \"hello.txt\") NIL NIL \"BASE64\" 16 1) \"MIXED\" (\"BOUNDARY\" \"------------040107050003050408030009\") NIL NIL))\r\n",
+    assert_equal("* 2 FETCH (UID 2 BODY ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" 18 2)(\"TEXT\" \"PLAIN\" (\"NAME\" \"hello.txt\") NIL NIL \"BASE64\" 16 1) \"MIXED\"))\r\n",
                  sock.output.gets)
     assert_equal("A015 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal("* 2 FETCH (UID 2 BODY[1] {18}\r\n", sock.output.gets)
@@ -1781,6 +1845,24 @@ EOF
     assert_equal("Content-Type: text/plain;\r\n name=\"hello.txt\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: inline;\r\n filename=\"hello.txt\"\r\n\r\n", sock.output.read(136))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A020 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" 30 1 NIL NIL NIL)\"MESSAGE\" \"RFC822\" (\"NAME\" \"hello\") NIL NIL \"7BIT\" 793 (\"Tue, 16 Aug 2005 15:22:46 +0900\" \"hello\" ((\"Bar\" NIL \"bar\" \"ruby-lang.org\")) ((\"Bar\" NIL \"bar\" \"ruby-lang.org\")) ((\"Bar\" NIL \"bar\" \"ruby-lang.org\")) ((NIL NIL \"baz\" \"ruby-lang.org\")) NIL NIL NIL \"<43018636.3020908@ruby-lang.org>\") ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"ISO-2022-JP\") NIL NIL \"7BIT\" 14 1 NIL NIL NIL)(\"TEXT\" \"PLAIN\" (\"NAME\" \"hello.txt\") NIL NIL \"BASE64\" 16 1 NIL (\"INLINE\" (\"FILENAME\" \"hello.txt\")) NIL) \"MIXED\" (\"BOUNDARY\" \"------------040505010403090308050103\") NIL NIL) \"MIXED\" (\"BOUNDARY\" \"------------020008030500060306020306\") NIL NIL))\r\n", sock.output.gets)
+    assert_equal("A021 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[1] {30}\r\n", sock.output.gets)
+    assert_equal("This is a forwarded message.\r\n", sock.output.read(30))
+    assert_equal(" FLAGS (\\Seen))\r\n", sock.output.gets)
+    assert_equal("A022 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[2] {793}\r\n", sock.output.gets)
+    assert_equal(mail3_part2, sock.output.read(793))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A023 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[2.1] {14}\r\n", sock.output.gets)
+    assert_equal("hello, world\r\n", sock.output.read(14))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A024 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[2.2] {18}\r\n", sock.output.gets)
+    assert_equal("aGVsbG8gd29ybGQK\r\n", sock.output.read(18))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A025 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 

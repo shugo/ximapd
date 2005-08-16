@@ -1928,33 +1928,7 @@ class Ximapd
     end
 
     def envelope
-      mail = parsed_mail
-      s = "("
-      s.concat(quoted(mail.header["date"]))
-      s.concat(" ")
-      s.concat(quoted(mail.header["subject"]))
-      s.concat(" ")
-      s.concat(envelope_addrs(mail.header.from))
-      s.concat(" ")
-      s.concat(envelope_addrs(mail.header.from))
-      s.concat(" ")
-      if mail.header.reply_to.empty?
-        s.concat(envelope_addrs(mail.header.from))
-      else
-        s.concat(envelope_addrs(mail.header.reply_to))
-      end
-      s.concat(" ")
-      s.concat(envelope_addrs(mail.header.to))
-      s.concat(" ")
-      s.concat(envelope_addrs(mail.header.cc))
-      s.concat(" ")
-      s.concat(envelope_addrs(mail.header.bcc))
-      s.concat(" ")
-      s.concat(quoted(mail.header["in-reply-to"]))
-      s.concat(" ")
-      s.concat(quoted(mail.header["message-id"]))
-      s.concat(")")
-      return s
+      return envelope_internal(parsed_mail)
     end
 
     def path
@@ -1997,8 +1971,8 @@ class Ximapd
       return header.scan(re).join + "\r\n"
     end
 
-    def body
-      return body_internal(parsed_mail)
+    def body_structure(extensible)
+      return body_structure_internal(parsed_mail, extensible)
     end
 
     def multipart?
@@ -2006,14 +1980,12 @@ class Ximapd
       return mail.multipart?
     end
 
-    def part(p)
-      part_data = parsed_mail.part(p-1).to_s.gsub(/\n/, "\r\n")
-      return part_data[part_data.index(/\r\n\r\n/)+4,part_data.length]
+    def mime_header(part)
+      return get_part(part).to_s.slice(/.*?\n\n/mn).gsub(/\n/, "\r\n")
     end
 
-    def mime(p)
-      mime_data = parsed_mail.part(p-1).to_s.gsub(/\n/, "\r\n")
-      return mime_data[0,mime_data.index(/\r\n\r\n/)+4]
+    def mime_body(part)
+      return get_part(part).to_s.slice(/\n\n(.*)/mn, 1).gsub(/\n/, "\r\n")
     end
 
     def delete
@@ -2045,6 +2017,52 @@ class Ximapd
       return @parsed_mail
     end
 
+    def get_part(part)
+      part_numbers = part.split(/\./).collect { |i| i.to_i - 1 }
+      return get_part_internal(parsed_mail, part_numbers)
+    end
+
+    def get_part_internal(mail, part_numbers)
+      n = part_numbers.shift
+      if /message\/rfc822/n.match(mail.header.content_type)
+        mail = RMail::Parser.read(mail.body)
+      end
+      m = mail.part(n)
+      if part_numbers.empty?
+        return m
+      end
+      return get_part_internal(m, part_numbers)
+    end
+
+    def envelope_internal(mail)
+      s = "("
+      s.concat(quoted(mail.header["date"]))
+      s.concat(" ")
+      s.concat(quoted(mail.header["subject"]))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.header.from))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.header.from))
+      s.concat(" ")
+      if mail.header.reply_to.empty?
+        s.concat(envelope_addrs(mail.header.from))
+      else
+        s.concat(envelope_addrs(mail.header.reply_to))
+      end
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.header.to))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.header.cc))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.header.bcc))
+      s.concat(" ")
+      s.concat(quoted(mail.header["in-reply-to"]))
+      s.concat(" ")
+      s.concat(quoted(mail.header["message-id"]))
+      s.concat(")")
+      return s
+    end
+
     def envelope_addrs(addrs)
       if addrs.nil? || addrs.empty?
         return "NIL"
@@ -2068,53 +2086,104 @@ class Ximapd
                     quoted(name), quoted(adl), quoted(mailbox), quoted(host))
     end
 
-    def body_internal(mail)
-      if mail.multipart?
+    def body_structure_internal(mail, extensible)
+      if /message\/rfc822/n.match(mail.header.content_type)
+        body = RMail::Parser.read(mail.body)
+        return format("\"MESSAGE\" \"RFC822\" %s %s %s",
+                      body_fields(mail, extensible),
+                      envelope_internal(body),
+                      body_structure_internal(body, extensible))
+      elsif mail.multipart?
+        ary = []
         parts = mail.body.collect { |part|
-          body_internal(part)
+          body_structure_internal(part, extensible)
         }.join
-        params = "(" + mail.header.params("content-type", {}).collect { |k, v|
-            format("%s %s", quoted(upcase(k)), quoted(v))
-        }.join(" ") + ")"
-        return format("(%s %s %s NIL NIL)",
-            parts,
-            quoted(upcase(mail.header.subtype)),
-            params)
+        ary.push(parts)
+        ary.push(quoted(upcase(mail.header.subtype)))
+        if extensible
+          ary.push(body_ext_mpart(mail))
+        end
+        return "(" + ary.join(" ") + ")"
       else
-        fields = []
-        params = "(" + mail.header.params("content-type", {}).collect { |k, v|
-            v.gsub!(/\s/,"")
-            format("%s %s", quoted(upcase(k)), quoted(v))
-        }.join(" ") + ")"
-        if params == "()"
-          fields.push("NIL")
-        else
-          fields.push(params)
+        ary = []
+        ary.push(quoted(upcase(mail.header.media_type)))
+        ary.push(quoted(upcase(mail.header.subtype)))
+        ary.push(body_fields(mail, extensible))
+        if extensible
+          ary.push(body_ext_1part(mail))
         end
-        fields.push("NIL")
-        fields.push("NIL")
-        content_transfer_encoding =
-          (mail.header["content-transfer-encoding"] || "7BIT").to_s.upcase
-        fields.push(quoted(content_transfer_encoding))
-        fields.push(mail.body.gsub(/\n/, "\r\n").length.to_s)
-        if mail.header.media_type == "text"
-          fields.push(mail.body.to_a.length.to_s)
-        else
-          params = mail.header.params("content-disposition", {}).collect { |k, v|
-            v.gsub!(/\s/,"")
-            format("%s %s", quoted(upcase(k)), quoted(v))
-          }.join(" ")
-          if !params.empty?
-            fields.push("NIL")
-            fields.push("(\"ATTACHMENT\" (#{params}))")
-            fields.push("NIL")
-          end
-        end
-        return format("(%s %s %s)",
-                      quoted(upcase(mail.header.media_type)),
-                      quoted(upcase(mail.header.subtype)),
-                      fields.join(" "))
+        return "(" + ary.join(" ") + ")"
       end
+    end
+
+    def body_fields(mail, extensible)
+      fields = []
+      params = "(" + mail.header.params("content-type", {}).collect { |k, v|
+        v.gsub!(/\s/,"")
+        format("%s %s", quoted(upcase(k)), quoted(v))
+      }.join(" ") + ")"
+      if params == "()"
+        fields.push("NIL")
+      else
+        fields.push(params)
+      end
+      fields.push("NIL")
+      fields.push("NIL")
+      content_transfer_encoding =
+        (mail.header["content-transfer-encoding"] || "7BIT").to_s.upcase
+      fields.push(quoted(content_transfer_encoding))
+      fields.push(mail.body.gsub(/\n/, "\r\n").length.to_s)
+      if mail.header.media_type == "text"
+        fields.push(mail.body.to_a.length.to_s)
+      end
+      return fields.join(" ")
+    end
+
+    def body_ext_mpart(mail)
+      exts = []
+      exts.push(body_fld_param(mail))
+      exts.push(body_fld_dsp(mail))
+      exts.push("NIL")
+    end
+
+    def body_ext_1part(mail)
+      exts = []
+      exts.push("NIL")
+      exts.push(body_fld_dsp(mail))
+      exts.push("NIL")
+      return exts.join(" ")
+    end
+
+    def body_fld_param(mail)
+      unless mail.header.field?("content-type")
+        return "NIL"
+      end
+      params = mail.header.params("content-type", {}).collect { |k, v|
+        v.gsub!(/\s/,"")
+        format("%s %s", quoted(upcase(k)), quoted(v))
+      }
+      if params.empty?
+        return "NIL"
+      else
+        return "(" + params.join(" ") + ")"
+      end
+    end
+
+    def body_fld_dsp(mail)
+      unless mail.header.field?("content-disposition")
+        return "NIL"
+      end
+      params = mail.header.params("content-disposition", {}).collect { |k, v|
+        v.gsub!(/\s/,"")
+        format("%s %s", quoted(upcase(k)), quoted(v))
+      }
+      if params.empty?
+        p = "NIL"
+      else
+        p = "(" + params.join(" ") + ")"
+      end
+      value = mail.header["content-disposition"].sub(/;.*/mn, "")
+      return format("(%s %s)", quoted(upcase(value)), p)
     end
 
     def upcase(s)
@@ -4170,13 +4239,13 @@ class Ximapd
 
   class BodyFetchAtt
     def fetch(mail)
-      return format("BODY %s", mail.body)
+      return format("BODY %s", mail.body_structure(false))
     end
   end
 
   class BodyStructureFetchAtt
     def fetch(mail)
-      return format("BODYSTRUCTURE %s", mail.body)
+      return format("BODYSTRUCTURE %s", mail.body_structure(true))
     end
   end
 
@@ -4203,14 +4272,14 @@ class Ximapd
           part = @section.part
         end
         if @partial.nil?
-          if mail.multipart? && (part.to_i >= 1)
-            result = format("BODY[%s] %s", part, literal(mail.part(part.to_i)))
+          if mail.multipart? && /\A\d/.match(part)
+            result = format("BODY[%s] %s", part, literal(mail.mime_body(part)))
           else
             result = format("BODY[%s] %s", part, literal(mail.to_s))
           end
         else
-          if mail.multipart? && (part.to_i >= 1)
-            s = mail.part(part.to_i)[@partial.offset, @partial.size]
+          if mail.multipart? && /\A\d/.match(part)
+            s = mail.mime_body(part)[@partial.offset, @partial.size]
           else
             s = mail.to_s[@partial.offset, @partial.size]
           end
@@ -4234,7 +4303,7 @@ class Ximapd
       case @section.text
       when "MIME"
         part = @section.part
-        s = mail.mime(part.to_i)
+        s = mail.mime_header(part)
         return format("BODY[%d.MIME] %s", part, literal(s))
       when "HEADER"
         return format("BODY[HEADER] %s", literal(mail.header))
