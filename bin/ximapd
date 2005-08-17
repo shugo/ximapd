@@ -2087,14 +2087,16 @@ class Ximapd
     end
 
     def body_structure_internal(mail, extensible)
+      ary = []
       if /message\/rfc822/n.match(mail.header.content_type)
         body = RMail::Parser.read(mail.body)
-        return format("\"MESSAGE\" \"RFC822\" %s %s %s",
-                      body_fields(mail, extensible),
-                      envelope_internal(body),
-                      body_structure_internal(body, extensible))
+        ary.push(quoted("MESSAGE"))
+        ary.push(quoted("RFC822"))
+        ary.push(body_fields(mail, extensible))
+        ary.push(envelope_internal(body))
+        ary.push(body_structure_internal(body, extensible))
+        ary.push(mail.body.to_a.length.to_s)
       elsif mail.multipart?
-        ary = []
         parts = mail.body.collect { |part|
           body_structure_internal(part, extensible)
         }.join
@@ -2103,17 +2105,18 @@ class Ximapd
         if extensible
           ary.push(body_ext_mpart(mail))
         end
-        return "(" + ary.join(" ") + ")"
       else
-        ary = []
         ary.push(quoted(upcase(mail.header.media_type)))
         ary.push(quoted(upcase(mail.header.subtype)))
         ary.push(body_fields(mail, extensible))
+        if mail.header.media_type == "text"
+          ary.push(mail.body.to_a.length.to_s)
+        end
         if extensible
           ary.push(body_ext_1part(mail))
         end
-        return "(" + ary.join(" ") + ")"
       end
+      return "(" + ary.join(" ") + ")"
     end
 
     def body_fields(mail, extensible)
@@ -2133,9 +2136,6 @@ class Ximapd
         (mail.header["content-transfer-encoding"] || "7BIT").to_s.upcase
       fields.push(quoted(content_transfer_encoding))
       fields.push(mail.body.gsub(/\n/, "\r\n").length.to_s)
-      if mail.header.media_type == "text"
-        fields.push(mail.body.to_a.length.to_s)
-      end
       return fields.join(" ")
     end
 
