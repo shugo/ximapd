@@ -4522,7 +4522,6 @@ class Ximapd
 
     def exec
       mails = nil
-      x_ml_name = nil
       dest_mailbox = nil
       dest_x_ml_name = nil
       @session.synchronize do
@@ -4531,19 +4530,13 @@ class Ximapd
         @mail_store.mailbox_db.transaction(true) do
           dest_mailbox = @mail_store.get_mailbox(@mailbox_name)
           @mail_store.mailbox_db["mailing_lists"].each_pair do |key, info|
-            if info["mailbox"] == mailbox.name
-              x_ml_name = key
-            end
             if info["mailbox"] == dest_mailbox.name
               dest_x_ml_name = key
             end
           end
         end
       end
-      override = {}
-      if x_ml_name
-        override["x-ml-name"] = nil
-      end
+      override = {"x-ml-name" => nil}
       if dest_x_ml_name
         override["x-ml-name"] = dest_x_ml_name
       end
