@@ -1266,7 +1266,7 @@ class Ximapd
             begin
               mbox_name = plugin.filter(mail)
               if mbox_name == "REJECT"
-                @logger.add(Logger::INFO, "rejected: from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}>")
+                @logger.add(Logger::INFO, "rejected: from=<#{mail.properties['from']}> subject=<#{mail.properties['subject'].gsub(/[ \t]*\n[ \t]+/, ' ')}> date=<#{mail.properties['date']}>")
                 return 0
               end
               if mbox_name
@@ -1280,7 +1280,7 @@ class Ximapd
           mailbox ||= DefaultMailbox.new(self)
         end
         mailbox.import(mail)
-        @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}> mailbox=<#{mailbox.name}>")
+        @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject'].gsub(/[ \t]*\n[ \t]+/, ' ')}> date=<#{mail.properties['date']}> mailbox=<#{mailbox.name}>")
       end
       return mail.uid
     end
