@@ -2027,7 +2027,11 @@ class Ximapd
       if /message\/rfc822/n.match(mail.header.content_type)
         mail = RMail::Parser.read(mail.body)
       end
-      m = mail.part(n)
+      if !mail.multipart? && n == 0
+        m = mail
+      else
+        m = mail.part(n)
+      end
       if part_numbers.empty?
         return m
       end
@@ -4281,13 +4285,13 @@ class Ximapd
           part = @section.part
         end
         if @partial.nil?
-          if mail.multipart? && /\A\d/.match(part)
+          if /\A\d/.match(part)
             result = format("BODY[%s] %s", part, literal(mail.mime_body(part)))
           else
             result = format("BODY[%s] %s", part, literal(mail.to_s))
           end
         else
-          if mail.multipart? && /\A\d/.match(part)
+          if /\A\d/.match(part)
             s = mail.mime_body(part)[@partial.offset, @partial.size]
           else
             s = mail.to_s[@partial.offset, @partial.size]

@@ -1591,6 +1591,7 @@ Hello world
 EOF
     uid1 = mail_store.import_mail(mail1)
     mail1_without_unix_from = mail1.sub(/\AFrom.*\n/, "")
+    mail1_body = mail1_without_unix_from.slice(/\r\n\r\n(.*)/mn, 1)
     mail2 = <<EOF.gsub(/\n/, "\r\n")
 Message-ID: <4263685A.6090203@ruby-lang.org>
 Date: Mon, 18 Apr 2005 16:57:14 +0900
@@ -1808,10 +1809,9 @@ EOF
     assert_equal("* 1 FETCH (UID 1 ENVELOPE (\"Wed, 30 Mar 2005 17:34:46 +0900\" \"=?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=\" ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Foo\" NIL \"foo\" \"ruby-lang.org\") (NIL NIL \"bar\" \"ruby-lang.org\")) ((\"Baz\" NIL \"baz..\" \"ruby-lang.org\")) NIL \"<41C448BF.7080605@ruby-lang.org>\" \"<41ECC569.8000603@ruby-lang.org>\"))\r\n",
                  sock.output.gets)
     assert_equal("A011 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (UID 1 BODY[1] {#{mail1_without_unix_from.length}}\r\n",
+    assert_equal("* 1 FETCH (UID 1 BODY[1] {#{mail1_body.length}}\r\n",
                  sock.output.gets)
-    assert_equal(mail1_without_unix_from,
-                 sock.output.read(mail1_without_unix_from.length))
+    assert_equal(mail1_body, sock.output.read(mail1_body.length))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A012 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID 1 BODY[HEADER] {#{header.length}}\r\n",
