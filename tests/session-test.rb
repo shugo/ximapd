@@ -1232,6 +1232,240 @@ EOF
     assert_equal(nil, sock.output.gets)
   end
 
+  def test_search
+    mail_store = Ximapd::MailStore.new(@config)
+    mail_store.uid_seq.current = 10
+    mail1 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: ruby-list@ruby-lang.org
+Cc: foo@ruby-lang.org
+Subject: hello
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+
+Hello, world
+EOF
+    uid1 = mail_store.import_mail(mail1)
+    mail2 = <<EOF.gsub(/\n/, "\r\n")
+From: foo@ruby-lang.org
+To: ruby-list@ruby-lang.org
+Bcc: foo@ruby-lang.org
+Subject: bye
+Date: Fri, 01 Apr 2005 12:51:06 +0900
+
+Goodbye, world
+EOF
+    uid2 = mail_store.import_mail(mail2)
+    mail3 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: hello
+Date: Sun, 03 Apr 2005 03:06:39 +0900
+
+Hello, foo
+EOF
+    uid3 = mail_store.import_mail(mail3)
+    mail4 = Iconv.conv("iso-2022-jp", "utf-8", <<EOF).gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
+Date: Sun, 03 Apr 2005 03:06:39 +0900
+Content-Type: text/plain; charset=iso-2022-jp
+
+こんにちは、みなさん
+EOF
+    uid4 = mail_store.import_mail(mail4)
+    mail5 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
+Date: Sun, 03 Apr 2005 03:06:39 +0900
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: base64
+
+#{["こんにちは、みなさん"].pack("m").chop}
+EOF
+    uid5 = mail_store.import_mail(mail5)
+    mail_store.close
+
+    sock = SpoofSocket.new(<<EOF)
+A001 SEARCH BODY "hello world"\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("A001 BAD Command unrecognized/login please\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 SEARCH BODY "hello world"\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("A002 BAD Command unrecognized\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 SELECT INBOX\r
+A003 SEARCH BODY hello\r
+A004 SEARCH CHARSET US-ASCII BODY hello\r
+A005 SEARCH BODY "hello world"\r
+A006 SEARCH BODY "\\"hello world\\""\r
+A007 SEARCH BODY "\\"hello, world\\""\r
+A008 SEARCH HEADER SUBJECT hello\r
+A009 STORE 1 FLAGS (\\Seen)\r
+A010 SEARCH BODY hello SEEN\r
+A011 SEARCH BODY hello UNSEEN\r
+A012 SEARCH CHARSET UTF-8 HEADER SUBJECT "こんにちは"\r
+A013 SEARCH CHARSET UTF-8 BODY "みなさん"\r
+A014 SEARCH BODY hello NOT SEEN\r
+A018 SEARCH BODY hello BODY "\\"hello, world\\""\r
+A019 SEARCH BODY hello NOT BODY "\\"hello, world\\""\r
+A020 SEARCH NOT BODY hello
+A021 SEARCH UID 12\r
+A022 SEARCH UID 12,13\r
+A101 STORE 3 FLAGS (\\Flagged)\r
+A102 STORE 5 FLAGS (\\Seen \\Flagged)\r
+A103 SEARCH SEEN\r
+A104 SEARCH NOT SEEN\r
+A105 SEARCH FLAGGED\r
+A106 SEARCH NOT FLAGGED\r
+A107 SEARCH SEEN FLAGGED\r
+A108 SEARCH FLAGGED SEEN\r
+A109 SEARCH SEEN NOT FLAGGED\r
+A110 SEARCH NOT FLAGGED SEEN\r
+A111 SEARCH NOT SEEN FLAGGED\r
+A112 SEARCH FLAGGED NOT SEEN\r
+A113 SEARCH NOT SEEN NOT FLAGGED\r
+A114 SEARCH NOT FLAGGED NOT SEEN\r
+A115 SEARCH not flagged not seen\r
+A201 STORE 1,2 +FLAGS.SILENT ($Forwarded)\r
+A202 SEARCH KEYWORD $Forwarded\r
+A203 SEARCH UNKEYWORD $Forwarded\r
+A301 SEARCH SUBJECT hello\r
+A302 SEARCH SUBJECT "hello"\r
+A303 SEARCH FROM foo\r
+A304 SEARCH TO foo\r
+A305 SEARCH CC foo\r
+A306 SEARCH BCC foo\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 5 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 5 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT 16] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
+    assert_equal("A003 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
+    assert_equal("A004 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A005 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH\r\n", sock.output.gets)
+    assert_equal("A006 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A007 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
+    assert_equal("A008 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen))\r\n",
+                 sock.output.gets)
+    assert_equal("A009 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A010 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3\r\n", sock.output.gets)
+    assert_equal("A011 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 4 5\r\n", sock.output.gets)
+    assert_equal("A012 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 4 5\r\n", sock.output.gets)
+    assert_equal("A013 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3\r\n", sock.output.gets)
+    assert_equal("A014 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A018 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3\r\n", sock.output.gets)
+    assert_equal("A019 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 4 5\r\n", sock.output.gets)
+    assert_equal("A020 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A021 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 3\r\n", sock.output.gets)
+    assert_equal("A022 OK SEARCH completed\r\n", sock.output.gets)
+
+    # uid1 S -, uid2 - -, uid3 - -, uid4 - -, uid5 - -
+    assert_equal("* 3 FETCH (FLAGS (\\Recent \\Flagged))\r\n",
+                 sock.output.gets)
+    assert_equal("A101 OK STORE completed\r\n", sock.output.gets)
+    # uid1 S -, uid2 - -, uid3 - F, uid4 - -, uid5 - -
+    assert_equal("* 5 FETCH (FLAGS (\\Recent \\Seen \\Flagged))\r\n",
+                 sock.output.gets)
+    assert_equal("A102 OK STORE completed\r\n", sock.output.gets)
+    # uid1 S -, uid2 - -, uid3 - F, uid4 - -, uid5 S F
+    assert_equal("* SEARCH 1 5\r\n", sock.output.gets)
+    assert_equal("A103 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 3 4\r\n", sock.output.gets)
+    assert_equal("A104 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3 5\r\n", sock.output.gets)
+    assert_equal("A105 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 2 4\r\n", sock.output.gets)
+    assert_equal("A106 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 5\r\n", sock.output.gets)
+    assert_equal("A107 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 5\r\n", sock.output.gets)
+    assert_equal("A108 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A109 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A110 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3\r\n", sock.output.gets)
+    assert_equal("A111 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3\r\n", sock.output.gets)
+    assert_equal("A112 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 4\r\n", sock.output.gets)
+    assert_equal("A113 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 4\r\n", sock.output.gets)
+    assert_equal("A114 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 4\r\n", sock.output.gets)
+    assert_equal("A115 OK SEARCH completed\r\n", sock.output.gets)
+
+    assert_equal("A201 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 2\r\n", sock.output.gets)
+    assert_equal("A202 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3 4 5\r\n", sock.output.gets)
+    assert_equal("A203 OK SEARCH completed\r\n", sock.output.gets)
+
+    assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
+    assert_equal("A301 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
+    assert_equal("A302 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A303 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3 4 5\r\n", sock.output.gets)
+    assert_equal("A304 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A305 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A306 OK SEARCH completed\r\n", sock.output.gets)
+
+    assert_equal(nil, sock.output.gets)
+  end
+
   def test_uid_search
     mail_store = Ximapd::MailStore.new(@config)
     mail1 = <<EOF.gsub(/\n/, "\r\n")
@@ -1326,9 +1560,6 @@ A011 UID SEARCH BODY hello UNSEEN\r
 A012 UID SEARCH CHARSET UTF-8 HEADER SUBJECT "こんにちは"\r
 A013 UID SEARCH CHARSET UTF-8 BODY "みなさん"\r
 A014 UID SEARCH BODY hello NOT SEEN\r
-A015 UID SEARCH 2\r
-A016 UID SEARCH 2:3\r
-A017 UID SEARCH 2:*\r
 A018 UID SEARCH BODY hello BODY "\\"hello, world\\""\r
 A019 UID SEARCH BODY hello NOT BODY "\\"hello, world\\""\r
 A020 UID SEARCH NOT BODY hello
@@ -1399,15 +1630,6 @@ EOF
     assert_equal("A013 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
     assert_equal("A014 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH 2\r\n",
-                 sock.output.gets)
-    assert_equal("A015 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH 2 3\r\n",
-                 sock.output.gets)
-    assert_equal("A016 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH 2 3 4 5\r\n",
-                 sock.output.gets)
-    assert_equal("A017 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
     assert_equal("A018 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)

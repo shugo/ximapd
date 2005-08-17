@@ -2727,6 +2727,7 @@ class Ximapd
       "CHECK",
       "CLOSE",
       "EXPUNGE",
+      "SEARCH",
       "UID SEARCH",
       "FETCH",
       "UID FETCH",
@@ -2987,6 +2988,20 @@ class Ximapd
       return ExpungeCommand.new
     end
 
+    def search
+      match(T_SPACE)
+      token = lookahead
+      if token.value == "CHARSET"
+        shift_token
+        match(T_SPACE)
+        charset = astring
+        match(T_SPACE)
+      else
+        charset = "us-ascii"
+      end
+      return SearchCommand.new(search_keys(charset))
+    end
+
     def uid_search
       match(T_SPACE)
       token = lookahead
@@ -3017,7 +3032,7 @@ class Ximapd
     def search_key(charset)
       token = lookahead
       if /\A(\d+|\*)/.match(token.value)
-        return UidSearchKey.new(sequence_set)
+        return SequenceNumberSearchKey.new(sequence_set)
       end
       name = tokens([T_ATOM, T_NUMBER, T_NIL, T_PLUS, T_STAR])
       case name.upcase
@@ -3942,7 +3957,7 @@ class Ximapd
       @session.synchronize do
         @session.sync
         mailbox = @session.get_current_mailbox
-        mails = mailbox.fetch([1..-1])
+        mails = mailbox.fetch([1 .. -1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
         }
@@ -3959,7 +3974,7 @@ class Ximapd
       @session.synchronize do
         @session.sync
         mailbox = @session.get_current_mailbox
-        mails = mailbox.fetch([1..-1])
+        mails = mailbox.fetch([1 .. -1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
         }.reverse
@@ -3970,6 +3985,48 @@ class Ximapd
       end
       for seqno in deleted_seqnos
         @session.send_data("%d EXPUNGE", seqno)
+      end
+      send_tagged_ok
+    end
+  end
+
+  class SearchCommand < Command
+    def initialize(keys)
+      @keys = keys
+    end
+
+    def exec
+      query = @keys.collect { |key| key.to_query }.reject { |q|
+        q.empty?
+      }.join(" ")
+      query = "uid > 0 " + query if /\A\s*!/ =~ query
+      seqnos = nil
+      @session.synchronize do
+        mailbox = @session.get_current_mailbox
+        uids = mailbox.uid_search(query)
+        for key in @keys
+          uids = key.select(uids)
+        end
+        if uids.empty?
+          seqnos = []
+        else
+          mails = mailbox.fetch([1 .. -1])
+          uid_tbl = uids.inject({}) { |tbl, uid|
+            tbl[uid] = true
+            tbl
+          }
+          seqnos = mails.inject([]) { |ary, mail|
+            if uid_tbl.key?(mail.uid)
+              ary.push(mail.seqno)
+            end
+            ary
+          }
+        end
+      end
+      if seqnos.empty?
+        @session.send_data("SEARCH")
+      else
+        @session.send_data("SEARCH %s", seqnos.join(" "))
       end
       send_tagged_ok
     end
@@ -4101,6 +4158,16 @@ class Ximapd
     alias super_reject reject
     alias select super_reject
     alias reject super_select
+  end
+
+  class SequenceNumberSearchKey < NullSearchKey
+    def initialize(sequence_set)
+      @sequence_set = sequence_set
+    end
+
+    def to_query
+      raise NotImplementedError.new("sequence number search is not implemented")
+    end
   end
 
   class UidSearchKey < NullSearchKey
