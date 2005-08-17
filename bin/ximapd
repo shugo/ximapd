@@ -4212,7 +4212,7 @@ class Ximapd
     end
   end
 
-  class FetchCommand < Command
+  class AbstractFetchCommand < Command
     def initialize(sequence_set, atts)
       @sequence_set = sequence_set
       @atts = atts
@@ -4222,7 +4222,7 @@ class Ximapd
       mails = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
-        mails = mailbox.fetch(@sequence_set)
+        mails = fetch(mailbox)
       end
       for mail in mails
         data = nil
@@ -4231,9 +4231,31 @@ class Ximapd
             att.fetch(mail)
           }.join(" ")
         end
-        @session.send_data("%d FETCH (%s)", mail.seqno, data)
+        @session.send_data("%d FETCH (%s)", get_number(mail), data)
       end
       send_tagged_ok
+    end
+
+    private
+
+    def fetch(mailbox)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def get_number(mail)
+      raise ScriptError.new("subclass must override this method")
+    end
+  end
+
+  class FetchCommand < AbstractFetchCommand
+    private
+
+    def fetch(mailbox)
+      return mailbox.fetch(@sequence_set)
+    end
+
+    def get_number(mail)
+      return mail.seqno
     end
   end
 
@@ -4245,22 +4267,14 @@ class Ximapd
       end
     end
 
-    def exec
-      mails = nil
-      @session.synchronize do
-        mailbox = @session.get_current_mailbox
-        mails = mailbox.uid_fetch(@sequence_set)
-      end
-      for mail in mails
-        data = nil
-        @session.synchronize do
-          data = @atts.collect { |att|
-            att.fetch(mail)
-          }.join(" ")
-        end
-        @session.send_data("%d FETCH (%s)", mail.uid, data)
-      end
-      send_tagged_ok
+    private
+
+    def fetch(mailbox)
+      return mailbox.uid_fetch(@sequence_set)
+    end
+
+    def get_number(mail)
+      return mail.uid
     end
   end
 
