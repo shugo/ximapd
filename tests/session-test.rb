@@ -2367,6 +2367,109 @@ EOF
     assert_equal(nil, sock.output.gets)
   end
 
+  def test_uid_copy__ml
+    mail_store = Ximapd::MailStore.new(@config)
+    mail1 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: hello
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+X-ML-Name: foo
+
+Hello, Foo
+EOF
+    uid1 = mail_store.import_mail(mail1)
+    mail2 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: bar@ruby-lang.org
+Subject: hello
+Date: Sat, 09 Apr 2005 00:54:59 +0900
+Content-Type: text/plain; charset=US-ASCII
+X-ML-Name: bar
+
+Hello, Bar
+EOF
+    uid2 = mail_store.import_mail(mail2)
+    mail_store.create_mailbox("Trash")
+    mail_store.close
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 SELECT ml/foo\r
+A003 UID COPY #{uid1} ml/bar\r
+A004 UID COPY #{uid1} Trash\r
+A005 SELECT ml/bar\r
+A006 UID COPY #{uid2} ml/foo\r
+A007 UID COPY #{uid2} ml/bar\r
+A008 UID COPY #{uid2} Trash\r
+A009 SELECT Trash\r
+A010 SELECT ml/foo\r
+A011 SELECT ml/bar\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 1}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("A003 OK UID COPY completed\r\n", sock.output.gets)
+    assert_equal("A004 OK UID COPY completed\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 3}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A005 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("A006 OK UID COPY completed\r\n", sock.output.gets)
+    assert_equal("A007 OK UID COPY completed\r\n", sock.output.gets)
+    assert_equal("A008 OK UID COPY completed\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 6}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A009 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 6}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A010 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* 3 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 3 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 6}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A011 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+  end
+
   class SpoofSocket
     attr_reader :input, :output
 

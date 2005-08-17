@@ -1067,9 +1067,9 @@ class Ximapd
       @logger.info("imported from #{host}")
     end
 
-    def import_mail(str, mailbox_name = nil, flags = "", indate = nil)
+    def import_mail(str, mailbox_name = nil, flags = "", indate = nil, override = {})
       open_index do
-        import_mail_internal(str, mailbox_name, flags, indate)
+        import_mail_internal(str, mailbox_name, flags, indate, override)
       end
     end
 
@@ -1254,9 +1254,9 @@ class Ximapd
       }
     end
 
-    def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil)
+    def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil, override = {})
       uid = get_next_uid
-      mail = parse_mail(str, uid, flags, indate)
+      mail = parse_mail(str, uid, flags, indate, override)
       @mailbox_db.transaction do
         if mailbox_name
           mailbox = get_mailbox(mailbox_name)
@@ -1415,7 +1415,7 @@ class Ximapd
       end
     end
 
-    def parse_mail(mail, uid, flags, indate)
+    def parse_mail(mail, uid, flags, indate, override = {})
       mail.gsub!(/\r?\n/, "\r\n")
       indate = strip_unix_from(mail, indate)
       if indate.nil?
@@ -1431,7 +1431,7 @@ class Ximapd
       properties["mailbox-id"] = 0
       begin
         m = @mail_parser.parse(mail.gsub(/\r\n/, "\n"))
-        properties = extract_properties(m, properties)
+        properties = extract_properties(m, properties, override)
         body = extract_body(m)
       rescue Exception => e
         @logger.log_exception(e, "failed to parse mail uid=#{uid}",
@@ -1523,7 +1523,7 @@ class Ximapd
       ret
     end
 
-    def extract_properties(mail, properties)
+    def extract_properties(mail, properties, override)
       for field in ["subject", "from", "to", "cc", "bcc"]
         properties[field] = get_header_field(mail, field)
       end
@@ -1539,6 +1539,15 @@ class Ximapd
       end
       properties["x-ml-name"] = decode_encoded_word(s.to_s)
       properties["x-mail-count"] = mail.header["x-mail-count"].to_s.to_i
+      override.each_pair do |field, value|
+        if properties.key?(field)
+          if value.nil?
+            properties.delete(field)
+          else
+            properties[field] = value
+          end
+        end
+      end
       return properties
     end
 
@@ -4513,13 +4522,30 @@ class Ximapd
 
     def exec
       mails = nil
+      x_ml_name = nil
       dest_mailbox = nil
+      dest_x_ml_name = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
         mails = mailbox.uid_fetch(@sequence_set)
         @mail_store.mailbox_db.transaction(true) do
           dest_mailbox = @mail_store.get_mailbox(@mailbox_name)
+          @mail_store.mailbox_db["mailing_lists"].each_pair do |key, info|
+            if info["mailbox"] == mailbox.name
+              x_ml_name = key
+            end
+            if info["mailbox"] == dest_mailbox.name
+              dest_x_ml_name = key
+            end
+          end
         end
+      end
+      override = {}
+      if x_ml_name
+        override["x-ml-name"] = nil
+      end
+      if dest_x_ml_name
+        override["x-ml-name"] = dest_x_ml_name
       end
       for mail in mails
         @session.synchronize do
@@ -4527,7 +4553,8 @@ class Ximapd
             plugin.on_copy(mail, dest_mailbox)
           end
           uid = @mail_store.import_mail(mail.to_s, dest_mailbox.name,
-                                        mail.flags(false), mail.internal_date)
+                                        mail.flags(false), mail.internal_date,
+                                        override)
           dest_mail = dest_mailbox.get_mail(uid)
           for plugin in @mail_store.plugins
             plugin.on_copied(mail, dest_mail)
