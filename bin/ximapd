@@ -4231,7 +4231,7 @@ class Ximapd
             att.fetch(mail)
           }.join(" ")
         end
-        @session.send_data("%d FETCH (%s)", get_number(mail), data)
+        send_fetch_response(mail, data)
       end
       send_tagged_ok
     end
@@ -4242,7 +4242,7 @@ class Ximapd
       raise ScriptError.new("subclass must override this method")
     end
 
-    def get_number(mail)
+    def send_fetch_response(mail, flags)
       raise ScriptError.new("subclass must override this method")
     end
   end
@@ -4254,8 +4254,8 @@ class Ximapd
       return mailbox.fetch(@sequence_set)
     end
 
-    def get_number(mail)
-      return mail.seqno
+    def send_fetch_response(mail, data)
+      @session.send_data("%d FETCH (%s)", mail.seqno, data)
     end
   end
 
@@ -4273,8 +4273,8 @@ class Ximapd
       return mailbox.uid_fetch(@sequence_set)
     end
 
-    def get_number(mail)
-      return mail.uid
+    def send_fetch_response(mail, data)
+      @session.send_data("%d FETCH (%s)", mail.uid, data)
     end
   end
 
@@ -4409,7 +4409,7 @@ class Ximapd
 
   Section = Struct.new(:part, :text, :header_list)
 
-  class StoreCommand < Command
+  class AbstractStoreCommand < Command
     def initialize(sequence_set, att)
       @sequence_set = sequence_set
       @att = att
@@ -4419,7 +4419,7 @@ class Ximapd
       mails = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
-        mails = mailbox.fetch(@sequence_set)
+        mails = fetch(mailbox)
       end
       unless @session.read_only?
         for mail in mails
@@ -4429,40 +4429,46 @@ class Ximapd
             flags = mail.flags
           end
           unless @att.silent?
-            @session.send_data("%d FETCH (FLAGS (%s))", mail.seqno, flags)
+            send_fetch_response(mail, flags)
           end
         end
       end
       send_tagged_ok
+    end
+
+    private
+
+    def fetch(mailbox)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def send_fetch_response(mail, flags)
+      raise ScriptError.new("subclass must override this method")
     end
   end
 
-  class UidStoreCommand < Command
-    def initialize(sequence_set, att)
-      @sequence_set = sequence_set
-      @att = att
+  class StoreCommand < AbstractStoreCommand
+    private
+
+    def fetch(mailbox)
+      return mailbox.fetch(@sequence_set)
     end
 
-    def exec
-      mails = nil
-      @session.synchronize do
-        mailbox = @session.get_current_mailbox
-        mails = mailbox.uid_fetch(@sequence_set)
-      end
-      unless @session.read_only?
-        for mail in mails
-          flags = nil
-          @session.synchronize do
-            @att.store(mail)
-            flags = mail.flags
-          end
-          unless @att.silent?
-            @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
-                               mail.uid, flags, mail.uid)
-          end
-        end
-      end
-      send_tagged_ok
+    def send_fetch_response(mail, flags)
+      @session.send_data("%d FETCH (FLAGS (%s))", mail.seqno, flags)
+    end
+  end
+
+  class UidStoreCommand < AbstractStoreCommand
+    private
+
+    def fetch(mailbox)
+      return mailbox.uid_fetch(@sequence_set)
+    end
+
+    def send_fetch_response(mail, flags)
+      @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
+                         mail.uid, flags, mail.uid)
     end
   end
 
