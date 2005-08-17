@@ -658,7 +658,7 @@ class Ximapd
       if s.nil?
         return "NIL"
       else
-        return format('"%s"', s.to_s.gsub(/[\\"]/n, "\\\\\\&"))
+        return format('"%s"', s.to_s.gsub(/[\r\n]/, "").gsub(/[\\"]/n, "\\\\\\&"))
       end
     end
 
