@@ -1866,6 +1866,96 @@ EOF
     assert_equal(nil, sock.output.gets)
   end
 
+  def test_store
+    mail_store = Ximapd::MailStore.new(@config)
+    mail_store.uid_seq.current = 10
+    mail1 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+Subject: hello
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+
+Hello world
+EOF
+    uid1 = mail_store.import_mail(mail1)
+    mail_store.close
+
+    sock = SpoofSocket.new(<<EOF)
+A001 STORE 1 FLAGS (\\Seen NonJunk)\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("A001 BAD Command unrecognized/login please\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 STORE 1 FLAGS (\\Seen NonJunk)\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("A002 BAD Command unrecognized\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 SELECT INBOX\r
+A003 STORE 1 FLAGS (\\Seen NonJunk)\r
+A004 STORE 1 +FLAGS (\\Deleted)\r
+A005 STORE 1 -FLAGS (NonJunk)\r
+A006 STORE 1 FLAGS.SILENT (\\Seen NonJunk)\r
+A007 FETCH 1 (FLAGS)\r
+A008 STORE 1 +FLAGS.SILENT (\\Deleted)\r
+A009 FETCH 1 (FLAGS)\r
+A010 STORE 1 -FLAGS.SILENT (NonJunk)\r
+A011 FETCH 1 (FLAGS)\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid1 + 1}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk))\r\n",
+                 sock.output.gets)
+    assert_equal("A003 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk \\Deleted))\r\n",
+                 sock.output.gets)
+    assert_equal("A004 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen \\Deleted))\r\n",
+                 sock.output.gets)
+    assert_equal("A005 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("A006 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk))\r\n",
+                 sock.output.gets)
+    assert_equal("A007 OK FETCH completed\r\n", sock.output.gets)
+    assert_equal("A008 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk \\Deleted))\r\n",
+                 sock.output.gets)
+    assert_equal("A009 OK FETCH completed\r\n", sock.output.gets)
+    assert_equal("A010 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen \\Deleted))\r\n",
+                 sock.output.gets)
+    assert_equal("A011 OK FETCH completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+  end
+
   def test_uid_store
     mail_store = Ximapd::MailStore.new(@config)
     mail1 = <<EOF.gsub(/\n/, "\r\n")

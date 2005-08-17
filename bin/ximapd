@@ -2726,6 +2726,7 @@ class Ximapd
       "UID SEARCH",
       "FETCH",
       "UID FETCH",
+      "STORE",
       "UID STORE",
       "UID COPY"
     ]
@@ -3233,6 +3234,14 @@ class Ximapd
       return nil
     end
     Partial = Struct.new(:offset, :size)
+
+    def store
+      match(T_SPACE)
+      seq_set = sequence_set
+      match(T_SPACE)
+      att = store_att_flags
+      return StoreCommand.new(seq_set, att)
+    end
 
     def uid_store
       match(T_SPACE)
@@ -4319,6 +4328,34 @@ class Ximapd
   end
 
   Section = Struct.new(:part, :text, :header_list)
+
+  class StoreCommand < Command
+    def initialize(sequence_set, att)
+      @sequence_set = sequence_set
+      @att = att
+    end
+
+    def exec
+      mails = nil
+      @session.synchronize do
+        mailbox = @session.get_current_mailbox
+        mails = mailbox.fetch(@sequence_set)
+      end
+      unless @session.read_only?
+        for mail in mails
+          flags = nil
+          @session.synchronize do
+            @att.store(mail)
+            flags = mail.flags
+          end
+          unless @att.silent?
+            @session.send_data("%d FETCH (FLAGS (%s))", mail.seqno, flags)
+          end
+        end
+      end
+      send_tagged_ok
+    end
+  end
 
   class UidStoreCommand < Command
     def initialize(sequence_set, att)
