@@ -3033,20 +3033,14 @@ class Ximapd
     end
 
     def search
-      match(T_SPACE)
-      token = lookahead
-      if token.value == "CHARSET"
-        shift_token
-        match(T_SPACE)
-        charset = astring
-        match(T_SPACE)
-      else
-        charset = "us-ascii"
-      end
-      return SearchCommand.new(search_keys(charset))
+      return parse_search(SearchCommand)
     end
 
     def uid_search
+      return parse_search(UidSearchCommand)
+    end
+
+    def parse_search(command_class)
       match(T_SPACE)
       token = lookahead
       if token.value == "CHARSET"
@@ -3057,7 +3051,7 @@ class Ximapd
       else
         charset = "us-ascii"
       end
-      return UidSearchCommand.new(search_keys(charset))
+      return command_class.new(search_keys(charset))
     end
 
     def search_keys(charset)
