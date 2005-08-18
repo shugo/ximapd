@@ -1539,16 +1539,7 @@ class Ximapd
       end
       properties["x-ml-name"] = decode_encoded_word(s.to_s)
       properties["x-mail-count"] = mail.header["x-mail-count"].to_s.to_i
-      override.each_pair do |field, value|
-        if properties.key?(field)
-          if value.nil?
-            properties.delete(field)
-          else
-            properties[field] = value
-          end
-        end
-      end
-      return properties
+      return properties.merge(override)
     end
 
     def get_header_field(mail, field)
@@ -4576,23 +4567,14 @@ class Ximapd
     def exec
       mails = nil
       dest_mailbox = nil
-      dest_x_ml_name = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
         mails = mailbox.uid_fetch(@sequence_set)
         @mail_store.mailbox_db.transaction(true) do
           dest_mailbox = @mail_store.get_mailbox(@mailbox_name)
-          @mail_store.mailbox_db["mailing_lists"].each_pair do |key, info|
-            if info["mailbox"] == dest_mailbox.name
-              dest_x_ml_name = key
-            end
-          end
         end
       end
-      override = {"x-ml-name" => nil}
-      if dest_x_ml_name
-        override["x-ml-name"] = dest_x_ml_name
-      end
+      override = {"x-ml-name" => dest_mailbox["list_id"] || ""}
       for mail in mails
         @session.synchronize do
           for plugin in @mail_store.plugins
