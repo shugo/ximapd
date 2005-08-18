@@ -2398,7 +2398,7 @@ class Ximapd
     end
 
     def starttls
-      raise "no capability for STARTTLS" unless @config["tls"]
+      raise "no capability for STARTTLS" unless @config["starttls"]
 
       require "openssl"
       synchronize do
@@ -3686,7 +3686,7 @@ class Ximapd
 
   class CapabilityCommand < Command
     def exec
-      if @session.config["tls"]
+      if @session.config["starttls"]
         @session.send_data("CAPABILITY IMAP4REV1 IDLE LOGINDISABLED AUTH=CRAM-MD5 STARTTLS")
       else
         @session.send_data("CAPABILITY IMAP4REV1 IDLE LOGINDISABLED AUTH=CRAM-MD5")
@@ -4793,7 +4793,7 @@ class Ximapd
     BoolOption.new("ssl", "use SSL"),
     StringOption.new("ssl_key", "path to SSL private key"),
     StringOption.new("ssl_cert", "path to SSL certificate"),
-    BoolOption.new("tls", "use STARTTLS"),
+    BoolOption.new("starttls", "use STARTTLS"),
     StringOption.new("remote_host", "host of remote IMAP server"),
     IntOption.new("remote_port", "port of remote IMAP server"),
     BoolOption.new("remote_ssl", "use SSL for remote IMAP server"),
