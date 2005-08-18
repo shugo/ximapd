@@ -2397,8 +2397,14 @@ class Ximapd
       @read_only = false
     end
 
+    def secure?
+      @sock.kind_of?(OpenSSL::SSL::SSLSocket)
+    end
+
     def starttls
-      raise "no capability for STARTTLS" unless @config["starttls"]
+      raise "no capability" unless @config["starttls"]
+      raise "available only for non-authenticated-state" if @state != NON_AUTHENTICATED_STATE
+      raise "already in TLS" if secure?
 
       require "openssl"
       synchronize do
@@ -2421,7 +2427,6 @@ class Ximapd
     end
 
     def starttls_accept
-#      @sock.flush
       @sock.accept
     end
 
@@ -2790,10 +2795,16 @@ class Ximapd
             name += " " + atom.upcase
           end
           if COMMANDS[@session.state].include?(name)
-            result = send(name.tr(" ", "_").downcase)
-            result.name = name
-            match(T_CRLF)
-            match(T_EOF)
+            if @session.config["require_secure"] &&
+                !@session.secure? &&
+                !UNIVERSAL_COMMANDS.include?(name)
+              result = RequireSecureSessionCommand.new
+            else
+              result = send(name.tr(" ", "_").downcase)
+              result.name = name
+              match(T_CRLF)
+              match(T_EOF)
+            end
           else
             result = UnrecognizedCommand.new
           end
@@ -3684,13 +3695,19 @@ class Ximapd
     end
   end
 
+  class RequireSecureSessionCommand < Command
+    def exec
+      @session.send_tagged_no(@tag, "secure session required by the server/use IMAPS or TLS please")
+    end
+  end
+
   class CapabilityCommand < Command
     def exec
+      capa = "CAPABILITY IMAP4REV1 IDLE LOGINDISABLED AUTH=CRAM-MD5"
       if @session.config["starttls"]
-        @session.send_data("CAPABILITY IMAP4REV1 IDLE LOGINDISABLED AUTH=CRAM-MD5 STARTTLS")
-      else
-        @session.send_data("CAPABILITY IMAP4REV1 IDLE LOGINDISABLED AUTH=CRAM-MD5")
+        capa += " STARTTLS"
       end
+      @session.send_data(capa)
       send_tagged_ok
     end
   end
@@ -4794,6 +4811,7 @@ class Ximapd
     StringOption.new("ssl_key", "path to SSL private key"),
     StringOption.new("ssl_cert", "path to SSL certificate"),
     BoolOption.new("starttls", "use STARTTLS"),
+    BoolOption.new("require_secure", "require secure session for clients"),
     StringOption.new("remote_host", "host of remote IMAP server"),
     IntOption.new("remote_port", "port of remote IMAP server"),
     BoolOption.new("remote_ssl", "use SSL for remote IMAP server"),
