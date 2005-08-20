@@ -658,7 +658,7 @@ class Ximapd
       if s.nil?
         return "NIL"
       else
-        return format('"%s"', s.to_s.gsub(/[\\"]/n, "\\\\\\&"))
+        return format('"%s"', s.to_s.gsub(/[\r\n]/, "").gsub(/[\\"]/n, "\\\\\\&"))
       end
     end
 
@@ -1067,9 +1067,9 @@ class Ximapd
       @logger.info("imported from #{host}")
     end
 
-    def import_mail(str, mailbox_name = nil, flags = "", indate = nil)
+    def import_mail(str, mailbox_name = nil, flags = "", indate = nil, override = {})
       open_index do
-        import_mail_internal(str, mailbox_name, flags, indate)
+        import_mail_internal(str, mailbox_name, flags, indate, override)
       end
     end
 
@@ -1254,9 +1254,9 @@ class Ximapd
       }
     end
 
-    def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil)
+    def import_mail_internal(str, mailbox_name = nil, flags = "", indate = nil, override = {})
       uid = get_next_uid
-      mail = parse_mail(str, uid, flags, indate)
+      mail = parse_mail(str, uid, flags, indate, override)
       @mailbox_db.transaction do
         if mailbox_name
           mailbox = get_mailbox(mailbox_name)
@@ -1266,7 +1266,7 @@ class Ximapd
             begin
               mbox_name = plugin.filter(mail)
               if mbox_name == "REJECT"
-                @logger.add(Logger::INFO, "rejected: from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}>")
+                @logger.add(Logger::INFO, "rejected: from=<#{mail.properties['from']}> subject=<#{mail.properties['subject'].gsub(/[ \t]*\n[ \t]+/, ' ')}> date=<#{mail.properties['date']}>")
                 return 0
               end
               if mbox_name
@@ -1280,7 +1280,7 @@ class Ximapd
           mailbox ||= DefaultMailbox.new(self)
         end
         mailbox.import(mail)
-        @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject']}> date=<#{mail.properties['date']}> mailbox=<#{mailbox.name}>")
+        @logger.add(Logger::INFO, "imported: uid=#{mail.uid} from=<#{mail.properties['from']}> subject=<#{mail.properties['subject'].gsub(/[ \t]*\n[ \t]+/, ' ')}> date=<#{mail.properties['date']}> mailbox=<#{mailbox.name}>")
       end
       return mail.uid
     end
@@ -1415,7 +1415,7 @@ class Ximapd
       end
     end
 
-    def parse_mail(mail, uid, flags, indate)
+    def parse_mail(mail, uid, flags, indate, override = {})
       mail.gsub!(/\r?\n/, "\r\n")
       indate = strip_unix_from(mail, indate)
       if indate.nil?
@@ -1431,7 +1431,7 @@ class Ximapd
       properties["mailbox-id"] = 0
       begin
         m = @mail_parser.parse(mail.gsub(/\r\n/, "\n"))
-        properties = extract_properties(m, properties)
+        properties = extract_properties(m, properties, override)
         body = extract_body(m)
       rescue Exception => e
         @logger.log_exception(e, "failed to parse mail uid=#{uid}",
@@ -1523,7 +1523,7 @@ class Ximapd
       ret
     end
 
-    def extract_properties(mail, properties)
+    def extract_properties(mail, properties, override)
       for field in ["subject", "from", "to", "cc", "bcc"]
         properties[field] = get_header_field(mail, field)
       end
@@ -1539,7 +1539,7 @@ class Ximapd
       end
       properties["x-ml-name"] = decode_encoded_word(s.to_s)
       properties["x-mail-count"] = mail.header["x-mail-count"].to_s.to_i
-      return properties
+      return properties.merge(override)
     end
 
     def get_header_field(mail, field)
@@ -1928,33 +1928,7 @@ class Ximapd
     end
 
     def envelope
-      mail = parsed_mail
-      s = "("
-      s.concat(quoted(mail.header["date"]))
-      s.concat(" ")
-      s.concat(quoted(mail.header["subject"]))
-      s.concat(" ")
-      s.concat(envelope_addrs(mail.header.from))
-      s.concat(" ")
-      s.concat(envelope_addrs(mail.header.from))
-      s.concat(" ")
-      if mail.header.reply_to.empty?
-        s.concat(envelope_addrs(mail.header.from))
-      else
-        s.concat(envelope_addrs(mail.header.reply_to))
-      end
-      s.concat(" ")
-      s.concat(envelope_addrs(mail.header.to))
-      s.concat(" ")
-      s.concat(envelope_addrs(mail.header.cc))
-      s.concat(" ")
-      s.concat(envelope_addrs(mail.header.bcc))
-      s.concat(" ")
-      s.concat(quoted(mail.header["in-reply-to"]))
-      s.concat(" ")
-      s.concat(quoted(mail.header["message-id"]))
-      s.concat(")")
-      return s
+      return envelope_internal(parsed_mail)
     end
 
     def path
@@ -1997,8 +1971,8 @@ class Ximapd
       return header.scan(re).join + "\r\n"
     end
 
-    def body
-      return body_internal(parsed_mail)
+    def body_structure(extensible)
+      return body_structure_internal(parsed_mail, extensible)
     end
 
     def multipart?
@@ -2006,14 +1980,12 @@ class Ximapd
       return mail.multipart?
     end
 
-    def part(p)
-      part_data = parsed_mail.part(p-1).to_s.gsub(/\n/, "\r\n")
-      return part_data[part_data.index(/\r\n\r\n/)+4,part_data.length]
+    def mime_header(part)
+      return get_part(part).to_s.slice(/.*?\n\n/mn).gsub(/\n/, "\r\n")
     end
 
-    def mime(p)
-      mime_data = parsed_mail.part(p-1).to_s.gsub(/\n/, "\r\n")
-      return mime_data[0,mime_data.index(/\r\n\r\n/)+4]
+    def mime_body(part)
+      return get_part(part).to_s.slice(/\n\n(.*)/mn, 1).gsub(/\n/, "\r\n")
     end
 
     def delete
@@ -2045,6 +2017,56 @@ class Ximapd
       return @parsed_mail
     end
 
+    def get_part(part)
+      part_numbers = part.split(/\./).collect { |i| i.to_i - 1 }
+      return get_part_internal(parsed_mail, part_numbers)
+    end
+
+    def get_part_internal(mail, part_numbers)
+      n = part_numbers.shift
+      if /message\/rfc822/n.match(mail.header.content_type)
+        mail = RMail::Parser.read(mail.body)
+      end
+      if !mail.multipart? && n == 0
+        m = mail
+      else
+        m = mail.part(n)
+      end
+      if part_numbers.empty?
+        return m
+      end
+      return get_part_internal(m, part_numbers)
+    end
+
+    def envelope_internal(mail)
+      s = "("
+      s.concat(quoted(mail.header["date"]))
+      s.concat(" ")
+      s.concat(quoted(mail.header["subject"]))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.header.from))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.header.from))
+      s.concat(" ")
+      if mail.header.reply_to.empty?
+        s.concat(envelope_addrs(mail.header.from))
+      else
+        s.concat(envelope_addrs(mail.header.reply_to))
+      end
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.header.to))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.header.cc))
+      s.concat(" ")
+      s.concat(envelope_addrs(mail.header.bcc))
+      s.concat(" ")
+      s.concat(quoted(mail.header["in-reply-to"]))
+      s.concat(" ")
+      s.concat(quoted(mail.header["message-id"]))
+      s.concat(")")
+      return s
+    end
+
     def envelope_addrs(addrs)
       if addrs.nil? || addrs.empty?
         return "NIL"
@@ -2068,53 +2090,104 @@ class Ximapd
                     quoted(name), quoted(adl), quoted(mailbox), quoted(host))
     end
 
-    def body_internal(mail)
-      if mail.multipart?
+    def body_structure_internal(mail, extensible)
+      ary = []
+      if /message\/rfc822/n.match(mail.header.content_type)
+        body = RMail::Parser.read(mail.body)
+        ary.push(quoted("MESSAGE"))
+        ary.push(quoted("RFC822"))
+        ary.push(body_fields(mail, extensible))
+        ary.push(envelope_internal(body))
+        ary.push(body_structure_internal(body, extensible))
+        ary.push(mail.body.to_a.length.to_s)
+      elsif mail.multipart?
         parts = mail.body.collect { |part|
-          body_internal(part)
+          body_structure_internal(part, extensible)
         }.join
-        params = "(" + mail.header.params("content-type", {}).collect { |k, v|
-            format("%s %s", quoted(upcase(k)), quoted(v))
-        }.join(" ") + ")"
-        return format("(%s %s %s NIL NIL)",
-            parts,
-            quoted(upcase(mail.header.subtype)),
-            params)
+        ary.push(parts)
+        ary.push(quoted(upcase(mail.header.subtype)))
+        if extensible
+          ary.push(body_ext_mpart(mail))
+        end
       else
-        fields = []
-        params = "(" + mail.header.params("content-type", {}).collect { |k, v|
-            v.gsub!(/\s/,"")
-            format("%s %s", quoted(upcase(k)), quoted(v))
-        }.join(" ") + ")"
-        if params == "()"
-          fields.push("NIL")
-        else
-          fields.push(params)
-        end
-        fields.push("NIL")
-        fields.push("NIL")
-        content_transfer_encoding =
-          (mail.header["content-transfer-encoding"] || "7BIT").to_s.upcase
-        fields.push(quoted(content_transfer_encoding))
-        fields.push(mail.body.gsub(/\n/, "\r\n").length.to_s)
+        ary.push(quoted(upcase(mail.header.media_type)))
+        ary.push(quoted(upcase(mail.header.subtype)))
+        ary.push(body_fields(mail, extensible))
         if mail.header.media_type == "text"
-          fields.push(mail.body.to_a.length.to_s)
-        else
-          params = mail.header.params("content-disposition", {}).collect { |k, v|
-            v.gsub!(/\s/,"")
-            format("%s %s", quoted(upcase(k)), quoted(v))
-          }.join(" ")
-          if !params.empty?
-            fields.push("NIL")
-            fields.push("(\"ATTACHMENT\" (#{params}))")
-            fields.push("NIL")
-          end
+          ary.push(mail.body.to_a.length.to_s)
         end
-        return format("(%s %s %s)",
-                      quoted(upcase(mail.header.media_type)),
-                      quoted(upcase(mail.header.subtype)),
-                      fields.join(" "))
+        if extensible
+          ary.push(body_ext_1part(mail))
+        end
       end
+      return "(" + ary.join(" ") + ")"
+    end
+
+    def body_fields(mail, extensible)
+      fields = []
+      params = "(" + mail.header.params("content-type", {}).collect { |k, v|
+        v.gsub!(/\s/,"")
+        format("%s %s", quoted(upcase(k)), quoted(v))
+      }.join(" ") + ")"
+      if params == "()"
+        fields.push("NIL")
+      else
+        fields.push(params)
+      end
+      fields.push("NIL")
+      fields.push("NIL")
+      content_transfer_encoding =
+        (mail.header["content-transfer-encoding"] || "7BIT").to_s.upcase
+      fields.push(quoted(content_transfer_encoding))
+      fields.push(mail.body.gsub(/\n/, "\r\n").length.to_s)
+      return fields.join(" ")
+    end
+
+    def body_ext_mpart(mail)
+      exts = []
+      exts.push(body_fld_param(mail))
+      exts.push(body_fld_dsp(mail))
+      exts.push("NIL")
+    end
+
+    def body_ext_1part(mail)
+      exts = []
+      exts.push("NIL")
+      exts.push(body_fld_dsp(mail))
+      exts.push("NIL")
+      return exts.join(" ")
+    end
+
+    def body_fld_param(mail)
+      unless mail.header.field?("content-type")
+        return "NIL"
+      end
+      params = mail.header.params("content-type", {}).collect { |k, v|
+        v.gsub!(/\s/,"")
+        format("%s %s", quoted(upcase(k)), quoted(v))
+      }
+      if params.empty?
+        return "NIL"
+      else
+        return "(" + params.join(" ") + ")"
+      end
+    end
+
+    def body_fld_dsp(mail)
+      unless mail.header.field?("content-disposition")
+        return "NIL"
+      end
+      params = mail.header.params("content-disposition", {}).collect { |k, v|
+        v.gsub!(/\s/,"")
+        format("%s %s", quoted(upcase(k)), quoted(v))
+      }
+      if params.empty?
+        p = "NIL"
+      else
+        p = "(" + params.join(" ") + ")"
+      end
+      value = mail.header["content-disposition"].sub(/;.*/mn, "")
+      return format("(%s %s)", quoted(upcase(value)), p)
     end
 
     def upcase(s)
@@ -2654,9 +2727,11 @@ class Ximapd
       "CHECK",
       "CLOSE",
       "EXPUNGE",
+      "SEARCH",
       "UID SEARCH",
       "FETCH",
       "UID FETCH",
+      "STORE",
       "UID STORE",
       "UID COPY"
     ]
@@ -2913,7 +2988,15 @@ class Ximapd
       return ExpungeCommand.new
     end
 
+    def search
+      return parse_search(SearchCommand)
+    end
+
     def uid_search
+      return parse_search(UidSearchCommand)
+    end
+
+    def parse_search(command_class)
       match(T_SPACE)
       token = lookahead
       if token.value == "CHARSET"
@@ -2924,7 +3007,7 @@ class Ximapd
       else
         charset = "us-ascii"
       end
-      return UidSearchCommand.new(search_keys(charset))
+      return command_class.new(search_keys(charset))
     end
 
     def search_keys(charset)
@@ -2943,7 +3026,7 @@ class Ximapd
     def search_key(charset)
       token = lookahead
       if /\A(\d+|\*)/.match(token.value)
-        return UidSearchKey.new(sequence_set)
+        return SequenceNumberSearchKey.new(sequence_set)
       end
       name = tokens([T_ATOM, T_NUMBER, T_NIL, T_PLUS, T_STAR])
       case name.upcase
@@ -3164,6 +3247,14 @@ class Ximapd
       return nil
     end
     Partial = Struct.new(:offset, :size)
+
+    def store
+      match(T_SPACE)
+      seq_set = sequence_set
+      match(T_SPACE)
+      att = store_att_flags
+      return StoreCommand.new(seq_set, att)
+    end
 
     def uid_store
       match(T_SPACE)
@@ -3860,7 +3951,7 @@ class Ximapd
       @session.synchronize do
         @session.sync
         mailbox = @session.get_current_mailbox
-        mails = mailbox.fetch([1..-1])
+        mails = mailbox.fetch([1 .. -1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
         }
@@ -3877,7 +3968,7 @@ class Ximapd
       @session.synchronize do
         @session.sync
         mailbox = @session.get_current_mailbox
-        mails = mailbox.fetch([1..-1])
+        mails = mailbox.fetch([1 .. -1])
         deleted_mails = mails.select { |mail|
           /\\Deleted\b/ni.match(mail.flags(false))
         }.reverse
@@ -3893,7 +3984,7 @@ class Ximapd
     end
   end
 
-  class UidSearchCommand < Command
+  class AbstractSearchCommand < Command
     def initialize(keys)
       @keys = keys
     end
@@ -3903,20 +3994,57 @@ class Ximapd
         q.empty?
       }.join(" ")
       query = "uid > 0 " + query if /\A\s*!/ =~ query
-      uids = nil
+      result = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
         uids = mailbox.uid_search(query)
         for key in @keys
           uids = key.select(uids)
         end
+        result = create_result(mailbox, uids)
       end
-      if uids.empty?
+      if result.empty?
         @session.send_data("SEARCH")
       else
-        @session.send_data("SEARCH %s", uids.join(" "))
+        @session.send_data("SEARCH %s", result.join(" "))
       end
       send_tagged_ok
+    end
+
+    private
+
+    def create_result(uids)
+      raise ScriptError.new("subclass must override this method")
+    end
+  end
+
+  class SearchCommand < AbstractSearchCommand
+    private
+
+    def create_result(mailbox, uids)
+      if uids.empty?
+        return []
+      else
+        mails = mailbox.fetch([1 .. -1])
+        uid_tbl = uids.inject({}) { |tbl, uid|
+          tbl[uid] = true
+          tbl
+        }
+        return mails.inject([]) { |ary, mail|
+          if uid_tbl.key?(mail.uid)
+            ary.push(mail.seqno)
+          end
+          ary
+        }
+      end
+    end
+  end
+
+  class UidSearchCommand < AbstractSearchCommand
+    private
+
+    def create_result(mailbox, uids)
+      return uids
     end
   end
 
@@ -4021,6 +4149,16 @@ class Ximapd
     alias reject super_select
   end
 
+  class SequenceNumberSearchKey < NullSearchKey
+    def initialize(sequence_set)
+      @sequence_set = sequence_set
+    end
+
+    def to_query
+      raise NotImplementedError.new("sequence number search is not implemented")
+    end
+  end
+
   class UidSearchKey < NullSearchKey
     def initialize(sequence_set)
       @sequence_set = sequence_set
@@ -4068,7 +4206,7 @@ class Ximapd
     end
   end
 
-  class FetchCommand < Command
+  class AbstractFetchCommand < Command
     def initialize(sequence_set, atts)
       @sequence_set = sequence_set
       @atts = atts
@@ -4078,7 +4216,7 @@ class Ximapd
       mails = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
-        mails = mailbox.fetch(@sequence_set)
+        mails = fetch(mailbox)
       end
       for mail in mails
         data = nil
@@ -4087,9 +4225,31 @@ class Ximapd
             att.fetch(mail)
           }.join(" ")
         end
-        @session.send_data("%d FETCH (%s)", mail.seqno, data)
+        send_fetch_response(mail, data)
       end
       send_tagged_ok
+    end
+
+    private
+
+    def fetch(mailbox)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def send_fetch_response(mail, flags)
+      raise ScriptError.new("subclass must override this method")
+    end
+  end
+
+  class FetchCommand < AbstractFetchCommand
+    private
+
+    def fetch(mailbox)
+      return mailbox.fetch(@sequence_set)
+    end
+
+    def send_fetch_response(mail, data)
+      @session.send_data("%d FETCH (%s)", mail.seqno, data)
     end
   end
 
@@ -4101,22 +4261,14 @@ class Ximapd
       end
     end
 
-    def exec
-      mails = nil
-      @session.synchronize do
-        mailbox = @session.get_current_mailbox
-        mails = mailbox.uid_fetch(@sequence_set)
-      end
-      for mail in mails
-        data = nil
-        @session.synchronize do
-          data = @atts.collect { |att|
-            att.fetch(mail)
-          }.join(" ")
-        end
-        @session.send_data("%d FETCH (%s)", mail.uid, data)
-      end
-      send_tagged_ok
+    private
+
+    def fetch(mailbox)
+      return mailbox.uid_fetch(@sequence_set)
+    end
+
+    def send_fetch_response(mail, data)
+      @session.send_data("%d FETCH (%s)", mail.uid, data)
     end
   end
 
@@ -4170,13 +4322,13 @@ class Ximapd
 
   class BodyFetchAtt
     def fetch(mail)
-      return format("BODY %s", mail.body)
+      return format("BODY %s", mail.body_structure(false))
     end
   end
 
   class BodyStructureFetchAtt
     def fetch(mail)
-      return format("BODYSTRUCTURE %s", mail.body)
+      return format("BODYSTRUCTURE %s", mail.body_structure(true))
     end
   end
 
@@ -4203,14 +4355,14 @@ class Ximapd
           part = @section.part
         end
         if @partial.nil?
-          if mail.multipart? && (part.to_i >= 1)
-            result = format("BODY[%s] %s", part, literal(mail.part(part.to_i)))
+          if /\A\d/.match(part)
+            result = format("BODY[%s] %s", part, literal(mail.mime_body(part)))
           else
             result = format("BODY[%s] %s", part, literal(mail.to_s))
           end
         else
-          if mail.multipart? && (part.to_i >= 1)
-            s = mail.part(part.to_i)[@partial.offset, @partial.size]
+          if /\A\d/.match(part)
+            s = mail.mime_body(part)[@partial.offset, @partial.size]
           else
             s = mail.to_s[@partial.offset, @partial.size]
           end
@@ -4234,7 +4386,7 @@ class Ximapd
       case @section.text
       when "MIME"
         part = @section.part
-        s = mail.mime(part.to_i)
+        s = mail.mime_header(part)
         return format("BODY[%d.MIME] %s", part, literal(s))
       when "HEADER"
         return format("BODY[HEADER] %s", literal(mail.header))
@@ -4251,7 +4403,7 @@ class Ximapd
 
   Section = Struct.new(:part, :text, :header_list)
 
-  class UidStoreCommand < Command
+  class AbstractStoreCommand < Command
     def initialize(sequence_set, att)
       @sequence_set = sequence_set
       @att = att
@@ -4261,7 +4413,7 @@ class Ximapd
       mails = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
-        mails = mailbox.uid_fetch(@sequence_set)
+        mails = fetch(mailbox)
       end
       unless @session.read_only?
         for mail in mails
@@ -4271,12 +4423,46 @@ class Ximapd
             flags = mail.flags
           end
           unless @att.silent?
-            @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
-                               mail.uid, flags, mail.uid)
+            send_fetch_response(mail, flags)
           end
         end
       end
       send_tagged_ok
+    end
+
+    private
+
+    def fetch(mailbox)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def send_fetch_response(mail, flags)
+      raise ScriptError.new("subclass must override this method")
+    end
+  end
+
+  class StoreCommand < AbstractStoreCommand
+    private
+
+    def fetch(mailbox)
+      return mailbox.fetch(@sequence_set)
+    end
+
+    def send_fetch_response(mail, flags)
+      @session.send_data("%d FETCH (FLAGS (%s))", mail.seqno, flags)
+    end
+  end
+
+  class UidStoreCommand < AbstractStoreCommand
+    private
+
+    def fetch(mailbox)
+      return mailbox.uid_fetch(@sequence_set)
+    end
+
+    def send_fetch_response(mail, flags)
+      @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
+                         mail.uid, flags, mail.uid)
     end
   end
 
@@ -4329,13 +4515,15 @@ class Ximapd
           dest_mailbox = @mail_store.get_mailbox(@mailbox_name)
         end
       end
+      override = {"x-ml-name" => dest_mailbox["list_id"] || ""}
       for mail in mails
         @session.synchronize do
           for plugin in @mail_store.plugins
             plugin.on_copy(mail, dest_mailbox)
           end
           uid = @mail_store.import_mail(mail.to_s, dest_mailbox.name,
-                                        mail.flags(false), mail.internal_date)
+                                        mail.flags(false), mail.internal_date,
+                                        override)
           dest_mail = dest_mailbox.get_mail(uid)
           for plugin in @mail_store.plugins
             plugin.on_copied(mail, dest_mail)

@@ -1232,6 +1232,240 @@ EOF
     assert_equal(nil, sock.output.gets)
   end
 
+  def test_search
+    mail_store = Ximapd::MailStore.new(@config)
+    mail_store.uid_seq.current = 10
+    mail1 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: ruby-list@ruby-lang.org
+Cc: foo@ruby-lang.org
+Subject: hello
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+
+Hello, world
+EOF
+    uid1 = mail_store.import_mail(mail1)
+    mail2 = <<EOF.gsub(/\n/, "\r\n")
+From: foo@ruby-lang.org
+To: ruby-list@ruby-lang.org
+Bcc: foo@ruby-lang.org
+Subject: bye
+Date: Fri, 01 Apr 2005 12:51:06 +0900
+
+Goodbye, world
+EOF
+    uid2 = mail_store.import_mail(mail2)
+    mail3 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: hello
+Date: Sun, 03 Apr 2005 03:06:39 +0900
+
+Hello, foo
+EOF
+    uid3 = mail_store.import_mail(mail3)
+    mail4 = Iconv.conv("iso-2022-jp", "utf-8", <<EOF).gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
+Date: Sun, 03 Apr 2005 03:06:39 +0900
+Content-Type: text/plain; charset=iso-2022-jp
+
+こんにちは、みなさん
+EOF
+    uid4 = mail_store.import_mail(mail4)
+    mail5 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
+Date: Sun, 03 Apr 2005 03:06:39 +0900
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: base64
+
+#{["こんにちは、みなさん"].pack("m").chop}
+EOF
+    uid5 = mail_store.import_mail(mail5)
+    mail_store.close
+
+    sock = SpoofSocket.new(<<EOF)
+A001 SEARCH BODY "hello world"\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("A001 BAD Command unrecognized/login please\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 SEARCH BODY "hello world"\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("A002 BAD Command unrecognized\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 SELECT INBOX\r
+A003 SEARCH BODY hello\r
+A004 SEARCH CHARSET US-ASCII BODY hello\r
+A005 SEARCH BODY "hello world"\r
+A006 SEARCH BODY "\\"hello world\\""\r
+A007 SEARCH BODY "\\"hello, world\\""\r
+A008 SEARCH HEADER SUBJECT hello\r
+A009 STORE 1 FLAGS (\\Seen)\r
+A010 SEARCH BODY hello SEEN\r
+A011 SEARCH BODY hello UNSEEN\r
+A012 SEARCH CHARSET UTF-8 HEADER SUBJECT "こんにちは"\r
+A013 SEARCH CHARSET UTF-8 BODY "みなさん"\r
+A014 SEARCH BODY hello NOT SEEN\r
+A018 SEARCH BODY hello BODY "\\"hello, world\\""\r
+A019 SEARCH BODY hello NOT BODY "\\"hello, world\\""\r
+A020 SEARCH NOT BODY hello
+A021 SEARCH UID 12\r
+A022 SEARCH UID 12,13\r
+A101 STORE 3 FLAGS (\\Flagged)\r
+A102 STORE 5 FLAGS (\\Seen \\Flagged)\r
+A103 SEARCH SEEN\r
+A104 SEARCH NOT SEEN\r
+A105 SEARCH FLAGGED\r
+A106 SEARCH NOT FLAGGED\r
+A107 SEARCH SEEN FLAGGED\r
+A108 SEARCH FLAGGED SEEN\r
+A109 SEARCH SEEN NOT FLAGGED\r
+A110 SEARCH NOT FLAGGED SEEN\r
+A111 SEARCH NOT SEEN FLAGGED\r
+A112 SEARCH FLAGGED NOT SEEN\r
+A113 SEARCH NOT SEEN NOT FLAGGED\r
+A114 SEARCH NOT FLAGGED NOT SEEN\r
+A115 SEARCH not flagged not seen\r
+A201 STORE 1,2 +FLAGS.SILENT ($Forwarded)\r
+A202 SEARCH KEYWORD $Forwarded\r
+A203 SEARCH UNKEYWORD $Forwarded\r
+A301 SEARCH SUBJECT hello\r
+A302 SEARCH SUBJECT "hello"\r
+A303 SEARCH FROM foo\r
+A304 SEARCH TO foo\r
+A305 SEARCH CC foo\r
+A306 SEARCH BCC foo\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 5 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 5 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT 16] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
+    assert_equal("A003 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
+    assert_equal("A004 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A005 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH\r\n", sock.output.gets)
+    assert_equal("A006 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A007 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
+    assert_equal("A008 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen))\r\n",
+                 sock.output.gets)
+    assert_equal("A009 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A010 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3\r\n", sock.output.gets)
+    assert_equal("A011 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 4 5\r\n", sock.output.gets)
+    assert_equal("A012 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 4 5\r\n", sock.output.gets)
+    assert_equal("A013 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3\r\n", sock.output.gets)
+    assert_equal("A014 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A018 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3\r\n", sock.output.gets)
+    assert_equal("A019 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 4 5\r\n", sock.output.gets)
+    assert_equal("A020 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A021 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 3\r\n", sock.output.gets)
+    assert_equal("A022 OK SEARCH completed\r\n", sock.output.gets)
+
+    # uid1 S -, uid2 - -, uid3 - -, uid4 - -, uid5 - -
+    assert_equal("* 3 FETCH (FLAGS (\\Recent \\Flagged))\r\n",
+                 sock.output.gets)
+    assert_equal("A101 OK STORE completed\r\n", sock.output.gets)
+    # uid1 S -, uid2 - -, uid3 - F, uid4 - -, uid5 - -
+    assert_equal("* 5 FETCH (FLAGS (\\Recent \\Seen \\Flagged))\r\n",
+                 sock.output.gets)
+    assert_equal("A102 OK STORE completed\r\n", sock.output.gets)
+    # uid1 S -, uid2 - -, uid3 - F, uid4 - -, uid5 S F
+    assert_equal("* SEARCH 1 5\r\n", sock.output.gets)
+    assert_equal("A103 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 3 4\r\n", sock.output.gets)
+    assert_equal("A104 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3 5\r\n", sock.output.gets)
+    assert_equal("A105 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 2 4\r\n", sock.output.gets)
+    assert_equal("A106 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 5\r\n", sock.output.gets)
+    assert_equal("A107 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 5\r\n", sock.output.gets)
+    assert_equal("A108 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A109 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A110 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3\r\n", sock.output.gets)
+    assert_equal("A111 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3\r\n", sock.output.gets)
+    assert_equal("A112 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 4\r\n", sock.output.gets)
+    assert_equal("A113 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 4\r\n", sock.output.gets)
+    assert_equal("A114 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 4\r\n", sock.output.gets)
+    assert_equal("A115 OK SEARCH completed\r\n", sock.output.gets)
+
+    assert_equal("A201 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 2\r\n", sock.output.gets)
+    assert_equal("A202 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3 4 5\r\n", sock.output.gets)
+    assert_equal("A203 OK SEARCH completed\r\n", sock.output.gets)
+
+    assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
+    assert_equal("A301 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
+    assert_equal("A302 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A303 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3 4 5\r\n", sock.output.gets)
+    assert_equal("A304 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A305 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A306 OK SEARCH completed\r\n", sock.output.gets)
+
+    assert_equal(nil, sock.output.gets)
+  end
+
   def test_uid_search
     mail_store = Ximapd::MailStore.new(@config)
     mail1 = <<EOF.gsub(/\n/, "\r\n")
@@ -1326,9 +1560,6 @@ A011 UID SEARCH BODY hello UNSEEN\r
 A012 UID SEARCH CHARSET UTF-8 HEADER SUBJECT "こんにちは"\r
 A013 UID SEARCH CHARSET UTF-8 BODY "みなさん"\r
 A014 UID SEARCH BODY hello NOT SEEN\r
-A015 UID SEARCH 2\r
-A016 UID SEARCH 2:3\r
-A017 UID SEARCH 2:*\r
 A018 UID SEARCH BODY hello BODY "\\"hello, world\\""\r
 A019 UID SEARCH BODY hello NOT BODY "\\"hello, world\\""\r
 A020 UID SEARCH NOT BODY hello
@@ -1399,15 +1630,6 @@ EOF
     assert_equal("A013 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
     assert_equal("A014 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH 2\r\n",
-                 sock.output.gets)
-    assert_equal("A015 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH 2 3\r\n",
-                 sock.output.gets)
-    assert_equal("A016 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH 2 3 4 5\r\n",
-                 sock.output.gets)
-    assert_equal("A017 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
     assert_equal("A018 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid3}\r\n", sock.output.gets)
@@ -1591,7 +1813,8 @@ Hello world
 EOF
     uid1 = mail_store.import_mail(mail1)
     mail1_without_unix_from = mail1.sub(/\AFrom.*\n/, "")
-    mail2= <<EOF.gsub(/\n/, "\r\n")
+    mail1_body = mail1_without_unix_from.slice(/\r\n\r\n(.*)/mn, 1)
+    mail2 = <<EOF.gsub(/\n/, "\r\n")
 Message-ID: <4263685A.6090203@ruby-lang.org>
 Date: Mon, 18 Apr 2005 16:57:14 +0900
 From: Shugo Maeda <shugo@ruby-lang.org>
@@ -1620,6 +1843,65 @@ SGVsbG8gV29ybGQK
 --------------040107050003050408030009--
 EOF
     uid2 = mail_store.import_mail(mail2)
+    mail3= <<EOF.gsub(/\n/, "\r\n")
+Message-ID: <430186F7.5090804@ruby-lang.org>
+Date: Tue, 16 Aug 2005 15:25:59 +0900
+From: Foo <foo@ruby-lang.org>
+MIME-Version: 1.0
+To: foo@netlab.jp
+Subject: [Fwd: hello]
+X-Enigmail-Version: 0.92.0.0
+Content-Type: multipart/mixed;
+ boundary="------------020008030500060306020306"
+
+This is a multi-part message in MIME format.
+--------------020008030500060306020306
+Content-Type: text/plain; charset=US-ASCII
+Content-Transfer-Encoding: 7bit
+
+This is a forwarded message.
+
+--------------020008030500060306020306
+Content-Type: message/rfc822;
+ name="hello"
+Content-Transfer-Encoding: 7bit
+Content-Disposition: inline;
+ filename="hello"
+
+Message-ID: <43018636.3020908@ruby-lang.org>
+Date: Tue, 16 Aug 2005 15:22:46 +0900
+From: Bar <bar@ruby-lang.org>
+User-Agent: Debian Thunderbird 1.0.6 (X11/20050802)
+X-Accept-Language: en-us, en
+MIME-Version: 1.0
+To: baz@ruby-lang.org
+Subject: hello
+X-Enigmail-Version: 0.92.0.0
+Content-Type: multipart/mixed;
+ boundary="------------040505010403090308050103"
+
+This is a multi-part message in MIME format.
+--------------040505010403090308050103
+Content-Type: text/plain; charset=ISO-2022-JP
+Content-Transfer-Encoding: 7bit
+
+hello, world
+
+--------------040505010403090308050103
+Content-Type: text/plain;
+ name="hello.txt"
+Content-Transfer-Encoding: base64
+Content-Disposition: inline;
+ filename="hello.txt"
+
+aGVsbG8gd29ybGQK
+--------------040505010403090308050103--
+
+
+--------------020008030500060306020306--
+EOF
+    mail3_part2 = mail3.slice(/^Message-ID: <43018636.3020908@ruby-lang.org>.*^--------------040505010403090308050103--\r\n\r\n/m)
+    uid3 = mail_store.import_mail(mail3)
     mail_store.close
 
     sock = SpoofSocket.new(<<EOF)
@@ -1666,16 +1948,23 @@ A015 UID FETCH 2 BODY\r
 A016 UID FETCH 2 BODY[1]\r
 A017 UID FETCH 2 BODY[2]\r
 A018 UID FETCH 2 BODY[1]<5.10>\r
+A019 UID FETCH 2 BODY[1.MIME]\r
+A020 UID FETCH 2 BODY[2.MIME]\r
+A021 UID FETCH 3 BODYSTRUCTURE\r
+A022 UID FETCH 3 BODY[1]\r
+A023 UID FETCH 3 BODY[2]\r
+A024 UID FETCH 3 BODY[2.1]\r
+A025 UID FETCH 3 BODY[2.2]\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
-    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
-    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* 3 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 3 RECENT\r\n", sock.output.gets)
     assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
-    assert_equal("* OK [UIDNEXT #{uid2 + 1}] Predicted next UID\r\n",
+    assert_equal("* OK [UIDNEXT #{uid3 + 1}] Predicted next UID\r\n",
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
@@ -1714,7 +2003,7 @@ EOF
     assert_equal("* 1 FETCH (UID 1 BODY (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" #{body.length} #{body.to_a.length}))\r\n",
                  sock.output.gets)
     assert_equal("A006 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (UID 1 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" #{body.length} #{body.to_a.length}))\r\n",
+    assert_equal("* 1 FETCH (UID 1 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" #{body.length} #{body.to_a.length} NIL NIL NIL))\r\n",
                  sock.output.gets)
     assert_equal("A007 OK UID FETCH completed\r\n", sock.output.gets)
     header_fields = <<EOF.gsub(/\n/, "\r\n")
@@ -1742,10 +2031,9 @@ EOF
     assert_equal("* 1 FETCH (UID 1 ENVELOPE (\"Wed, 30 Mar 2005 17:34:46 +0900\" \"=?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=\" ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Shugo Maeda\" NIL \"shugo\" \"ruby-lang.org\")) ((\"Foo\" NIL \"foo\" \"ruby-lang.org\") (NIL NIL \"bar\" \"ruby-lang.org\")) ((\"Baz\" NIL \"baz..\" \"ruby-lang.org\")) NIL \"<41C448BF.7080605@ruby-lang.org>\" \"<41ECC569.8000603@ruby-lang.org>\"))\r\n",
                  sock.output.gets)
     assert_equal("A011 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 1 FETCH (UID 1 BODY[1] {#{mail1_without_unix_from.length}}\r\n",
+    assert_equal("* 1 FETCH (UID 1 BODY[1] {#{mail1_body.length}}\r\n",
                  sock.output.gets)
-    assert_equal(mail1_without_unix_from,
-                 sock.output.read(mail1_without_unix_from.length))
+    assert_equal(mail1_body, sock.output.read(mail1_body.length))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A012 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID 1 BODY[HEADER] {#{header.length}}\r\n",
@@ -1756,7 +2044,7 @@ EOF
     assert_equal("* 1 FETCH (UID 1 INTERNALDATE \"02-Apr-2005 00:07:54 +0900\")\r\n",
                  sock.output.gets)
     assert_equal("A014 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 2 FETCH (UID 2 BODY ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" 18 2)(\"TEXT\" \"PLAIN\" (\"NAME\" \"hello.txt\") NIL NIL \"BASE64\" 16 1) \"MIXED\" (\"BOUNDARY\" \"------------040107050003050408030009\") NIL NIL))\r\n",
+    assert_equal("* 2 FETCH (UID 2 BODY ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" 18 2)(\"TEXT\" \"PLAIN\" (\"NAME\" \"hello.txt\") NIL NIL \"BASE64\" 16 1) \"MIXED\"))\r\n",
                  sock.output.gets)
     assert_equal("A015 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal("* 2 FETCH (UID 2 BODY[1] {18}\r\n", sock.output.gets)
@@ -1771,6 +2059,122 @@ EOF
     assert_equal("ello.txt.\r", sock.output.read(10))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A018 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY[1.MIME] {79}\r\n", sock.output.gets)
+    assert_equal("Content-Type: text/plain; charset=US-ASCII\r\nContent-Transfer-Encoding: 7bit\r\n\r\n", sock.output.read(79))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A019 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 2 FETCH (UID 2 BODY[2.MIME] {136}\r\n", sock.output.gets)
+    assert_equal("Content-Type: text/plain;\r\n name=\"hello.txt\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: inline;\r\n filename=\"hello.txt\"\r\n\r\n", sock.output.read(136))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A020 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"US-ASCII\") NIL NIL \"7BIT\" 30 1 NIL NIL NIL)(\"MESSAGE\" \"RFC822\" (\"NAME\" \"hello\") NIL NIL \"7BIT\" 793 (\"Tue, 16 Aug 2005 15:22:46 +0900\" \"hello\" ((\"Bar\" NIL \"bar\" \"ruby-lang.org\")) ((\"Bar\" NIL \"bar\" \"ruby-lang.org\")) ((\"Bar\" NIL \"bar\" \"ruby-lang.org\")) ((NIL NIL \"baz\" \"ruby-lang.org\")) NIL NIL NIL \"<43018636.3020908@ruby-lang.org>\") ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"ISO-2022-JP\") NIL NIL \"7BIT\" 14 1 NIL NIL NIL)(\"TEXT\" \"PLAIN\" (\"NAME\" \"hello.txt\") NIL NIL \"BASE64\" 16 1 NIL (\"INLINE\" (\"FILENAME\" \"hello.txt\")) NIL) \"MIXED\" (\"BOUNDARY\" \"------------040505010403090308050103\") NIL NIL) 29) \"MIXED\" (\"BOUNDARY\" \"------------020008030500060306020306\") NIL NIL))\r\n", sock.output.gets)
+    assert_equal("A021 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[1] {30}\r\n", sock.output.gets)
+    assert_equal("This is a forwarded message.\r\n", sock.output.read(30))
+    assert_equal(" FLAGS (\\Seen))\r\n", sock.output.gets)
+    assert_equal("A022 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[2] {793}\r\n", sock.output.gets)
+    assert_equal(mail3_part2, sock.output.read(793))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A023 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[2.1] {14}\r\n", sock.output.gets)
+    assert_equal("hello, world\r\n", sock.output.read(14))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A024 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[2.2] {18}\r\n", sock.output.gets)
+    assert_equal("aGVsbG8gd29ybGQK\r\n", sock.output.read(18))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A025 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+  end
+
+  def test_store
+    mail_store = Ximapd::MailStore.new(@config)
+    mail_store.uid_seq.current = 10
+    mail1 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+Subject: hello
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+
+Hello world
+EOF
+    uid1 = mail_store.import_mail(mail1)
+    mail_store.close
+
+    sock = SpoofSocket.new(<<EOF)
+A001 STORE 1 FLAGS (\\Seen NonJunk)\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("A001 BAD Command unrecognized/login please\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 STORE 1 FLAGS (\\Seen NonJunk)\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("A002 BAD Command unrecognized\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 SELECT INBOX\r
+A003 STORE 1 FLAGS (\\Seen NonJunk)\r
+A004 STORE 1 +FLAGS (\\Deleted)\r
+A005 STORE 1 -FLAGS (NonJunk)\r
+A006 STORE 1 FLAGS.SILENT (\\Seen NonJunk)\r
+A007 FETCH 1 (FLAGS)\r
+A008 STORE 1 +FLAGS.SILENT (\\Deleted)\r
+A009 FETCH 1 (FLAGS)\r
+A010 STORE 1 -FLAGS.SILENT (NonJunk)\r
+A011 FETCH 1 (FLAGS)\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid1 + 1}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk))\r\n",
+                 sock.output.gets)
+    assert_equal("A003 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk \\Deleted))\r\n",
+                 sock.output.gets)
+    assert_equal("A004 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen \\Deleted))\r\n",
+                 sock.output.gets)
+    assert_equal("A005 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("A006 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk))\r\n",
+                 sock.output.gets)
+    assert_equal("A007 OK FETCH completed\r\n", sock.output.gets)
+    assert_equal("A008 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen NonJunk \\Deleted))\r\n",
+                 sock.output.gets)
+    assert_equal("A009 OK FETCH completed\r\n", sock.output.gets)
+    assert_equal("A010 OK STORE completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (FLAGS (\\Recent \\Seen \\Deleted))\r\n",
+                 sock.output.gets)
+    assert_equal("A011 OK FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
@@ -1960,6 +2364,145 @@ EOF
     assert_equal(" FLAGS (\\Seen) FLAGS (\\Recent \\Seen))\r\n",
                  sock.output.gets)
     assert_equal("A005 OK FETCH completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+  end
+
+  def test_uid_copy__ml
+    mail_store = Ximapd::MailStore.new(@config)
+    mail1 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: hello
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+X-ML-Name: foo
+
+Hello, Foo
+EOF
+    uid1 = mail_store.import_mail(mail1)
+    mail2 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: bar@ruby-lang.org
+Subject: hello
+Date: Sat, 09 Apr 2005 00:54:59 +0900
+Content-Type: text/plain; charset=US-ASCII
+X-ML-Name: bar
+
+Hello, Bar
+EOF
+    uid2 = mail_store.import_mail(mail2)
+    mail_store.create_mailbox("Mailbox1")
+    mail_store.create_mailbox("Mailbox2")
+    mail_store.close
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 SELECT ml/foo\r
+A003 UID COPY #{uid1} ml/bar\r
+A004 UID COPY #{uid1} Mailbox1\r
+A005 SELECT ml/bar\r
+A006 UID COPY #{uid2} ml/foo\r
+A007 UID COPY #{uid2} ml/bar\r
+A008 UID COPY #{uid2} Mailbox1\r
+A009 SELECT ml/foo\r
+A010 SELECT ml/bar\r
+A011 SELECT Mailbox1\r
+A012 UID COPY #{uid2 + 5} Mailbox2\r
+A013 SELECT ml/foo\r
+A014 SELECT ml/bar\r
+A015 SELECT Mailbox2\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 1}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("A003 OK UID COPY completed\r\n", sock.output.gets)
+    assert_equal("A004 OK UID COPY completed\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 3}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A005 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("A006 OK UID COPY completed\r\n", sock.output.gets)
+    assert_equal("A007 OK UID COPY completed\r\n", sock.output.gets)
+    assert_equal("A008 OK UID COPY completed\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 6}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A009 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* 3 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 3 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 6}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A010 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 6}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A011 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("A012 OK UID COPY completed\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 7}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A013 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* 3 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 3 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 7}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A014 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* 1 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 1 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 7}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A015 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
