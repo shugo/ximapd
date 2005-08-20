@@ -1236,6 +1236,7 @@ EOF
     mail_store = Ximapd::MailStore.new(@config)
     mail_store.uid_seq.current = 10
     mail1 = <<EOF.gsub(/\n/, "\r\n")
+From foo Wed Mar 30 08:34:46 2005 +0000
 From: shugo@ruby-lang.org
 To: ruby-list@ruby-lang.org
 Cc: foo@ruby-lang.org
@@ -1246,6 +1247,7 @@ Hello, world
 EOF
     uid1 = mail_store.import_mail(mail1)
     mail2 = <<EOF.gsub(/\n/, "\r\n")
+From foo Fri Apr 01 03:51:06 2005 +0000
 From: foo@ruby-lang.org
 To: ruby-list@ruby-lang.org
 Bcc: foo@ruby-lang.org
@@ -1256,6 +1258,7 @@ Goodbye, world
 EOF
     uid2 = mail_store.import_mail(mail2)
     mail3 = <<EOF.gsub(/\n/, "\r\n")
+From foo Sat Apr 02 18:06:39 2005 +0000
 From: shugo@ruby-lang.org
 To: foo@ruby-lang.org
 Subject: hello
@@ -1265,6 +1268,7 @@ Hello, foo
 EOF
     uid3 = mail_store.import_mail(mail3)
     mail4 = Iconv.conv("iso-2022-jp", "utf-8", <<EOF).gsub(/\n/, "\r\n")
+From foo Sat Apr 02 18:06:39 2005 +0000
 From: shugo@ruby-lang.org
 To: foo@ruby-lang.org
 Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
@@ -1275,6 +1279,7 @@ Content-Type: text/plain; charset=iso-2022-jp
 EOF
     uid4 = mail_store.import_mail(mail4)
     mail5 = <<EOF.gsub(/\n/, "\r\n")
+From foo Sat Apr 02 18:06:39 2005 +0000
 From: shugo@ruby-lang.org
 To: foo@ruby-lang.org
 Subject: =?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=
@@ -1356,6 +1361,21 @@ A303 SEARCH FROM foo\r
 A304 SEARCH TO foo\r
 A305 SEARCH CC foo\r
 A306 SEARCH BCC foo\r
+A307 SEARCH NOT BCC foo\r
+A308 SEARCH OR TO foo CC foo\r
+A309 SEARCH OR NOT TO foo CC foo\r
+A310 SEARCH SENTBEFORE 1-Apr-2005\r
+A311 SEARCH SENTON 1-Apr-2005\r
+A312 SEARCH SENTSINCE 1-Apr-2005\r
+A313 SEARCH BEFORE 1-Apr-2005\r
+A314 SEARCH ON 1-Apr-2005\r
+A315 SEARCH SINCE 1-Apr-2005\r
+A316 SEARCH LARGER 250\r
+A317 SEARCH SMALLER 150\r
+A401 SEARCH (OR NOT TO foo CC foo)\r
+A402 SEARCH (OR NOT TO foo CC foo) BCC foo\r
+A403 SEARCH BCC foo (OR NOT TO foo CC foo)\r
+A404 SEARCH BCC foo (OR NOT TO foo CC foo) BCC foo\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
@@ -1462,6 +1482,36 @@ EOF
     assert_equal("A305 OK SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH 2\r\n", sock.output.gets)
     assert_equal("A306 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 3 4 5\r\n", sock.output.gets)
+    assert_equal("A307 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 3 4 5\r\n", sock.output.gets)
+    assert_equal("A308 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 2\r\n", sock.output.gets)
+    assert_equal("A309 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A310 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A311 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3 4 5\r\n", sock.output.gets)
+    assert_equal("A312 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("A313 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A314 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 3 4 5\r\n", sock.output.gets)
+    assert_equal("A315 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 5\r\n", sock.output.gets)
+    assert_equal("A316 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2 3\r\n", sock.output.gets)
+    assert_equal("A317 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 2\r\n", sock.output.gets)
+    assert_equal("A401 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A402 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A403 OK SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH 2\r\n", sock.output.gets)
+    assert_equal("A404 OK SEARCH completed\r\n", sock.output.gets)
 
     assert_equal(nil, sock.output.gets)
   end

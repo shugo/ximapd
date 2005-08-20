@@ -1418,14 +1418,16 @@ class Ximapd
     def parse_mail(mail, uid, flags, indate, override = {})
       mail.gsub!(/\r?\n/, "\r\n")
       indate = strip_unix_from(mail, indate)
-      if indate.nil?
+      if indate
+        indate = indate.to_time.getlocal.to_datetime
+      else
         indate = DateTime.now
       end
       properties = Hash.new("")
       properties["uid"] = uid
       properties["size"] = mail.size
       properties["flags"] = ""
-      properties["internal-date"] = indate.strftime("%Y-%m-%dT%H:%M:%S")
+      properties["internal-date"] = indate.to_time.getlocal.strftime("%Y-%m-%dT%H:%M:%S")
       properties["date"] = properties["internal-date"]
       properties["x-mail-count"] = 0
       properties["mailbox-id"] = 0
@@ -1528,7 +1530,7 @@ class Ximapd
         properties[field] = get_header_field(mail, field)
       end
       begin
-        properties["date"] = DateTime.parse(mail.header["date"].to_s).to_s
+        properties["date"] = DateTime.parse(mail.header["date"].to_s).to_time.getlocal.strftime("%Y-%m-%dT%H:%M:%S")
       rescue Exception => e
         @logger.log_exception(e, "failed to parse Date", Logger::WARN)
       end
@@ -3071,13 +3073,24 @@ class Ximapd
       token = lookahead
       if /\A(\d+|\*)/.match(token.value)
         return SequenceNumberSearchKey.new(sequence_set)
+      elsif token.symbol == T_LPAR
+        shift_token
+        keys = []
+        until (key = search_key(charset)).kind_of?(EndGroupSearchKey)
+          keys << key
+        end
+        return GroupSearchKey.new(keys)
+      elsif token.symbol == T_RPAR
+        shift_token
+        return EndGroupSearchKey.new
       end
+
       name = tokens([T_ATOM, T_NUMBER, T_NIL, T_PLUS, T_STAR])
       case name.upcase
       when "UID"
         match(T_SPACE)
         return UidSearchKey.new(sequence_set)
-      when "BODY"
+      when "BODY", "TEXT"
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
         return BodySearchKey.new(s)
@@ -3107,6 +3120,38 @@ class Ximapd
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
         return HeaderSearchKey.new("bcc", s)
+      when "BEFORE"
+        match(T_SPACE)
+        s = tokens([T_ATOM, T_QUOTED])
+        return BeforeSearchKey.new(s)
+      when "ON"
+        match(T_SPACE)
+        s = tokens([T_ATOM, T_QUOTED])
+        return OnSearchKey.new(s)
+      when "SINCE"
+        match(T_SPACE)
+        s = tokens([T_ATOM, T_QUOTED])
+        return SinceSearchKey.new(s)
+      when "SENTBEFORE"
+        match(T_SPACE)
+        s = tokens([T_ATOM, T_QUOTED])
+        return SentbeforeSearchKey.new(s)
+      when "SENTON"
+        match(T_SPACE)
+        s = tokens([T_ATOM, T_QUOTED])
+        return SentonSearchKey.new(s)
+      when "SENTSINCE"
+        match(T_SPACE)
+        s = tokens([T_ATOM, T_QUOTED])
+        return SentsinceSearchKey.new(s)
+      when "LARGER"
+        match(T_SPACE)
+        s = tokens([T_NUMBER])
+        return LargerSearchKey.new(s)
+      when "SMALLER"
+        match(T_SPACE)
+        s = tokens([T_NUMBER])
+        return SmallerSearchKey.new(s)
       when "ANSWERED"
         return FlagSearchKey.new(@session.mail_store, "\\Answered")
       when "DELETED"
@@ -3142,6 +3187,12 @@ class Ximapd
       when "NOT"
         match(T_SPACE)
         return NotSearchKey.new(search_key(charset))
+      when "OR"
+        match(T_SPACE)
+        key1 = search_key(charset)
+        match(T_SPACE)
+        key2 = search_key(charset)
+        return OrSearchKey.new(key1, key2)
       else
         return NullSearchKey.new
       end
@@ -4274,6 +4325,140 @@ class Ximapd
     def reject(uids)
       return @key.select(uids)
     end
+  end
+
+  class DateSearchKey < NullSearchKey
+    def to_query
+      return format("%s %s %s", field, op, @date.strftime())
+    end
+
+    private
+
+    def initialize(date_str)
+      @date = parse_date(date_str)
+      @date.gmtime
+    end
+
+    MONTH = {
+      "Jan" =>  1, "Feb" =>  2, "Mar" =>  3, "Apr" =>  4,
+      "May" =>  5, "Jun" =>  6, "Jul" =>  7, "Aug" =>  8,
+      "Sep" =>  9, "Oct" => 10, "Nov" => 11, "Dec" => 12,
+    }
+    def parse_date(date_str)
+      if date_str.match(/\A"?(\d{1,2})-(#{MONTH.keys.join("|")})-(\d{4})"?\z/o)
+        Time.local($3.to_i, MONTH[$2], $1.to_i)
+      else
+        raise "invlid date string #{date_str}"
+      end
+    end
+
+    def date_str(date)
+      date.strftime("%Y-%m-%dT%H:%M:%S")
+    end
+  end
+
+  class BeforeSearchKey < DateSearchKey
+    def to_query
+      return format("internal-date < %s", date_str(@date))
+    end
+  end
+
+  class OnSearchKey < DateSearchKey
+    def to_query
+      date_end = @date + 86400
+      return format("%s <= internal-date < %s", 
+                    date_str(@date), date_str(date_end))
+    end
+  end
+
+  class SinceSearchKey < DateSearchKey
+    def to_query
+      date = @date + 86400
+      return format("internal-date >= %s", date_str(date))
+    end
+  end
+
+  class SentbeforeSearchKey < DateSearchKey
+    def to_query
+      return format("date < %s", date_str(@date))
+    end
+  end
+
+  class SentonSearchKey < DateSearchKey
+    def to_query
+      date_end = @date + 86400
+      return format("%s <= date < %s", 
+                    date_str(@date), date_str(date_end))
+    end
+  end
+
+  class SentsinceSearchKey < DateSearchKey
+    def to_query
+      date = @date + 86400
+      return format("date >= %s", date_str(date))
+    end
+  end
+
+  class LargerSearchKey < NullSearchKey
+    def initialize(size_str)
+      @size_str = size_str
+    end
+
+    def to_query
+      return format("size > %s", @size_str)
+    end
+  end
+
+  class SmallerSearchKey < LargerSearchKey
+    def to_query
+      return format("size < %s", @size_str)
+    end
+  end
+
+  class OrSearchKey < NullSearchKey
+    def initialize(key1, key2)
+      @keys = [key1, key2]
+    end
+
+    def to_query
+      qs = []
+      @keys.each do |key|
+        q = key.to_query
+        if q.empty?
+          return ""
+        elsif /\A\s*!/ =~ q
+          qs << "uid > 0 " + q
+        else
+          qs << q
+        end
+      end
+
+      return format("( %s )", qs.join(" | "))
+    end
+  end
+
+  class GroupSearchKey < NullSearchKey
+    def initialize(keys)
+      @keys = keys
+    end
+
+    def to_query
+      qs = []
+      @keys.each do |key|
+        q = key.to_query
+        if q.empty?
+        elsif /\A\s*!/ =~ q
+          qs << "uid > 0 " + q
+        else
+          qs << q
+        end
+      end
+
+      return format("( %s )", qs.join(" & "))
+    end
+  end
+
+  class EndGroupSearchKey
   end
 
   class AbstractFetchCommand < Command
