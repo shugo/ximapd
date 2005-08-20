@@ -1955,6 +1955,9 @@ A022 UID FETCH 3 BODY[1]\r
 A023 UID FETCH 3 BODY[2]\r
 A024 UID FETCH 3 BODY[2.1]\r
 A025 UID FETCH 3 BODY[2.2]\r
+A026 UID FETCH 3 BODY[2.1.MIME]\r
+A027 UID FETCH 3 BODY[2.2.MIME]\r
+A101 UID FETCH 1:* FLAGS
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
@@ -2051,8 +2054,8 @@ EOF
     assert_equal("see hello.txt.\r\n\r\n", sock.output.read(18))
     assert_equal(" FLAGS (\\Seen))\r\n", sock.output.gets)
     assert_equal("A016 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 2 FETCH (UID 2 BODY[2] {18}\r\n", sock.output.gets)
-    assert_equal("SGVsbG8gV29ybGQK\r\n", sock.output.read(18))
+    assert_equal("* 2 FETCH (UID 2 BODY[2] {16}\r\n", sock.output.gets)
+    assert_equal("SGVsbG8gV29ybGQK", sock.output.read(16))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A017 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal("* 2 FETCH (UID 2 BODY[1]<5> {10}\r\n", sock.output.gets)
@@ -2081,10 +2084,22 @@ EOF
     assert_equal("hello, world\r\n", sock.output.read(14))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A024 OK UID FETCH completed\r\n", sock.output.gets)
-    assert_equal("* 3 FETCH (UID 3 BODY[2.2] {18}\r\n", sock.output.gets)
-    assert_equal("aGVsbG8gd29ybGQK\r\n", sock.output.read(18))
+    assert_equal("* 3 FETCH (UID 3 BODY[2.2] {16}\r\n", sock.output.gets)
+    assert_equal("aGVsbG8gd29ybGQK", sock.output.read(16))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A025 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[2.1.MIME] {82}\r\n", sock.output.gets)
+    assert_equal("Content-Type: text/plain; charset=ISO-2022-JP\r\nContent-Transfer-Encoding: 7bit\r\n\r\n", sock.output.read(82))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A026 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[2.2.MIME] {136}\r\n", sock.output.gets)
+    assert_equal("Content-Type: text/plain;\r\n name=\"hello.txt\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: inline;\r\n filename=\"hello.txt\"\r\n\r\n", sock.output.read(136))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A027 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* #{uid1} FETCH (UID #{uid1} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("* #{uid2} FETCH (UID #{uid2} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("* #{uid3} FETCH (UID #{uid3} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("A101 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
