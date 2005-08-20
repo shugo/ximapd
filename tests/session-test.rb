@@ -2005,6 +2005,7 @@ A022 UID FETCH 3 BODY[1]\r
 A023 UID FETCH 3 BODY[2]\r
 A024 UID FETCH 3 BODY[2.1]\r
 A025 UID FETCH 3 BODY[2.2]\r
+A026 UID FETCH 1:* FLAGS
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
@@ -2135,6 +2136,10 @@ EOF
     assert_equal("aGVsbG8gd29ybGQK\r\n", sock.output.read(18))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A025 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* #{uid1} FETCH (UID #{uid1} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("* #{uid2} FETCH (UID #{uid2} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("* #{uid3} FETCH (UID #{uid3} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
+    assert_equal("A026 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 
