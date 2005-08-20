@@ -1983,11 +1983,11 @@ class Ximapd
     end
 
     def mime_header(part)
-      return get_part(part).to_s.slice(/.*?\n\n/mn).gsub(/\n/, "\r\n")
+      return get_part(part).header.to_s.gsub(/\n/, "\r\n") + "\r\n"
     end
 
     def mime_body(part)
-      return get_part(part).to_s.slice(/\n\n(.*)/mn, 1).gsub(/\n/, "\r\n")
+      return get_part(part).body.to_s.gsub(/\n/, "\r\n")
     end
 
     def delete
@@ -4642,7 +4642,7 @@ class Ximapd
       when "MIME"
         part = @section.part
         s = mail.mime_header(part)
-        return format("BODY[%d.MIME] %s", part, literal(s))
+        return format("BODY[%s.MIME] %s", part, literal(s))
       when "HEADER"
         return format("BODY[HEADER] %s", literal(mail.header))
       when "HEADER.FIELDS"
