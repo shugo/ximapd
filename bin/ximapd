@@ -1958,10 +1958,14 @@ class Ximapd
       end
     end
 
-    def header
-      open_file do |f|
-        f.flock(File::LOCK_SH)
-        return f.gets("\r\n\r\n")
+    def header(part = nil)
+      if part
+        return get_part(part).body.to_s.slice(/.*?\n\n/mn).gsub(/\n/, "\r\n")
+      else
+        open_file do |f|
+          f.flock(File::LOCK_SH)
+          return f.gets("\r\n\r\n")
+        end
       end
     end
 
@@ -4644,7 +4648,12 @@ class Ximapd
         s = mail.mime_header(part)
         return format("BODY[%s.MIME] %s", part, literal(s))
       when "HEADER"
-        return format("BODY[HEADER] %s", literal(mail.header))
+        s = mail.header(@section.part)
+        if @section.part
+          return format("BODY[%s.HEADER] %s", @section.part, literal(s))
+        else
+          return format("BODY[HEADER] %s", literal(s))
+        end
       when "HEADER.FIELDS"
         s = mail.header_fields(@section.header_list)
         fields = @section.header_list.collect { |i|

@@ -1950,7 +1950,8 @@ aGVsbG8gd29ybGQK
 
 --------------020008030500060306020306--
 EOF
-    mail3_part2 = mail3.slice(/^Message-ID: <43018636.3020908@ruby-lang.org>.*^--------------040505010403090308050103--\r\n\r\n/m)
+    mail3_part2 = mail3.slice(/^Message-ID: <43018636.3020908@ruby-lang.org>.*^--------------040505010403090308050103--\r\n\r\n/mn)
+    mail3_part2_header = mail3_part2.slice(/.*?\r\n\r\n/mn)
     uid3 = mail_store.import_mail(mail3)
     mail_store.close
 
@@ -2007,6 +2008,7 @@ A024 UID FETCH 3 BODY[2.1]\r
 A025 UID FETCH 3 BODY[2.2]\r
 A026 UID FETCH 3 BODY[2.1.MIME]\r
 A027 UID FETCH 3 BODY[2.2.MIME]\r
+A028 UID FETCH 3 BODY[2.HEADER]\r
 A101 UID FETCH 1:* FLAGS
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
@@ -2146,6 +2148,11 @@ EOF
     assert_equal("Content-Type: text/plain;\r\n name=\"hello.txt\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: inline;\r\n filename=\"hello.txt\"\r\n\r\n", sock.output.read(136))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A027 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[2.HEADER] {#{mail3_part2_header.length}}\r\n", sock.output.gets)
+    assert_equal(mail3_part2_header,
+                 sock.output.read(mail3_part2_header.length))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A028 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal("* #{uid1} FETCH (UID #{uid1} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
     assert_equal("* #{uid2} FETCH (UID #{uid2} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
     assert_equal("* #{uid3} FETCH (UID #{uid3} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
