@@ -812,34 +812,8 @@ class Ximapd
           }
         ]
       }
-    end # class RastIndex
-  end # if defined?(::Rast)
-
-  DEFAULT_CHARSET = "iso-2022-jp"
-  if defined?(::Rast)
-    class RastIndex < AbstractIndex
       DEFAULT_SYNC_THRESHOLD_CHARS = 500000
-    end # class RastIndex
-  end
-  DEFAULT_ML_HEADER_FIELDS = [
-    "x-ml-name",
-    "list-id",
-    "mailing-list"
-  ]
-  DEFAULT_MAILBOXES = {
-    "ml" => {
-      "flags" => "\\Noselect"
-    },
-    "queries" => {
-      "flags" => "\\Noselect"
-    },
-    "static" => {
-      "flags" => "\\Noselect"
-    }
-  }
 
-  if defined?(::Rast)
-    class RastIndex < AbstractIndex
       module QueryFormat
         module_function
 
@@ -847,27 +821,7 @@ class Ximapd
           return format('"%s"', s.gsub(/[\\"]/n, "\\\\\\&"))
         end
       end
-    end # class RastIndex
-  end # if defined?(::Rast)
 
-  module DataFormat
-    module_function
-
-    def quoted(s)
-      if s.nil?
-        return "NIL"
-      else
-        return format('"%s"', s.to_s.gsub(/[\r\n]/, "").gsub(/[\\"]/n, "\\\\\\&"))
-      end
-    end
-
-    def literal(s)
-      return format("{%d}\r\n%s", s.length, s)
-    end
-  end
-
-  if defined?(::Rast)
-    class RastIndex < AbstractIndex
       private
 
       extend QueryFormat
@@ -1121,6 +1075,313 @@ class Ximapd
         @index.search(query["main"], "num_items" => Rast::RESULT_MIN_ITEMS)
       end
       public :try_query
+
+      class NullSearchKey
+        def to_query
+          return {"main" => "", "sub" => nil}
+        end
+
+        def select(uids)
+          return uids
+        end
+
+        def reject(uids)
+          return uids
+        end
+      end
+
+      class BodySearchKey < NullSearchKey
+        def initialize(value)
+          @value = value
+        end
+
+        def to_query
+          return {"main" => @value, "sub" => nil}
+        end
+      end
+
+      class HeaderSearchKey < NullSearchKey
+        include QueryFormat
+
+        def initialize(name, value)
+          @name = name
+          @value = value
+        end
+
+        def to_query
+          case @name
+          when "subject", "from", "to", "cc", "bcc"
+            return {"main" => format("%s : %s", @name, quote_query(@value)),
+                    "sub" => nil}
+          when "x-ml-name", "x-mail-count"
+            return {"main" => format("%s = %s", @name, quote_query(@value)),
+                    "sub" => nil}
+          else
+            super
+          end
+        end
+      end
+
+      class FlagSearchKey < NullSearchKey
+        def initialize(mail_store, flag)
+          @mail_store = mail_store
+          @flag_re = Regexp.new(Regexp.quote(flag) + "\\b", true, "n")
+        end
+
+        def select(uids)
+          @mail_store.open_index do |index|
+            return uids.select { |uid|
+              @flag_re.match(index.get_flags(uid, nil, nil))
+            }
+          end
+        end
+
+        def reject(uids)
+          @mail_store.open_index do |index|
+            return uids.reject { |uid|
+              @flag_re.match(index.get_flags(uid, nil, nil))
+            }
+          end
+        end
+      end
+
+      class NoFlagSearchKey < FlagSearchKey
+        alias super_select select
+        alias super_reject reject
+        alias select super_reject
+        alias reject super_select
+      end
+
+      class KeywordSearchKey < NullSearchKey
+        def initialize(mail_store, flag)
+          @mail_store = mail_store
+          if /\A\w/n.match(flag)
+            s = "\\b"
+          else
+            s = ""
+          end
+          @flag_re = Regexp.new(s + Regexp.quote(flag) + "\\b", true, "n")
+        end
+
+        def select(uids)
+          @mail_store.open_index do |index|
+            return uids.select { |uid|
+              @flag_re.match(index.get_flags(uid, nil, nil))
+            }
+          end
+        end
+
+        def reject(uids)
+          @mail_store.open_index do |index|
+            return uids.reject { |uid|
+              @flag_re.match(index.get_flags(uid, nil, nil))
+            }
+          end
+        end
+      end
+
+      class NoKeywordSearchKey < KeywordSearchKey
+        alias super_select select
+        alias super_reject reject
+        alias select super_reject
+        alias reject super_select
+      end
+
+      class SequenceNumberSearchKey < NullSearchKey
+        def initialize(sequence_set)
+          @sequence_set = sequence_set
+        end
+
+        def to_query
+          raise NotImplementedError.new("sequence number search is not implemented")
+        end
+      end
+
+      class UidSearchKey < NullSearchKey
+        def initialize(sequence_set)
+          @sequence_set = sequence_set
+        end
+
+        def to_query
+          if @sequence_set.empty?
+            super
+          end
+          q = "( " + @sequence_set.collect { |i|
+            case i
+            when Range
+              if i.last == -1
+                format("uid >= %d", i.first)
+              else
+                format("%d <= uid <= %d", i.first, i.last)
+              end
+            else
+              format("uid = %d", i)
+            end
+          }.join(" | ") + " )"
+          return {"main" => q, "sub" => nil}
+        end
+      end
+
+      class NotSearchKey
+        def initialize(key)
+          @key = key
+        end
+
+        def to_query
+          q = @key.to_query
+          if q["main"].empty?
+            return {"main" => "", "sub" => nil}
+          else
+            return {"main" => format("! ( %s )", q["main"]), "sub" => nil}
+          end
+        end
+
+        def select(uids)
+          return @key.reject(uids)
+        end
+
+        def reject(uids)
+          return @key.select(uids)
+        end
+      end
+
+      class DateSearchKey < NullSearchKey
+        def to_query
+          return {"main" => format("%s %s %s", field, op, @date.strftime()),
+                  "sub" => nil}
+        end
+
+        private
+
+        def initialize(date_str)
+          @date = parse_date(date_str)
+          @date.gmtime
+        end
+
+        MONTH = {
+          "Jan" =>  1, "Feb" =>  2, "Mar" =>  3, "Apr" =>  4,
+          "May" =>  5, "Jun" =>  6, "Jul" =>  7, "Aug" =>  8,
+          "Sep" =>  9, "Oct" => 10, "Nov" => 11, "Dec" => 12,
+        }
+        def parse_date(date_str)
+          if date_str.match(/\A"?(\d{1,2})-(#{MONTH.keys.join("|")})-(\d{4})"?\z/o)
+            Time.local($3.to_i, MONTH[$2], $1.to_i)
+          else
+            raise "invlid date string #{date_str}"
+          end
+        end
+
+        def date_str(date)
+          date.strftime("%Y-%m-%dT%H:%M:%S")
+        end
+      end
+
+      class BeforeSearchKey < DateSearchKey
+        def to_query
+          return {"main" => format("internal-date < %s", date_str(@date)),
+                  "sub" => nil}
+        end
+      end
+
+      class OnSearchKey < DateSearchKey
+        def to_query
+          date_end = @date + 86400
+          return {"main" => format("%s <= internal-date < %s",
+                                   date_str(@date), date_str(date_end)),
+                  "sub" => nil}
+        end
+      end
+
+      class SinceSearchKey < DateSearchKey
+        def to_query
+          date = @date + 86400
+          return {"main" => format("internal-date >= %s", date_str(date)), "sub" => nil}
+        end
+      end
+
+      class SentbeforeSearchKey < DateSearchKey
+        def to_query
+          return {"main" => format("date < %s", date_str(@date)), "sub" => nil}
+        end
+      end
+
+      class SentonSearchKey < DateSearchKey
+        def to_query
+          date_end = @date + 86400
+          return {"main" => format("%s <= date < %s",
+                                   date_str(@date), date_str(date_end)),
+                  "sub" => nil}
+        end
+      end
+
+      class SentsinceSearchKey < DateSearchKey
+        def to_query
+          date = @date + 86400
+          return {"main" => format("date >= %s", date_str(date)), "sub" => nil}
+        end
+      end
+
+      class LargerSearchKey < NullSearchKey
+        def initialize(size_str)
+          @size_str = size_str
+        end
+
+        def to_query
+          return {"main" => format("size > %s", @size_str), "sub" => nil}
+        end
+      end
+
+      class SmallerSearchKey < LargerSearchKey
+        def to_query
+          return {"main" => format("size < %s", @size_str), "sub" => nil}
+        end
+      end
+
+      class OrSearchKey < NullSearchKey
+        def initialize(key1, key2)
+          @keys = [key1, key2]
+        end
+
+        def to_query
+          qs = []
+          @keys.each do |key|
+            q = key.to_query
+            if q["main"].empty?
+              return ""
+            elsif /\A\s*!/ =~ q["main"]
+              qs << "uid > 0 " + q["main"]
+            else
+              qs << q["main"]
+            end
+          end
+
+          return {"main" => format("( %s )", qs.join(" | ")), "sub" => nil}
+        end
+      end
+
+      class GroupSearchKey < NullSearchKey
+        def initialize(keys)
+          @keys = keys
+        end
+
+        def to_query
+          qs = []
+          @keys.each do |key|
+            q = key.to_query
+            if q["main"].empty?
+            elsif /\A\s*!/ =~ q["main"]
+              qs << "uid > 0 " + q["main"]
+            else
+              qs << q["main"]
+            end
+          end
+
+          return {"main" => format("( %s )", qs.join(" & ")), "sub" => nil}
+        end
+      end
+
+      class EndGroupSearchKey
+      end
     end # class RastIndex
     INDEX_ENGINES["Rast"] = [RastIndex, "rast", Rast::VERSION]
   end # if defined?(::Rast)
@@ -1774,6 +2035,40 @@ class Ximapd
     end # class EstraierIndex
     INDEX_ENGINES["Estraier"] = [EstraierIndex, "HyperEstraier", '(unknown)']
   end # if defined?(::HyperEstraier)
+
+  DEFAULT_CHARSET = "iso-2022-jp"
+  DEFAULT_ML_HEADER_FIELDS = [
+    "x-ml-name",
+    "list-id",
+    "mailing-list"
+  ]
+  DEFAULT_MAILBOXES = {
+    "ml" => {
+      "flags" => "\\Noselect"
+    },
+    "queries" => {
+      "flags" => "\\Noselect"
+    },
+    "static" => {
+      "flags" => "\\Noselect"
+    }
+  }
+
+  module DataFormat
+    module_function
+
+    def quoted(s)
+      if s.nil?
+        return "NIL"
+      else
+        return format('"%s"', s.to_s.gsub(/[\r\n]/, "").gsub(/[\\"]/n, "\\\\\\&"))
+      end
+    end
+
+    def literal(s)
+      return format("{%d}\r\n%s", s.length, s)
+    end
+  end
 
   class MailData
     attr_reader :raw_data, :uid, :flags, :internal_date, :text, :properties
@@ -5220,317 +5515,6 @@ class Ximapd
       return uids
     end
   end
-
-  if defined?(::Rast)
-    class RastIndex < AbstractIndex
-      class NullSearchKey
-        def to_query
-          return {"main" => "", "sub" => nil}
-        end
-
-        def select(uids)
-          return uids
-        end
-
-        def reject(uids)
-          return uids
-        end
-      end
-
-      class BodySearchKey < NullSearchKey
-        def initialize(value)
-          @value = value
-        end
-
-        def to_query
-          return {"main" => @value, "sub" => nil}
-        end
-      end
-
-      class HeaderSearchKey < NullSearchKey
-        include QueryFormat
-
-        def initialize(name, value)
-          @name = name
-          @value = value
-        end
-
-        def to_query
-          case @name
-          when "subject", "from", "to", "cc", "bcc"
-            return {"main" => format("%s : %s", @name, quote_query(@value)),
-                    "sub" => nil}
-          when "x-ml-name", "x-mail-count"
-            return {"main" => format("%s = %s", @name, quote_query(@value)),
-                    "sub" => nil}
-          else
-            super
-          end
-        end
-      end
-
-      class FlagSearchKey < NullSearchKey
-        def initialize(mail_store, flag)
-          @mail_store = mail_store
-          @flag_re = Regexp.new(Regexp.quote(flag) + "\\b", true, "n")
-        end
-
-        def select(uids)
-          @mail_store.open_index do |index|
-            return uids.select { |uid|
-              @flag_re.match(index.get_flags(uid, nil, nil))
-            }
-          end
-        end
-
-        def reject(uids)
-          @mail_store.open_index do |index|
-            return uids.reject { |uid|
-              @flag_re.match(index.get_flags(uid, nil, nil))
-            }
-          end
-        end
-      end
-
-      class NoFlagSearchKey < FlagSearchKey
-        alias super_select select
-        alias super_reject reject
-        alias select super_reject
-        alias reject super_select
-      end
-
-      class KeywordSearchKey < NullSearchKey
-        def initialize(mail_store, flag)
-          @mail_store = mail_store
-          if /\A\w/n.match(flag)
-            s = "\\b"
-          else
-            s = ""
-          end
-          @flag_re = Regexp.new(s + Regexp.quote(flag) + "\\b", true, "n")
-        end
-
-        def select(uids)
-          @mail_store.open_index do |index|
-            return uids.select { |uid|
-              @flag_re.match(index.get_flags(uid, nil, nil))
-            }
-          end
-        end
-
-        def reject(uids)
-          @mail_store.open_index do |index|
-            return uids.reject { |uid|
-              @flag_re.match(index.get_flags(uid, nil, nil))
-            }
-          end
-        end
-      end
-
-      class NoKeywordSearchKey < KeywordSearchKey
-        alias super_select select
-        alias super_reject reject
-        alias select super_reject
-        alias reject super_select
-      end
-
-      class SequenceNumberSearchKey < NullSearchKey
-        def initialize(sequence_set)
-          @sequence_set = sequence_set
-        end
-
-        def to_query
-          raise NotImplementedError.new("sequence number search is not implemented")
-        end
-      end
-
-      class UidSearchKey < NullSearchKey
-        def initialize(sequence_set)
-          @sequence_set = sequence_set
-        end
-
-        def to_query
-          if @sequence_set.empty?
-            super
-          end
-          q = "( " + @sequence_set.collect { |i|
-            case i
-            when Range
-              if i.last == -1
-                format("uid >= %d", i.first)
-              else
-                format("%d <= uid <= %d", i.first, i.last)
-              end
-            else
-              format("uid = %d", i)
-            end
-          }.join(" | ") + " )"
-          return {"main" => q, "sub" => nil}
-        end
-      end
-
-      class NotSearchKey
-        def initialize(key)
-          @key = key
-        end
-
-        def to_query
-          q = @key.to_query
-          if q["main"].empty?
-            return {"main" => "", "sub" => nil}
-          else
-            return {"main" => format("! ( %s )", q["main"]), "sub" => nil}
-          end
-        end
-
-        def select(uids)
-          return @key.reject(uids)
-        end
-
-        def reject(uids)
-          return @key.select(uids)
-        end
-      end
-
-      class DateSearchKey < NullSearchKey
-        def to_query
-          return {"main" => format("%s %s %s", field, op, @date.strftime()),
-                  "sub" => nil}
-        end
-
-        private
-
-        def initialize(date_str)
-          @date = parse_date(date_str)
-          @date.gmtime
-        end
-
-        MONTH = {
-          "Jan" =>  1, "Feb" =>  2, "Mar" =>  3, "Apr" =>  4,
-          "May" =>  5, "Jun" =>  6, "Jul" =>  7, "Aug" =>  8,
-          "Sep" =>  9, "Oct" => 10, "Nov" => 11, "Dec" => 12,
-        }
-        def parse_date(date_str)
-          if date_str.match(/\A"?(\d{1,2})-(#{MONTH.keys.join("|")})-(\d{4})"?\z/o)
-            Time.local($3.to_i, MONTH[$2], $1.to_i)
-          else
-            raise "invlid date string #{date_str}"
-          end
-        end
-
-        def date_str(date)
-          date.strftime("%Y-%m-%dT%H:%M:%S")
-        end
-      end
-
-      class BeforeSearchKey < DateSearchKey
-        def to_query
-          return {"main" => format("internal-date < %s", date_str(@date)),
-                  "sub" => nil}
-        end
-      end
-
-      class OnSearchKey < DateSearchKey
-        def to_query
-          date_end = @date + 86400
-          return {"main" => format("%s <= internal-date < %s",
-                                   date_str(@date), date_str(date_end)),
-                  "sub" => nil}
-        end
-      end
-
-      class SinceSearchKey < DateSearchKey
-        def to_query
-          date = @date + 86400
-          return {"main" => format("internal-date >= %s", date_str(date)), "sub" => nil}
-        end
-      end
-
-      class SentbeforeSearchKey < DateSearchKey
-        def to_query
-          return {"main" => format("date < %s", date_str(@date)), "sub" => nil}
-        end
-      end
-
-      class SentonSearchKey < DateSearchKey
-        def to_query
-          date_end = @date + 86400
-          return {"main" => format("%s <= date < %s",
-                                   date_str(@date), date_str(date_end)),
-                  "sub" => nil}
-        end
-      end
-
-      class SentsinceSearchKey < DateSearchKey
-        def to_query
-          date = @date + 86400
-          return {"main" => format("date >= %s", date_str(date)), "sub" => nil}
-        end
-      end
-
-      class LargerSearchKey < NullSearchKey
-        def initialize(size_str)
-          @size_str = size_str
-        end
-
-        def to_query
-          return {"main" => format("size > %s", @size_str), "sub" => nil}
-        end
-      end
-
-      class SmallerSearchKey < LargerSearchKey
-        def to_query
-          return {"main" => format("size < %s", @size_str), "sub" => nil}
-        end
-      end
-
-      class OrSearchKey < NullSearchKey
-        def initialize(key1, key2)
-          @keys = [key1, key2]
-        end
-
-        def to_query
-          qs = []
-          @keys.each do |key|
-            q = key.to_query
-            if q["main"].empty?
-              return ""
-            elsif /\A\s*!/ =~ q["main"]
-              qs << "uid > 0 " + q["main"]
-            else
-              qs << q["main"]
-            end
-          end
-
-          return {"main" => format("( %s )", qs.join(" | ")), "sub" => nil}
-        end
-      end
-
-      class GroupSearchKey < NullSearchKey
-        def initialize(keys)
-          @keys = keys
-        end
-
-        def to_query
-          qs = []
-          @keys.each do |key|
-            q = key.to_query
-            if q["main"].empty?
-            elsif /\A\s*!/ =~ q["main"]
-              qs << "uid > 0 " + q["main"]
-            else
-              qs << q["main"]
-            end
-          end
-
-          return {"main" => format("( %s )", qs.join(" & ")), "sub" => nil}
-        end
-      end
-
-      class EndGroupSearchKey
-      end
-    end # class RastIndex
-  end # if defined?(::Rast)
 
   class AbstractFetchCommand < Command
     def initialize(sequence_set, atts)
