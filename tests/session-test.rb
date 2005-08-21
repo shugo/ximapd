@@ -1959,6 +1959,8 @@ A025 UID FETCH 3 BODY[2.2]\r
 A026 UID FETCH 3 BODY[2.1.MIME]\r
 A027 UID FETCH 3 BODY[2.2.MIME]\r
 A028 UID FETCH 3 BODY[2.HEADER]\r
+A029 UID FETCH 3 BODY[2.HEADER.FIELDS (From To)]\r
+A030 UID FETCH 3 BODY[2.1.MIME]<5.10>\r
 A101 UID FETCH 1:* FLAGS
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
@@ -2103,6 +2105,20 @@ EOF
                  sock.output.read(mail3_part2_header.length))
     assert_equal(")\r\n", sock.output.gets)
     assert_equal("A028 OK UID FETCH completed\r\n", sock.output.gets)
+    header_fields = <<EOF.gsub(/\n/, "\r\n")
+From: Bar <bar@ruby-lang.org>
+To: baz@ruby-lang.org
+
+EOF
+    assert_equal("* 3 FETCH (UID 3 BODY[2.HEADER.FIELDS (\"FROM\" \"TO\")] {#{header_fields.length}}\r\n", sock.output.gets)
+    assert_equal(header_fields, sock.output.read(header_fields.length))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A029 OK UID FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 3 FETCH (UID 3 BODY[2.1.MIME]<5> {10}\r\n",
+                 sock.output.gets)
+    assert_equal("nt-Type: t", sock.output.read(10))
+    assert_equal(")\r\n", sock.output.gets)
+    assert_equal("A030 OK UID FETCH completed\r\n", sock.output.gets)
     assert_equal("* #{uid1} FETCH (UID #{uid1} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
     assert_equal("* #{uid2} FETCH (UID #{uid2} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
     assert_equal("* #{uid3} FETCH (UID #{uid3} FLAGS (\\Recent \\Seen))\r\n", sock.output.gets)
