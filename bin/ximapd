@@ -41,8 +41,15 @@ require "logger"
 require "timeout"
 require "optparse"
 require "sdbm"
-require "rast"
 require "rmail/parser"
+begin
+  require "rast"
+rescue LoadError
+end
+begin
+  require "HyperEstraier"
+rescue LoadError
+end
 
 now = DateTime.now
 unless defined?(now.to_time)
@@ -75,19 +82,203 @@ unless defined?(now.to_time)
   end
 end
 
-module Rast
-  unless defined?(RESULT_ALL_ITEMS)
+if defined?(::Rast)
+  module Rast
+    unless defined?(RESULT_ALL_ITEMS)
+      if Rast::VERSION < "0.1.0"
+        RESULT_ALL_ITEMS = 0
+      else
+        RESULT_ALL_ITEMS = -1
+      end
+    end
     if Rast::VERSION < "0.1.0"
-      RESULT_ALL_ITEMS = 0
+      RESULT_MIN_ITEMS = 1
     else
-      RESULT_ALL_ITEMS = -1
+      RESULT_MIN_ITEMS = 0
     end
   end
-  if Rast::VERSION < "0.1.0"
-    RESULT_MIN_ITEMS = 1
-  else
-    RESULT_MIN_ITEMS = 0
+end # if defined?(::Rast)
+
+if defined?(::HyperEstraier)
+  module HyperEstraier
+    class DatabaseWrapper
+      class Error < RuntimeError; end
+
+      private
+      def initialize()
+        @db = Database.new()
+      end
+
+      public
+      def open(*args)
+        unless @db.open(*args)
+          raise Error, "could not open index: #{error_message}"
+        end
+        yield(self) if block_given?
+        nil
+      end
+
+      def close
+        @db.close
+      end
+
+      def put_doc(doc, opt = 0)
+        unless @db.put_doc(doc, opt)
+          raise Error, "could not put documennt: #{error_message}"
+        end
+        doc.id
+      end
+
+      def out_doc(doc_id, opt = 0)
+        unless @db.out_doc(doc_id, opt)
+          raise Error, "could not out documennt: #{error_message}"
+        end
+      end
+
+      def edit_doc(doc)
+        unless @db.edit_doc(doc)
+          raise Error, "could not edit documment: #{error_message}"
+        end
+      end
+
+      def get_doc(doc_id, opt = 0)
+        begin
+          @db.get_doc(doc_id, opt)
+        rescue
+          nil
+        end
+      end
+
+      def search(*args)
+        @db.search(*args)
+      end
+
+      def error
+        error = nil
+        begin
+          error = @db.error
+        rescue IOError
+        end
+
+        error
+      end
+
+      def error_message
+        errno = error
+        if errno
+          HyperEstraier.err_msg(errno)
+        else
+          '(unknown error)'
+        end
+      end
+    end
   end
+end # if defined?(::HyperEstraier)
+
+class Ximapd
+  INDEX_ENGINES = {} # { "Name" => [IndexClass, "library-name", "library-version"], ...}
+
+  class AbstractIndex
+    class << self
+      def make_list_query(list_name)
+        raise ScriptError.new("subclass must override this method")
+      end
+
+      def make_default_query(mailbox_id)
+        raise ScriptError.new("subclass must override this method")
+      end
+
+      def make_query(mailbox_name)
+        raise ScriptError.new("subclass must override this method")
+      end
+    end
+
+    def initialize(mail_store)
+      @mail_store = mail_store
+      @config = @mail_store.config
+      @mailbox_db = @mail_store.mailbox_db
+      @path = @mail_store.path
+      @index = nil
+      @index_path = File.expand_path("index", @path)
+    end
+    private :initialize
+
+    def setup
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def standby
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def relax
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def open(*args)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def close
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def register(mail_data, filename)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def get_flags(uid, item_id, item_obj)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def set_flags(uid, item_id, item_obj, flags)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def delete_flags(uid, item_id, item_obj)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def delete(uid, item_id)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def fetch(mailbox, sequence_set)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def uid_fetch(mailbox, sequence_set)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def mailbox_status(mailbox)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def query(mailbox, query)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def uid_search(mailbox, query)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def uid_search_by_keys(mailbox, keys)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def rebuild_index(*args)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def get_old_flags(uid)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def try_query(query)
+      raise ScriptError.new("subclass must override this method")
+    end
+  end # class AbstractIndex
 end
 
 class Ximapd
@@ -134,7 +325,7 @@ class Ximapd
       send(@config["action"])
     rescue StandardError => e
       STDERR.printf("ximapd: %s\n", e)
-      @logger.log_exception(e)
+      @logger.log_exception(e) if @logger
     end
   end
 
@@ -347,7 +538,9 @@ class Ximapd
     puts
     printf("  Platform    : %s\n", RUBY_PLATFORM)
     printf("  Ruby        : %s (%s)\n", RUBY_VERSION, RUBY_RELEASE_DATE)
-    printf("  Rast        : %s\n", Rast::VERSION)
+    INDEX_ENGINES.each_pair do |name, info|
+      printf("  %-11s : %s\n", name, info[2])
+    end
     begin
       require "openssl"
       printf("  OpenSSL     : %s\n", OpenSSL::VERSION)
@@ -507,131 +700,133 @@ class Ximapd
     end
   end
 
-  INDEX_OPTIONS = {
-    "encoding" => "utf8",
-    "preserve_text" => false,
-    "properties" => [
-      {
-        "name" => "uid",
-        "type" => Rast::PROPERTY_TYPE_UINT,
-        "search" => true,
-        "text_search" => false,
-        "full_text_search" => false,
-        "unique" => true,
-      },
-      {
-        "name" => "size",
-        "type" => Rast::PROPERTY_TYPE_UINT,
-        "search" => true,
-        "text_search" => false,
-        "full_text_search" => false,
-        "unique" => false,
-      },
-      {
-        "name" => "internal-date",
-        "type" => Rast::PROPERTY_TYPE_DATE,
-        "search" => true,
-        "text_search" => false,
-        "full_text_search" => false,
-        "unique" => false,
-      },
-      {
-        "name" => "flags",
-        "type" => Rast::PROPERTY_TYPE_STRING,
-        "search" => false,
-        "text_search" => true,
-        "full_text_search" => false,
-        "unique" => false,
-      },
-      {
-        "name" => "mailbox-id",
-        "type" => Rast::PROPERTY_TYPE_UINT,
-        "search" => true,
-        "text_search" => false,
-        "full_text_search" => false,
-        "unique" => false,
-      },
-      {
-        "name" => "date",
-        "type" => Rast::PROPERTY_TYPE_DATE,
-        "search" => true,
-        "text_search" => false,
-        "full_text_search" => false,
-        "unique" => false,
-      },
-      {
-        "name" => "subject",
-        "type" => Rast::PROPERTY_TYPE_STRING,
-        "search" => false,
-        "text_search" => true,
-        "full_text_search" => true,
-        "unique" => false,
-      },
-      {
-        "name" => "from",
-        "type" => Rast::PROPERTY_TYPE_STRING,
-        "search" => false,
-        "text_search" => true,
-        "full_text_search" => false,
-        "unique" => false,
-      },
-      {
-        "name" => "to",
-        "type" => Rast::PROPERTY_TYPE_STRING,
-        "search" => false,
-        "text_search" => true,
-        "full_text_search" => false,
-        "unique" => false,
-      },
-      {
-        "name" => "cc",
-        "type" => Rast::PROPERTY_TYPE_STRING,
-        "search" => false,
-        "text_search" => true,
-        "full_text_search" => false,
-        "unique" => false,
-      },
-      {
-        "name" => "bcc",
-        "type" => Rast::PROPERTY_TYPE_STRING,
-        "search" => false,
-        "text_search" => true,
-        "full_text_search" => false,
-        "unique" => false,
-      },
-      {
-        "name" => "x-ml-name",
-        "type" => Rast::PROPERTY_TYPE_STRING,
-        "search" => true,
-        "text_search" => false,
-        "full_text_search" => false,
-        "unique" => false,
-      },
-      {
-        "name" => "x-mail-count",
-        "type" => Rast::PROPERTY_TYPE_UINT,
-        "search" => true,
-        "text_search" => false,
-        "full_text_search" => false,
-        "unique" => false,
+  if defined?(::Rast)
+    class RastIndex < AbstractIndex
+      INDEX_OPTIONS = {
+        "encoding" => "utf8",
+        "preserve_text" => false,
+        "properties" => [
+          {
+            "name" => "uid",
+            "type" => Rast::PROPERTY_TYPE_UINT,
+            "search" => true,
+            "text_search" => false,
+            "full_text_search" => false,
+            "unique" => true,
+          },
+          {
+            "name" => "size",
+            "type" => Rast::PROPERTY_TYPE_UINT,
+            "search" => true,
+            "text_search" => false,
+            "full_text_search" => false,
+            "unique" => false,
+          },
+          {
+            "name" => "internal-date",
+            "type" => Rast::PROPERTY_TYPE_DATE,
+            "search" => true,
+            "text_search" => false,
+            "full_text_search" => false,
+            "unique" => false,
+          },
+          {
+            "name" => "flags",
+            "type" => Rast::PROPERTY_TYPE_STRING,
+            "search" => false,
+            "text_search" => true,
+            "full_text_search" => false,
+            "unique" => false,
+          },
+          {
+            "name" => "mailbox-id",
+            "type" => Rast::PROPERTY_TYPE_UINT,
+            "search" => true,
+            "text_search" => false,
+            "full_text_search" => false,
+            "unique" => false,
+          },
+          {
+            "name" => "date",
+            "type" => Rast::PROPERTY_TYPE_DATE,
+            "search" => true,
+            "text_search" => false,
+            "full_text_search" => false,
+            "unique" => false,
+          },
+          {
+            "name" => "subject",
+            "type" => Rast::PROPERTY_TYPE_STRING,
+            "search" => false,
+            "text_search" => true,
+            "full_text_search" => true,
+            "unique" => false,
+          },
+          {
+            "name" => "from",
+            "type" => Rast::PROPERTY_TYPE_STRING,
+            "search" => false,
+            "text_search" => true,
+            "full_text_search" => false,
+            "unique" => false,
+          },
+          {
+            "name" => "to",
+            "type" => Rast::PROPERTY_TYPE_STRING,
+            "search" => false,
+            "text_search" => true,
+            "full_text_search" => false,
+            "unique" => false,
+          },
+          {
+            "name" => "cc",
+            "type" => Rast::PROPERTY_TYPE_STRING,
+            "search" => false,
+            "text_search" => true,
+            "full_text_search" => false,
+            "unique" => false,
+          },
+          {
+            "name" => "bcc",
+            "type" => Rast::PROPERTY_TYPE_STRING,
+            "search" => false,
+            "text_search" => true,
+            "full_text_search" => false,
+            "unique" => false,
+          },
+          {
+            "name" => "x-ml-name",
+            "type" => Rast::PROPERTY_TYPE_STRING,
+            "search" => true,
+            "text_search" => false,
+            "full_text_search" => false,
+            "unique" => false,
+          },
+          {
+            "name" => "x-mail-count",
+            "type" => Rast::PROPERTY_TYPE_UINT,
+            "search" => true,
+            "text_search" => false,
+            "full_text_search" => false,
+            "unique" => false,
+          }
+        ]
       }
-    ]
-  }
+    end # class RastIndex
+  end # if defined?(::Rast)
 
   DEFAULT_CHARSET = "iso-2022-jp"
-  DEFAULT_SYNC_THRESHOLD_CHARS = 500000
+  if defined?(::Rast)
+    class RastIndex < AbstractIndex
+      DEFAULT_SYNC_THRESHOLD_CHARS = 500000
+    end # class RastIndex
+  end
   DEFAULT_ML_HEADER_FIELDS = [
     "x-ml-name",
     "list-id",
     "mailing-list"
   ]
   DEFAULT_MAILBOXES = {
-    "INBOX" => {
-      "flags" => "",
-      "id" => 1,
-      "query" => "mailbox-id = 1",
-      "last_peeked_uid" => 0
-    },
     "ml" => {
       "flags" => "\\Noselect"
     },
@@ -643,13 +838,17 @@ class Ximapd
     }
   }
 
-  module QueryFormat
-    module_function
+  if defined?(::Rast)
+    class RastIndex < AbstractIndex
+      module QueryFormat
+        module_function
 
-    def quote_query(s)
-      return format('"%s"', s.gsub(/[\\"]/n, "\\\\\\&"))
-    end
-  end
+        def quote_query(s)
+          return format('"%s"', s.gsub(/[\\"]/n, "\\\\\\&"))
+        end
+      end
+    end # class RastIndex
+  end # if defined?(::Rast)
 
   module DataFormat
     module_function
@@ -666,6 +865,915 @@ class Ximapd
       return format("{%d}\r\n%s", s.length, s)
     end
   end
+
+  if defined?(::Rast)
+    class RastIndex < AbstractIndex
+      private
+
+      extend QueryFormat
+      class << self
+
+        def make_list_query(list_name)
+          {"main" => format("x-ml-name = %s",
+                            quote_query(list_name)),
+           "sub" => nil}
+        end
+        public :make_list_query
+
+        def make_default_query(mailbox_id)
+          {"main" => format('mailbox-id = %d', mailbox_id), "sub" => nil}
+        end
+        public :make_default_query
+
+        def make_query(mailbox_name)
+          {"main" => mailbox_name, "sub" => nil}
+        end
+        public :make_query
+      end
+
+      def initialize(mail_store)
+        super(mail_store)
+        @flags_db_path = File.expand_path("flags.sdbm", @path)
+        @flags_db = nil
+      end
+
+      def setup
+        unless File.exist?(@index_path)
+          Rast::DB.create(@index_path, INDEX_OPTIONS)
+        end
+      end
+      public :setup
+
+      def standby
+        @flags_db = SDBM.open(@flags_db_path)
+      end
+      public :standby
+
+      def relax
+         @flags_db.close
+         @flags_db = nil
+      end
+      public :relax
+
+      def open(*args)
+        if args.empty?
+          flags = Rast::DB::RDWR
+        else
+          flags = args.last
+        end
+        @index = Rast::DB.open(@index_path, flags,
+                               "sync_threshold_chars" => @config["sync_threshold_chars"] || DEFAULT_SYNC_THRESHOLD_CHARS)
+      end
+      public :open
+
+      def close
+        @index.close
+      end
+      public :close
+
+      def register(mail_data, filename)
+        doc_id = @index.register(mail_data.text, mail_data.properties)
+        set_flags(mail_data.uid, doc_id, nil, mail_data.flags)
+      end
+      public :register
+
+      def get_flags(uid, item_id, item_obj)
+        @flags_db[uid.to_s]
+      end
+      public :get_flags
+
+      def set_flags(uid, item_id, item_obj, flags)
+        @flags_db[uid.to_s] = flags
+      end
+      public :set_flags
+
+      def delete_flags(uid, item_id, item_obj)
+        @flags_db.delete(uid.to_s)
+      end
+      public :delete_flags
+
+      def delete(uid, item_id)
+        @index.delete(item_id)
+      end
+      public :delete
+
+      def fetch(mailbox, sequence_set)
+        result = @index.search(mailbox["query"]["main"],
+                               "properties" => ["uid", "internal-date"],
+                               "start_no" => 0,
+                               "num_items" => Rast::RESULT_ALL_ITEMS,
+                               "sort_method" => Rast::SORT_METHOD_PROPERTY,
+                               "sort_property" => "uid",
+                               "sort_order" => Rast::SORT_ORDER_ASCENDING)
+        mails = []
+        sequence_set.each do |seq_number|
+          case seq_number
+          when Range
+            first = seq_number.first
+            last = seq_number.last == -1 ? result.items.length : seq_number.last
+            for i in first .. last
+              item = result.items[i - 1]
+              mail = IndexedMail.new(@config, mailbox, i, item.properties[0],
+                                      item.doc_id, item.properties[1])
+              mails.push(mail)
+            end
+          else
+            item = result.items[seq_number - 1]
+            next if item.nil?
+            mail = IndexedMail.new(@config, mailbox, seq_number,
+                                    item.properties[0], item.doc_id,
+                                    item.properties[1])
+            mails.push(mail)
+          end
+        end
+        return mails
+      end
+      public :fetch
+
+      def uid_fetch(mailbox, sequence_set)
+        options = {
+          "properties" => ["uid", "internal-date"],
+          "start_no" => 0,
+          "num_items" => Rast::RESULT_ALL_ITEMS,
+          "sort_method" => Rast::SORT_METHOD_PROPERTY,
+          "sort_property" => "uid",
+          "sort_order" => Rast::SORT_ORDER_ASCENDING
+        }
+        additional_queries = sequence_set.collect { |seq_number|
+          case seq_number
+          when Range
+            q = ""
+            if seq_number.first > 1
+              q += format(" uid >= %d", seq_number.first)
+            end
+            if seq_number.last != -1
+              q += format(" uid <= %d", seq_number.last)
+            end
+            q
+          else
+            format("uid = %d", seq_number)
+          end
+        }.reject { |q| q.empty? }
+        if additional_queries.empty?
+          query = mailbox["query"]["main"]
+        else
+          query = mailbox["query"]["main"] +
+            " ( " + additional_queries.join(" | ") + " )"
+        end
+        result = @index.search(query, options)
+        return result.items.collect { |i|
+          uid = i.properties[0]
+          IndexedMail.new(@config, mailbox, uid, uid, i.doc_id, i.properties[1])
+        }
+      end
+      public :uid_fetch
+
+      def mailbox_status(mailbox)
+        mailbox_status = MailboxStatus.new
+
+        result = @index.search(mailbox["query"]["main"],
+                               "properties" => ["uid"],
+                               "start_no" => 0)
+        mailbox_status.messages = result.hit_count
+        mailbox_status.unseen = result.items.select { |i|
+          !/\\Seen\b/ni.match(get_flags(i.properties[0].to_s, nil, nil))
+        }.length
+        query = format("%s uid > %d",
+                        mailbox["query"]["main"], mailbox["last_peeked_uid"])
+        result = @index.search(query,
+                               "properties" => ["uid"],
+                               "start_no" => 0,
+                               "num_items" => Rast::RESULT_MIN_ITEMS)
+        mailbox_status.recent = result.hit_count
+
+        mailbox_status
+      end
+      public :mailbox_status
+
+      # returns Rast::Result#items.to_a
+      def query(mailbox, query)
+      end
+      public :query
+
+      def uid_search(mailbox, query)
+        options = {
+          "properties" => ["uid"],
+          "start_no" => 0,
+          "num_items" => Rast::RESULT_ALL_ITEMS,
+          "sort_method" => Rast::SORT_METHOD_PROPERTY,
+          "sort_property" => "uid",
+          "sort_order" => Rast::SORT_ORDER_ASCENDING
+        }
+        q = query["main"] + " " + mailbox["query"]["main"]
+        result = @index.search(q, options)
+        return result.items.collect { |i| i.properties[0] }
+      end
+      public :uid_search
+
+      def uid_search_by_keys(mailbox, keys)
+        query = keys.collect { |key| key.to_query["main"] }.reject { |q|
+          q.empty?
+        }.join(" ")
+        query = "uid > 0 " + query if /\A\s*!/ =~ query
+        uids = uid_search(mailbox, {"main" => query, "sub" => nil})
+        for key in keys
+          uids = key.select(uids)
+        end
+        uids
+      end
+      public :uid_search_by_keys
+
+      def rebuild_index(*args)
+        if args.empty?
+          flags = Rast::DB::RDWR
+        else
+          flags = args.last
+        end
+        old_index_path = @index_path + ".old"
+
+        @old_index = nil
+        begin
+          File.rename(@index_path, old_index_path)
+          @old_index = Rast::DB.open(old_index_path, flags,
+                                     "sync_threshold_chars" => @config["sync_threshold_chars"] || DEFAULT_SYNC_THRESHOLD_CHARS)
+        rescue Errno::ENOENT
+        end
+        begin
+          @index = Rast::DB.create(@index_path, INDEX_OPTIONS)
+          yield
+          FileUtils.rm_rf(old_index_path)
+        ensure
+          @old_index = nil
+        end
+      end
+      public :rebuild_index
+
+      def get_old_flags(uid)
+        if @old_index
+          @flags_db[uid.to_s]
+        else
+          nil
+        end
+      end
+      public :get_old_flags
+
+      def try_query(query)
+        @index.search(query["main"], "num_items" => Rast::RESULT_MIN_ITEMS)
+      end
+      public :try_query
+    end # class RastIndex
+    INDEX_ENGINES["Rast"] = [RastIndex, "rast", Rast::VERSION]
+  end # if defined?(::Rast)
+
+  if defined?(::HyperEstraier)
+    class EstraierIndex < AbstractIndex
+      module QueryFormat
+        module_function
+
+        def quote_query(s)
+          format('"%s"', query.gsub(/[\\"]/n, "\\\\\\&"))
+        end
+      end
+
+      private
+
+      extend QueryFormat
+      class << self
+        def make_list_query(list_name)
+          {"main" => "",
+            "sub" => [format("x-ml-name STREQ %s", list_name)]}
+        end
+        public :make_list_query
+
+        def make_default_query(mailbox_id)
+          {"main" => "",
+            "sub" => [format("mailbox-id NUMEQ %d", mailbox_id)]}
+        end
+        public :make_default_query
+
+        def make_query(mailbox_name)
+          sub_query = []
+          query = mailbox_name.gsub(/\(([\)]*)\)/) {
+            sub_query << $1.strip
+            " "
+          }
+          {"main" => query.strip, "sub" => sub_query}
+        end
+        public :make_query
+      end
+
+      def initialize(mail_store)
+        super(mail_store)
+      end
+
+      def setup
+        unless File.exist?(@index_path)
+          db = HyperEstraier::DatabaseWrapper.new()
+          begin
+            db.open(@index_path,
+                    HyperEstraier::Database::DBWRITER|HyperEstraier::Database::DBCREAT|HyperEstraier::Database::DBPERFNG)
+          ensure
+            begin
+              db.close
+            rescue
+            end
+          end
+        end
+      end
+      public :setup
+
+      def standby
+        # noop
+      end
+      public :standby
+
+      def relax
+        # noop
+      end
+      public :relax
+
+      def open(*args)
+        if args.empty?
+          flags = HyperEstraier::Database::DBWRITER
+        else
+          flags = args.last
+        end
+        @index = HyperEstraier::DatabaseWrapper.new()
+        begin
+          @index.open(@index_path, flags)
+        rescue
+          begin
+            @index.close
+          rescue
+          end
+          raise
+        end
+      end
+      public :open
+
+      def close
+        @index.close
+      end
+      public :close
+
+      def register(mail_data, filename)
+        doc = HyperEstraier::Document.new
+        doc.add_attr("@uri", "file://" + File.expand_path(filename))
+        doc.add_text(mail_data.text)
+        mail_data.properties.each_pair do |name, value|
+          case name
+          when "size"
+            doc.add_attr("@size", value.to_s)
+          when "internal-date"
+            doc.add_attr("@cdate", value.to_s)
+            doc.add_attr("@mdate", value.to_s)
+          when "subject"
+            doc.add_attr("@title", value.to_s)
+          when "date"
+            doc.add_attr(name, value.to_s)
+          else
+            doc.add_attr(name, value.to_s)
+          end
+        end
+        doc.add_attr("flags", mail_data.flags)
+        @index.put_doc(doc)
+      end
+      public :register
+
+      def get_uid(item_id)
+        uid = nil
+        if doc = @index.get_doc(item_id, 0)
+          begin
+            uid = doc.attr("uid").to_i
+          rescue ArgumentError
+            raise "item_id:#{item_id} doesnot have uid"
+          end
+        end
+        uid
+      end
+
+      def get_doc(uid, item_id, item_obj)
+        get_doc_internal(@index, uid, item_id, item_obj)
+      end
+      def get_doc_internal(index, uid, item_id, item_obj)
+        if item_obj
+          doc = item_obj
+        elsif item_id
+          doc = index.get_doc(item_id, 0)
+        elsif uid
+          cond = HyperEstraier::Condition.new
+          cond.add_attr("uid NUMEQ #{uid}")
+          doc_id = index.search(cond, 0)[0]
+          doc = index.get_doc(doc_id, 0)
+        else
+          doc = nil
+        end
+        unless doc
+          raise ArgumentError,
+            "no such document (uid = #{uid.inspect}, item_id = #{item_id.inspect}, indexed_data.class = #{indexed_data.class})"
+        end
+        doc
+      end
+
+      def get_flags(uid, item_id, item_obj)
+        doc = get_doc(uid, item_id, item_obj)
+        begin
+          doc.attr("flags").scan(/[^<>\s]+/).join(" ")
+        rescue ArgumentError
+          ""
+        end
+      end
+      public :get_flags
+
+      def set_flags(uid, item_id, item_obj, flags)
+        doc = get_doc(uid, item_id, item_obj)
+        doc.add_attr("flags", "<" + flags.strip.split(/\s+/).join("><") + ">")
+        @index.edit_doc(doc)
+      end
+      public :set_flags
+
+      def delete_flags(uid, item_id, item_obj)
+        set_flags(uid, item_id, item_obj, "")
+      end
+      public :delete_flags
+
+      def delete(uid, item_id)
+        @index.out_doc(item_id)
+      end
+      public :delete
+
+      def fetch(mailbox, sequence_set)
+        result = query(mailbox, {"main" => "", "sub" => []})
+        mails = []
+        sequence_set.each do |seq_number|
+          case seq_number
+          when Range
+            first = seq_number.first
+            last = seq_number.last == -1 ? result.length : seq_number.last
+            for i in first .. last
+              item_id = result[i - 1]
+              doc = get_doc(nil, item_id, nil)
+              mail = IndexedMail.new(@config, mailbox, i,
+                                     doc.attr("uid").to_i, doc.id,
+                                     doc.attr("@mdate"), doc)
+              mails.push(mail)
+            end
+          else
+            begin
+              doc_id = result.to_a[seq_number - 1]
+            rescue IndexError
+              next
+            end
+            doc = get_doc(nil, doc_id, nil)
+            mail = IndexedMail.new(@config, mailbox, seq_number,
+                                   doc.attr("uid").to_i, doc.id,
+                                   doc.attr("@mdate"), doc)
+            mails.push(mail)
+          end
+        end
+        mails
+      end
+      public :fetch
+
+      def uid_fetch(mailbox, sequence_set)
+        if sequence_set.empty?
+          return []
+        end
+
+        mails = []
+        result = []
+        sequence_set.collect do |i|
+          sq = []
+          case i
+          when Range
+            if i.last == -1
+              sq << format("uid NUMGE %d", i.first)
+            else
+              sq << format("uid NUMGE %d", i.first)
+              sq << format("uid NUMLE %d", i.last)
+            end
+          else
+            sq << format("uid NUMEQ %d", i)
+          end
+          result |= query(mailbox, {"main" => "", "sub" => sq})
+        end
+
+        result.each do |item_id|
+          doc = get_doc(nil, item_id, nil)
+          uid = doc.attr("uid").to_i
+          mails << IndexedMail.new(@config, mailbox, uid, uid,
+                                   item_id, doc.attr("@mdate"),
+                                   doc)
+        end
+
+        mails
+      end
+      public :uid_fetch
+
+      def mailbox_status(mailbox)
+        mailbox_status = MailboxStatus.new
+
+        cond = HyperEstraier::Condition.new()
+        if mailbox["query"]["main"] && !mailbox["query"]["main"].empty?
+          cond.set_phrase(mailbox["query"]["main"])
+        end
+        if mailbox["query"]["sub"]
+          mailbox["query"]["sub"].each { |eq| cond.add_attr(eq) }
+        end
+        result = @index.search(cond, 0)
+        mailbox_status.messages = result.length
+        mailbox_status.unseen = result.select { |item_id|
+          !/\\Seen\b/ni.match(get_flags(nil, item_id, nil))
+        }.length
+        cond.add_attr("uid NUMGT %d"% mailbox["last_peeked_uid"])
+        result = @index.search(cond, 0)
+        mailbox_status.recent = result.length
+        mailbox_status
+      end
+      public :mailbox_status
+
+      def query(mailbox, query)
+        cond = HyperEstraier::Condition.new()
+        cond.set_order("uid NUMA")
+
+        if mailbox["query"]["main"].empty?
+          q = query["main"]
+        elsif query["main"].empty?
+          q = mailbox["query"]["main"]
+        else
+          q = query["main"] + " " + mailbox["query"]["main"]
+        end
+        if q && /\S/ =~ q
+          cond.set_phrase(q)
+        end
+
+        if query["sub"]
+          query["sub"].each { |eq| cond.add_attr(eq) }
+        end
+        if mailbox["query"]["sub"]
+          mailbox["query"]["sub"].each { |eq| cond.add_attr(eq) }
+        end
+        cond.set_order("uid NUMA")
+        cond.set_options(HyperEstraier::Condition::CONDSIMPLE)
+
+        result = @index.search(cond, 0)
+        result.to_a
+      end
+      public :query
+
+      def uid_search(mailbox, query)
+        result = query(mailbox, query)
+        result.collect { |item_id| get_uid(item_id) }
+      end
+      public :uid_search
+
+      def query_by_keys(mailbox, keys)
+        rest_keys = []
+        q = {"main" => "", "sub" => []}
+        for key in keys
+          if kq = key.to_query
+            unless kq["main"].empty?
+              q["main"] << " "
+              q["main"] << kq["main"]
+            end
+            q["sub"] |= kq["sub"]
+          else
+            rest_keys << key
+          end
+        end
+
+        result = query(mailbox, q)
+        for key in rest_keys
+          result = key.exec(self, mailbox, result)
+        end
+
+        result
+      end
+      public :query_by_keys
+
+      def uid_search_by_keys(mailbox, keys)
+        query_by_keys(mailbox, keys).collect { |item_id| get_uid(item_id) }
+      end
+      public :uid_search_by_keys
+
+      def rebuild_index(*args)
+        if args.empty?
+          flags = HyperEstraier::Database::DBWRITER|HyperEstraier::Database::DBCREAT|HyperEstraier::Database::DBPERFNG
+        else
+          flags = args.last
+        end
+        old_index_path = @index_path + ".old"
+
+        @old_index = nil
+        begin
+          File.rename(@index_path, old_index_path)
+          @old_index = HyperEstraier::DatabaseWrapper.new()
+          begin
+            @old_index.open(old_index_path, HyperEstraier::Database::DBREADER)
+          rescue
+            begin
+              @old_index.close
+            rescue
+            end
+            raise
+          end
+        rescue Errno::ENOENT
+        end
+        @index = HyperEstraier::DatabaseWrapper.new()
+        @index.open(@index_path, flags)
+        @index.close
+        begin
+          yield
+          FileUtils.rm_rf(old_index_path)
+        ensure
+          @old_index = nil
+        end
+      end
+      public :rebuild_index
+
+      def get_old_flags(uid)
+        raise RuntimeError, "old index not given" unless @old_index
+
+        doc = get_doc_internal(@old_index, uid, nil, nil)
+        begin
+          doc.attr("flags")
+        rescue ArgumentError
+          ""
+        end
+      end
+      public :get_old_flags
+
+      def try_query(query)
+        cond = HyperEstraier::Condition.new() 
+        cond.set_max(1)
+        cond.set_phrase(query["main"])       
+        if query["sub"]
+          query["sub"].each { |eq| cond.add_attr(eq) }
+        end 
+        r = @index.search(cond, 0)
+        unless r.kind_of?(HyperEstraier::IntVector)
+          raise "search failed for #{query["main"].dump} (#{query["sub"].collect { |eq| eq.dump }.join(', ')})"
+        end   
+        true
+      end
+      public :try_query
+
+      class AbstractSearchKey
+        def to_query
+          nil
+        end
+
+        def exec
+          raise
+        end
+      end
+
+      class NullSearchKey < AbstractSearchKey
+        def to_query
+          {"main" => "", "sub" => []}
+        end
+      end
+
+      class BodySearchKey < AbstractSearchKey
+        def initialize(value)
+          @value = value
+        end
+
+        def to_query
+          {"main" => @value, "sub" => []}
+        end
+      end
+
+      class HeaderSearchKey < AbstractSearchKey
+        def initialize(name, value)
+          @name = name
+          @value = value
+        end
+
+        def to_query
+          query = nil
+          case @name
+          when "subject"
+            return {"main" => "", 
+                    "sub" => [format("@title STRINC %s", @value)]}
+          when "from", "to", "cc", "bcc"
+            return {"main" => "",
+                     "sub" => [format("%s STRINC %s", @name, @value)]}
+          when "x-ml-name", "x-mail-count"
+            return {"main" => "",
+                     "sub" => [format("%s STREQ %s", @name, @value)]}
+          else
+            return {"main" => "", "sub" => []}
+          end
+        end
+      end
+
+      class FlagSearchKey < AbstractSearchKey
+        def initialize(mail_store, flag)
+          @mail_store = mail_store
+          @flag = "<" + flag + ">"
+        end
+
+        def to_query
+          return {"main" => "", "sub" => [format("flags STRINC %s", @flag)]}
+        end
+      end
+
+      class NoFlagSearchKey < FlagSearchKey
+        def to_query
+          return {"main" => "", "sub" => [format("flags !STRINC %s", @flag)]}
+        end
+      end
+
+      class KeywordSearchKey < FlagSearchKey
+        def to_query
+          return {"main" => "", "sub" => [format("flags STRINC %s", @flag)]}
+        end
+      end
+
+      class NoKeywordSearchKey < FlagSearchKey
+        def to_query
+          return {"main" => "", "sub" => [format("flags !STRINC %s", @flag)]}
+        end
+      end
+
+      class SequenceNumberSearchKey < AbstractSearchKey
+        def initialize(sequence_set)
+          @sequence_set = sequence_set
+        end
+
+        def to_query
+          raise NotImplementedError.new("sequence number search is not implemented")
+        end
+        def exec(index, mailbox, result)
+          raise NotImplementedError.new("sequence number search is not implemented")
+        end
+      end
+
+      class UidSearchKey < AbstractSearchKey
+        def initialize(sequence_set)
+          @sequence_set = sequence_set
+        end
+
+        def exec(index, mailbox, result)
+          if @sequence_set.empty?
+            return result
+          end
+          sr = []
+          @sequence_set.collect { |i|
+            sq = []
+            case i
+            when Range
+              if i.last == -1
+                sq << format("uid NUMGE %d", i.first)
+              else
+                sq << format("uid NUMGE %d", i.first)
+                sq << format("uid NUMLE %d", i.last)
+              end
+            else
+              sq << format("uid NUMEQ %d", i)
+            end
+            sr |= index.query(mailbox, {"main" => "", "sub" => sq})
+          }
+          return result & sr
+        end
+      end
+
+      class NotSearchKey < AbstractSearchKey
+        def initialize(key)
+          @key = key
+        end
+
+        def exec(index, mailbox, result)
+          result - index.query_by_keys(mailbox, [@key])
+        end
+      end
+
+      class DateSearchKey < NullSearchKey
+        def to_query
+          return {"main" => format("%s %s %s", field, op, @date.strftime()),
+                  "sub" => nil}
+        end
+
+        private
+
+        def initialize(date_str)
+          @date = parse_date(date_str)
+          @date.gmtime
+        end
+
+        MONTH = {
+          "Jan" =>  1, "Feb" =>  2, "Mar" =>  3, "Apr" =>  4,
+          "May" =>  5, "Jun" =>  6, "Jul" =>  7, "Aug" =>  8,
+          "Sep" =>  9, "Oct" => 10, "Nov" => 11, "Dec" => 12,
+        }
+        def parse_date(date_str)
+          if date_str.match(/\A"?(\d{1,2})-(#{MONTH.keys.join("|")})-(\d{4})"?\z/o)
+            Time.local($3.to_i, MONTH[$2], $1.to_i)
+          else
+            raise "invlid date string #{date_str}"
+          end
+        end
+
+        def date_str(date)
+          date.strftime("%Y-%m-%dT%H:%M:%S")
+        end
+      end
+
+      class BeforeSearchKey < DateSearchKey
+        def to_query
+          return {"main" => "",
+                  "sub" => [format("@cdate NUMLT %s", date_str(@date))]}
+        end
+      end
+
+      class OnSearchKey < DateSearchKey
+        def to_query
+          date_end = @date + 86400
+          return {"main" => "",
+                  "sub" => [format("@cdate NUMGE %s", date_str(@date)),
+                            format("@cdate NUMLT %s", date_str(date_end))]}
+        end
+      end
+
+      class SinceSearchKey < DateSearchKey
+        def to_query
+          date = @date + 86400
+          return {"main" => "",
+                  "sub" => [format("@cdate NUMGE %s", date_str(date))]}
+        end
+      end
+
+      class SentbeforeSearchKey < DateSearchKey
+        def to_query
+          return {"main" => "",
+                  "sub" => [format("date NUMLT %s", date_str(@date))]}
+        end
+      end
+
+      class SentonSearchKey < DateSearchKey
+        def to_query
+          date_end = @date + 86400
+          return {"main" => "",
+                  "sub" => [format("date NUMGE %s", date_str(@date)),
+                            format("date NUMLT %s", date_str(date_end))]}
+        end
+      end
+
+      class SentsinceSearchKey < DateSearchKey
+        def to_query
+          date = @date + 86400
+          return {"main" => "",
+                  "sub" => [format("date NUMGE %s", date_str(date))]}
+        end
+      end
+
+      class LargerSearchKey < NullSearchKey
+        def initialize(size_str)
+          @size_str = size_str
+        end
+
+        def to_query
+          return {"main" => "", "sub" => [format("@size NUMGT %s", @size_str)]}
+        end
+      end
+
+      class SmallerSearchKey < LargerSearchKey
+        def to_query
+          return {"main" => "", "sub" => [format("@size NUMLT %s", @size_str)]}
+        end
+      end
+
+      class OrSearchKey < AbstractSearchKey
+        def initialize(key1, key2)
+          @keys = [key1, key2]
+        end
+
+        def exec(index, mailbox, result)
+          sresult = []
+          @keys.each do |key|
+            sresult |= index.query_by_keys(mailbox, [key])
+          end
+
+          result & sresult
+        end
+      end
+
+      class GroupSearchKey < AbstractSearchKey
+        def initialize(keys)
+          @keys = keys
+        end
+
+        def exec(index, mailbox, result)
+          result & index.query_by_keys(mailbox, @keys)
+        end
+      end
+
+      class EndGroupSearchKey
+      end
+    end # class EstraierIndex
+    INDEX_ENGINES["Estraier"] = [EstraierIndex, "HyperEstraier", '(unknown)']
+  end # if defined?(::HyperEstraier)
 
   class MailData
     attr_reader :raw_data, :uid, :flags, :internal_date, :text, :properties
@@ -716,12 +1824,12 @@ class Ximapd
                              :unseen)
 
   class MailStore
-    include QueryFormat
     include MonitorMixin
 
     attr_reader :config, :path, :mailbox_db, :mailbox_db_path
-    attr_reader :flags_db, :plugins
+    attr_reader :plugins
     attr_reader :uid_seq, :uidvalidity_seq, :mailbox_id_seq
+    attr_reader :index_engine_class
 
     def initialize(config)
       super()
@@ -735,7 +1843,7 @@ class Ximapd
       uidvalidity_seq_path = File.expand_path("uidvalidity.seq", @path)
       @uidvalidity_seq = Sequence.new(uidvalidity_seq_path)
       mailbox_id_seq_path = File.expand_path("mailbox_id.seq", @path)
-      @mailbox_id_seq = Sequence.new(mailbox_id_seq_path)
+      @mailbox_id_seq = Sequence.new(mailbox_id_seq_path, 0)
       @mailbox_db_path = File.expand_path("mailbox.db", @path)
       case @config["db_type"].to_s.downcase
       when "pstore"
@@ -744,27 +1852,41 @@ class Ximapd
         @mailbox_db = YAML::Store.new(@mailbox_db_path)
       end
       override_commit_new(@mailbox_db)
-      @flags_db_path = File.expand_path("flags.sdbm", @path)
-      @flags_db = nil
       @mail_parser = RMail::Parser.new
       @default_charset = @config["default_charset"] || DEFAULT_CHARSET
-      @sync_threshold_chars =
-        @config["sync_threshold_chars"] || DEFAULT_SYNC_THRESHOLD_CHARS
       @ml_header_fields =
         @config["ml_header_fields"] || DEFAULT_ML_HEADER_FIELDS
       @last_peeked_uids = {}
-      @index_path = File.expand_path("index", @path)
-      @index = nil
       @index_ref_count = 0
       lock_path = File.expand_path("lock", @path)
       @lock = File.open(lock_path, "w+")
       @lock_count = 0
+      index_engine_name = "rast"
+      if @config["index_engine"]
+        @config["index_engine"] = @config["index_engine"].downcase
+        index_engine_name = @config["index_engine"]
+      else
+        @config["index_engine"] = index_engine_name
+      end
+      if key = INDEX_ENGINES.keys.detect { |k| k.downcase == index_engine_name }
+        index_engine_name = key
+        index_engine = INDEX_ENGINES[index_engine_name][0]
+      else
+        raise "unknown index engine: #{index_engine_name}"
+      end
+      begin
+        require INDEX_ENGINES[index_engine_name][1]
+      rescue Exception
+        raise "not supported engine: #{index_engine_name}"
+      end
+      @index = index_engine.new(self)
+      @index_engine_class = @index.class
       synchronize do
         if @uidvalidity_seq.current.nil?
           @uidvalidity_seq.current = 1
         end
         if @mailbox_id_seq.current.nil?
-          @mailbox_id_seq.current = 1
+          @mailbox_id_seq.current = 0
         end
         @mailbox_db.transaction do
           @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
@@ -772,8 +1894,11 @@ class Ximapd
           convert_old_mailbox_db
           @plugins = Plugin.create_plugins(@config, self)
         end
-        unless File.exist?(@index_path)
-          Rast::DB.create(@index_path, INDEX_OPTIONS)
+        @index.setup
+        begin
+          create_mailbox("INBOX")
+        rescue
+          # OK
         end
       end
     end
@@ -786,7 +1911,7 @@ class Ximapd
       mon_enter
       if @lock_count == 0
         @lock.flock(File::LOCK_EX)
-        @flags_db = SDBM.open(@flags_db_path)
+        @index.standby
       end
       @lock_count += 1
     end
@@ -794,8 +1919,7 @@ class Ximapd
     def unlock
       @lock_count -= 1
       if @lock_count == 0 && !@lock.closed?
-        @flags_db.close
-        @flags_db = nil
+        @index.relax
         @lock.flock(File::LOCK_UN)
       end
       mon_exit
@@ -1073,16 +2197,15 @@ class Ximapd
       end
     end
 
-    def index_mail(mail)
+    def index_mail(mail, filename)
       begin
-        @index.register(mail.text, mail.properties)
+        @index.register(mail, filename)
         s = mail.properties["x-ml-name"]
         if !s.empty? && mail.properties["mailbox-id"] == 0 &&
           !@mailbox_db["mailing_lists"].key?(s)
           mbox_name = get_mailbox_name_from_x_ml_name(s)
           mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox_name))
-          query = format("x-ml-name = %s",
-                         quote_query(mail.properties["x-ml-name"]))
+          query = @index.class.make_list_query(mail.properties["x-ml-name"])
           begin
             create_mailbox_internal(mailbox_name, query)
             mailbox = get_mailbox(mailbox_name)
@@ -1128,12 +2251,10 @@ class Ximapd
       end
     end
 
-    def open_index(flags = Rast::DB::RDWR)
+    def open_index(*args)
       synchronize do
         if @index_ref_count == 0
-          @index = Rast::DB.open(@index_path, flags,
-                                 "sync_threshold_chars" =>
-                                   @sync_threshold_chars)
+          @index.open(*args)
         end
         @index_ref_count += 1
         begin
@@ -1142,7 +2263,6 @@ class Ximapd
           @index_ref_count -= 1
           if @index_ref_count == 0
             @index.close
-            @index = nil
           end
         end
       end
@@ -1160,28 +2280,23 @@ class Ximapd
           @mailbox_db["mailboxes"]["ml"] = DEFAULT_MAILBOXES["ml"]
         end
       end
-      old_index_path = @index_path + ".old"
-      begin
-        File.rename(@index_path, old_index_path)
-      rescue Errno::ENOENT
-      end
-      Rast::DB.create(@index_path, INDEX_OPTIONS)
-      mailbox_names = {}
-      @mailbox_db.transaction do
-        for mailbox_name, mailbox_data in @mailbox_db["mailboxes"]
-          id = mailbox_data["id"]
-          if id
-            mailbox_names[id] = mailbox_name
+      @index.rebuild_index do
+        mailbox_names = {}
+        @mailbox_db.transaction do
+          for mailbox_name, mailbox_data in @mailbox_db["mailboxes"]
+            id = mailbox_data["id"]
+            if id
+              mailbox_names[id] = mailbox_name
+            end
+          end
+        end
+        open_index do
+          mail_dir = File.expand_path("mails", @path)
+          Dir.glob(mail_dir + "/*/*").sort.each do |dir|
+            reindex_month(dir)
           end
         end
       end
-      open_index do
-        mail_dir = File.expand_path("mails", @path)
-        Dir.glob(mail_dir + "/*/*").sort.each do |dir|
-          reindex_month(dir)
-        end
-      end
-      FileUtils.rm_rf(old_index_path)
       @uidvalidity_seq.next
       @logger.info("rebuilt index")
     end
@@ -1316,7 +2431,7 @@ class Ximapd
         query = extract_query(name)
         if query.nil?
           mailbox_id = get_next_mailbox_id
-          query = format('mailbox-id = %d', mailbox_id)
+          query = @index.class.make_default_query(mailbox_id)
           mailbox["id"] = mailbox_id
         end
       end
@@ -1327,10 +2442,10 @@ class Ximapd
     def extract_query(mailbox_name)
       s = mailbox_name.slice(/\Aqueries\/(.*)/u, 1)
       return nil if s.nil?
-      query = Net::IMAP.decode_utf7(s)
+      query = @index.class.make_query(Net::IMAP.decode_utf7(s))
       begin
         open_index do |index|
-          result = index.search(query, "num_items" => Rast::RESULT_MIN_ITEMS)
+          result = index.try_query(query)
         end
         return query
       rescue
@@ -1399,7 +2514,7 @@ class Ximapd
       begin
         str = File.read(filename)
         uid = filename.slice(/\/(\d+)\z/, 1).to_i
-        flags = @flags_db[uid.to_s] || "\\Seen"
+        flags = @index.get_old_flags(uid) || "\\Seen"
         indate = File.mtime(filename)
         mail = parse_mail(str, uid, flags, indate)
         begin
@@ -1408,7 +2523,7 @@ class Ximapd
         rescue Errno::ENOENT
         end
         @mailbox_db.transaction do
-          index_mail(mail)
+          index_mail(mail, filename)
         end
       rescue StandardError => e
         @logger.log_exception(e)
@@ -1592,6 +2707,10 @@ class Ximapd
       raise ScriptError.new("subclass must override Mailbox#uid_search")
     end
 
+    def uid_search_by_keys(keys)
+      raise ScriptError.new("subclass must override Mailbox#uid_search_by_keys")
+    end
+
     def fetch(sequence_set)
       raise ScriptError.new("subclass must override Mailbox#fetch")
     end
@@ -1625,8 +2744,7 @@ class Ximapd
       end
       time = mail_data.internal_date.to_time
       File.utime(time, time, path)
-      @mail_store.flags_db[mail_data.uid.to_s] = mail_data.flags
-      @mail_store.index_mail(mail_data)
+      @mail_store.index_mail(mail_data, path)
     end
 
     def get_mail_path(mail)
@@ -1638,111 +2756,31 @@ class Ximapd
 
     def status
       @mail_store.open_index do |index|
-        mailbox_status = MailboxStatus.new
-        result = index.search(self["query"],
-                              "properties" => ["uid"],
-                              "start_no" => 0)
-        mailbox_status.messages = result.hit_count
-        mailbox_status.unseen = result.items.select { |i|
-          !/\\Seen\b/ni.match(@mail_store.flags_db[i.properties[0].to_s])
-        }.length
-        query = format("%s uid > %d",
-                       self["query"], self["last_peeked_uid"])
-        result = index.search(query,
-                              "properties" => ["uid"],
-                              "start_no" => 0,
-                              "num_items" => Rast::RESULT_MIN_ITEMS)
-        mailbox_status.recent = result.hit_count
-        return mailbox_status
+        return index.mailbox_status(self)
       end
     end
 
     def uid_search(query)
       @mail_store.open_index do |index|
-        options = {
-          "properties" => ["uid"],
-          "start_no" => 0,
-          "num_items" => Rast::RESULT_ALL_ITEMS,
-          "sort_method" => Rast::SORT_METHOD_PROPERTY,
-          "sort_property" => "uid",
-          "sort_order" => Rast::SORT_ORDER_ASCENDING
-        }
-        query += " " + self["query"]
-        result = index.search(query, options)
-        return result.items.collect { |i| i.properties[0] }
+        return index.uid_search(self, query)
+      end
+    end
+
+    def uid_search_by_keys(keys)
+      @mail_store.open_index do |index|
+        return index.uid_search_by_keys(self, keys)
       end
     end
 
     def fetch(sequence_set)
       @mail_store.open_index do |index|
-        result = index.search(self["query"],
-                              "properties" => ["uid", "internal-date"],
-                              "start_no" => 0,
-                              "num_items" => Rast::RESULT_ALL_ITEMS,
-                              "sort_method" => Rast::SORT_METHOD_PROPERTY,
-                              "sort_property" => "uid",
-                              "sort_order" => Rast::SORT_ORDER_ASCENDING)
-        mails = []
-        sequence_set.each do |seq_number|
-          case seq_number
-          when Range
-            first = seq_number.first
-            last = seq_number.last == -1 ? result.items.length : seq_number.last
-            for i in first .. last
-              item = result.items[i - 1]
-              mail = IndexedMail.new(@config, self, i, item.properties[0],
-                                     item.doc_id, item.properties[1])
-              mails.push(mail)
-            end
-          else
-            item = result.items[seq_number - 1]
-            next if item.nil?
-            mail = IndexedMail.new(@config, self, seq_number,
-                                   item.properties[0], item.doc_id,
-                                   item.properties[1])
-            mails.push(mail)
-          end
-        end
-        return mails
+        return index.fetch(self, sequence_set)
       end
     end
 
     def uid_fetch(sequence_set)
       @mail_store.open_index do |index|
-        options = {
-          "properties" => ["uid", "internal-date"],
-          "start_no" => 0,
-          "num_items" => Rast::RESULT_ALL_ITEMS,
-          "sort_method" => Rast::SORT_METHOD_PROPERTY,
-          "sort_property" => "uid",
-          "sort_order" => Rast::SORT_ORDER_ASCENDING
-        }
-        additional_queries = sequence_set.collect { |seq_number|
-          case seq_number
-          when Range
-            q = ""
-            if seq_number.first > 1
-              q += format(" uid >= %d", seq_number.first)
-            end
-            if seq_number.last != -1
-              q += format(" uid <= %d", seq_number.last)
-            end
-            q
-          else
-            format("uid = %d", seq_number)
-          end
-        }.reject { |q| q.empty? }
-        if additional_queries.empty?
-          query = self["query"]
-        else
-          query = self["query"] +
-            " ( " + additional_queries.join(" | ") + " )"
-        end
-        result = index.search(query, options)
-        return result.items.collect { |i|
-          uid = i.properties[0]
-          IndexedMail.new(@config, self, uid, uid, i.doc_id, i.properties[1])
-        }
+        return index.uid_fetch(self, sequence_set)
       end
     end
 
@@ -2209,12 +3247,14 @@ class Ximapd
   end
 
   class IndexedMail < Mail
-    attr_reader :doc_id
+    attr_reader :item_id
+    attr_reader :indexed_obj
 
     def initialize(config, mailbox, seqno, uid,
-                   doc_id = nil, internal_date = nil)
+                   item_id = nil, internal_date = nil,
+                   indexed_obj = nil)
       super(config, mailbox, seqno, uid)
-      @doc_id = doc_id
+      @item_id = item_id
       if internal_date
         @internal_date = DateTime.strptime(internal_date[0, 19] + " " +
                                            TIMEZONE,
@@ -2222,6 +3262,7 @@ class Ximapd
       else
         @internal_date = nil
       end
+      @indexed_obj = indexed_obj
     end
 
     def internal_date
@@ -2232,7 +3273,10 @@ class Ximapd
     end
 
     def flags(get_recent = true)
-      s = @mail_store.flags_db[@uid.to_s].to_s
+      s = nil
+      @mail_store.open_index do |index|
+        s = index.get_flags(@uid, @item_id, @indexed_obj)
+      end
       if get_recent && uid > @mailbox["last_peeked_uid"]
         if s.empty?
           return "\\Recent"
@@ -2245,14 +3289,20 @@ class Ximapd
     end
 
     def flags=(s)
-      @mail_store.flags_db[@uid.to_s] = s
+      r = nil
+      @mail_store.open_index do |index|
+        r = index.set_flags(@uid, @item_id, @indexed_obj, s)
+      end
+      @indexed_obj = nil
+      r
     end
 
     def delete
       super
-      @mail_store.flags_db.delete(@uid.to_s)
       @mail_store.open_index do |index|
-        index.delete(@doc_id)
+        index.delete_flags(@uid, @item_id, @indexed_obj)
+        @indexed_data =  nil
+        index.delete(@uid, @item_id)
       end
     end
   end
@@ -3078,131 +4128,132 @@ class Ximapd
     end
 
     def search_key(charset)
+      ic = @session.mail_store.index_engine_class
       token = lookahead
       if /\A(\d+|\*)/.match(token.value)
-        return SequenceNumberSearchKey.new(sequence_set)
+        return ic::SequenceNumberSearchKey.new(sequence_set)
       elsif token.symbol == T_LPAR
         shift_token
         keys = []
-        until (key = search_key(charset)).kind_of?(EndGroupSearchKey)
+        until (key = search_key(charset)).kind_of?(ic::EndGroupSearchKey)
           keys << key
         end
-        return GroupSearchKey.new(keys)
+        return ic::GroupSearchKey.new(keys)
       elsif token.symbol == T_RPAR
         shift_token
-        return EndGroupSearchKey.new
+        return ic::EndGroupSearchKey.new
       end
 
       name = tokens([T_ATOM, T_NUMBER, T_NIL, T_PLUS, T_STAR])
       case name.upcase
       when "UID"
         match(T_SPACE)
-        return UidSearchKey.new(sequence_set)
+        return ic::UidSearchKey.new(sequence_set)
       when "BODY", "TEXT"
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
-        return BodySearchKey.new(s)
+        return ic::BodySearchKey.new(s)
       when "HEADER"
         match(T_SPACE)
         header_name = astring.downcase
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
-        return HeaderSearchKey.new(header_name, s)
+        return ic::HeaderSearchKey.new(header_name, s)
       when "SUBJECT"
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
-        return HeaderSearchKey.new("subject", s)
+        return ic::HeaderSearchKey.new("subject", s)
       when "FROM"
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
-        return HeaderSearchKey.new("from", s)
+        return ic::HeaderSearchKey.new("from", s)
       when "TO"
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
-        return HeaderSearchKey.new("to", s)
+        return ic::HeaderSearchKey.new("to", s)
       when "CC"
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
-        return HeaderSearchKey.new("cc", s)
+        return ic::HeaderSearchKey.new("cc", s)
       when "BCC"
         match(T_SPACE)
         s = Iconv.conv("utf-8", charset, astring)
-        return HeaderSearchKey.new("bcc", s)
+        return ic::HeaderSearchKey.new("bcc", s)
       when "BEFORE"
         match(T_SPACE)
         s = tokens([T_ATOM, T_QUOTED])
-        return BeforeSearchKey.new(s)
+        return ic::BeforeSearchKey.new(s)
       when "ON"
         match(T_SPACE)
         s = tokens([T_ATOM, T_QUOTED])
-        return OnSearchKey.new(s)
+        return ic::OnSearchKey.new(s)
       when "SINCE"
         match(T_SPACE)
         s = tokens([T_ATOM, T_QUOTED])
-        return SinceSearchKey.new(s)
+        return ic::SinceSearchKey.new(s)
       when "SENTBEFORE"
         match(T_SPACE)
         s = tokens([T_ATOM, T_QUOTED])
-        return SentbeforeSearchKey.new(s)
+        return ic::SentbeforeSearchKey.new(s)
       when "SENTON"
         match(T_SPACE)
         s = tokens([T_ATOM, T_QUOTED])
-        return SentonSearchKey.new(s)
+        return ic::SentonSearchKey.new(s)
       when "SENTSINCE"
         match(T_SPACE)
         s = tokens([T_ATOM, T_QUOTED])
-        return SentsinceSearchKey.new(s)
+        return ic::SentsinceSearchKey.new(s)
       when "LARGER"
         match(T_SPACE)
         s = tokens([T_NUMBER])
-        return LargerSearchKey.new(s)
+        return ic::LargerSearchKey.new(s)
       when "SMALLER"
         match(T_SPACE)
         s = tokens([T_NUMBER])
-        return SmallerSearchKey.new(s)
+        return ic::SmallerSearchKey.new(s)
       when "ANSWERED"
-        return FlagSearchKey.new(@session.mail_store, "\\Answered")
+        return ic::FlagSearchKey.new(@session.mail_store, "\\Answered")
       when "DELETED"
-        return FlagSearchKey.new(@session.mail_store, "\\Deleted")
+        return ic::FlagSearchKey.new(@session.mail_store, "\\Deleted")
       when "DRAFT"
-        return FlagSearchKey.new(@session.mail_store, "\\Draft")
+        return ic::FlagSearchKey.new(@session.mail_store, "\\Draft")
       when "FLAGGED"
-        return FlagSearchKey.new(@session.mail_store, "\\Flagged")
+        return ic::FlagSearchKey.new(@session.mail_store, "\\Flagged")
       when "RECENT", "NEW"
-        return FlagSearchKey.new(@session.mail_store, "\\Recent")
+        return ic::FlagSearchKey.new(@session.mail_store, "\\Recent")
       when "SEEN"
-        return FlagSearchKey.new(@session.mail_store, "\\Seen")
+        return ic::FlagSearchKey.new(@session.mail_store, "\\Seen")
       when "KEYWORD"
         match(T_SPACE)
         flag = atom
-        return KeywordSearchKey.new(@session.mail_store, flag)
+        return ic::KeywordSearchKey.new(@session.mail_store, flag)
       when "UNANSWERED"
-        return NoFlagSearchKey.new(@session.mail_store, "\\Answered")
+        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Answered")
       when "UNDELETED"
-        return NoFlagSearchKey.new(@session.mail_store, "\\Deleted")
+        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Deleted")
       when "UNDRAFT"
-        return NoFlagSearchKey.new(@session.mail_store, "\\Draft")
+        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Draft")
       when "UNFLAGGED"
-        return NoFlagSearchKey.new(@session.mail_store, "\\Flagged")
+        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Flagged")
       when "UNSEEN"
-        return NoFlagSearchKey.new(@session.mail_store, "\\Seen")
+        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Seen")
       when "OLD"
-        return NoFlagSearchKey.new(@session.mail_store, "\\Recent")
+        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Recent")
       when "UNKEYWORD"
         match(T_SPACE)
         flag = atom
-        return NoKeywordSearchKey.new(@session.mail_store, flag)
+        return ic::NoKeywordSearchKey.new(@session.mail_store, flag)
       when "NOT"
         match(T_SPACE)
-        return NotSearchKey.new(search_key(charset))
+        return ic::NotSearchKey.new(search_key(charset))
       when "OR"
         match(T_SPACE)
         key1 = search_key(charset)
         match(T_SPACE)
         key2 = search_key(charset)
-        return OrSearchKey.new(key1, key2)
+        return ic::OrSearchKey.new(key1, key2)
       else
-        return NullSearchKey.new
+        return ic::NullSearchKey.new
       end
     end
 
@@ -4119,17 +5170,10 @@ class Ximapd
     end
 
     def exec
-      query = @keys.collect { |key| key.to_query }.reject { |q|
-        q.empty?
-      }.join(" ")
-      query = "uid > 0 " + query if /\A\s*!/ =~ query
       result = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
-        uids = mailbox.uid_search(query)
-        for key in @keys
-          uids = key.select(uids)
-        end
+        uids = mailbox.uid_search_by_keys(@keys)
         result = create_result(mailbox, uids)
       end
       if result.empty?
@@ -4177,297 +5221,316 @@ class Ximapd
     end
   end
 
-  class NullSearchKey
-    def to_query
-      return ""
-    end
+  if defined?(::Rast)
+    class RastIndex < AbstractIndex
+      class NullSearchKey
+        def to_query
+          return {"main" => "", "sub" => nil}
+        end
 
-    def select(uids)
-      return uids
-    end
+        def select(uids)
+          return uids
+        end
 
-    def reject(uids)
-      return uids
-    end
-  end
-
-  class BodySearchKey < NullSearchKey
-    def initialize(value)
-      @value = value
-    end
-
-    def to_query
-      return @value
-    end
-  end
-
-  class HeaderSearchKey < NullSearchKey
-    include QueryFormat
-
-    def initialize(name, value)
-      @name = name
-      @value = value
-    end
-
-    def to_query
-      case @name
-      when "subject", "from", "to", "cc", "bcc"
-        return format("%s : %s", @name, quote_query(@value))
-      when "x-ml-name", "x-mail-count"
-        return format("%s = %s", @name, quote_query(@value))
-      else
-        return ""
+        def reject(uids)
+          return uids
+        end
       end
-    end
-  end
 
-  class FlagSearchKey < NullSearchKey
-    def initialize(mail_store, flag)
-      @mail_store = mail_store
-      @flag_re = Regexp.new(Regexp.quote(flag) + "\\b", true, "n")
-    end
+      class BodySearchKey < NullSearchKey
+        def initialize(value)
+          @value = value
+        end
 
-    def select(uids)
-      return uids.select { |uid|
-        @flag_re.match(@mail_store.flags_db[uid.to_s])
-      }
-    end
-
-    def reject(uids)
-      return uids.reject { |uid|
-        @flag_re.match(@mail_store.flags_db[uid.to_s])
-      }
-    end
-  end
-
-  class NoFlagSearchKey < FlagSearchKey
-    alias super_select select
-    alias super_reject reject
-    alias select super_reject
-    alias reject super_select
-  end
-
-  class KeywordSearchKey < NullSearchKey
-    def initialize(mail_store, flag)
-      @mail_store = mail_store
-      if /\A\w/n.match(flag)
-        s = "\\b"
-      else
-        s = ""
+        def to_query
+          return {"main" => @value, "sub" => nil}
+        end
       end
-      @flag_re = Regexp.new(s + Regexp.quote(flag) + "\\b", true, "n")
-    end
 
-    def select(uids)
-      return uids.select { |uid|
-        @flag_re.match(@mail_store.flags_db[uid.to_s])
-      }
-    end
+      class HeaderSearchKey < NullSearchKey
+        include QueryFormat
 
-    def reject(uids)
-      return uids.reject { |uid|
-        @flag_re.match(@mail_store.flags_db[uid.to_s])
-      }
-    end
-  end
+        def initialize(name, value)
+          @name = name
+          @value = value
+        end
 
-  class NoKeywordSearchKey < KeywordSearchKey
-    alias super_select select
-    alias super_reject reject
-    alias select super_reject
-    alias reject super_select
-  end
-
-  class SequenceNumberSearchKey < NullSearchKey
-    def initialize(sequence_set)
-      @sequence_set = sequence_set
-    end
-
-    def to_query
-      raise NotImplementedError.new("sequence number search is not implemented")
-    end
-  end
-
-  class UidSearchKey < NullSearchKey
-    def initialize(sequence_set)
-      @sequence_set = sequence_set
-    end
-
-    def to_query
-      if @sequence_set.empty?
-        return ""
-      end
-      return "( " + @sequence_set.collect { |i|
-        case i
-        when Range
-          if i.last == -1
-            format("uid >= %d", i.first)
+        def to_query
+          case @name
+          when "subject", "from", "to", "cc", "bcc"
+            return {"main" => format("%s : %s", @name, quote_query(@value)),
+                    "sub" => nil}
+          when "x-ml-name", "x-mail-count"
+            return {"main" => format("%s = %s", @name, quote_query(@value)),
+                    "sub" => nil}
           else
-            format("%d <= uid <= %d", i.first, i.last)
+            super
           end
-        else
-          format("uid = %d", i)
-        end
-      }.join(" | ") + " )"
-    end
-  end
-
-  class NotSearchKey
-    def initialize(key)
-      @key = key
-    end
-
-    def to_query
-      q = @key.to_query
-      if q.empty?
-        return ""
-      else
-        return format("! ( %s )", q)
-      end
-    end
-
-    def select(uids)
-      return @key.reject(uids)
-    end
-
-    def reject(uids)
-      return @key.select(uids)
-    end
-  end
-
-  class DateSearchKey < NullSearchKey
-    def to_query
-      return format("%s %s %s", field, op, @date.strftime())
-    end
-
-    private
-
-    def initialize(date_str)
-      @date = parse_date(date_str)
-      @date.gmtime
-    end
-
-    MONTH = {
-      "Jan" =>  1, "Feb" =>  2, "Mar" =>  3, "Apr" =>  4,
-      "May" =>  5, "Jun" =>  6, "Jul" =>  7, "Aug" =>  8,
-      "Sep" =>  9, "Oct" => 10, "Nov" => 11, "Dec" => 12,
-    }
-    def parse_date(date_str)
-      if date_str.match(/\A"?(\d{1,2})-(#{MONTH.keys.join("|")})-(\d{4})"?\z/o)
-        Time.local($3.to_i, MONTH[$2], $1.to_i)
-      else
-        raise "invlid date string #{date_str}"
-      end
-    end
-
-    def date_str(date)
-      date.strftime("%Y-%m-%dT%H:%M:%S")
-    end
-  end
-
-  class BeforeSearchKey < DateSearchKey
-    def to_query
-      return format("internal-date < %s", date_str(@date))
-    end
-  end
-
-  class OnSearchKey < DateSearchKey
-    def to_query
-      date_end = @date + 86400
-      return format("%s <= internal-date < %s", 
-                    date_str(@date), date_str(date_end))
-    end
-  end
-
-  class SinceSearchKey < DateSearchKey
-    def to_query
-      date = @date + 86400
-      return format("internal-date >= %s", date_str(date))
-    end
-  end
-
-  class SentbeforeSearchKey < DateSearchKey
-    def to_query
-      return format("date < %s", date_str(@date))
-    end
-  end
-
-  class SentonSearchKey < DateSearchKey
-    def to_query
-      date_end = @date + 86400
-      return format("%s <= date < %s", 
-                    date_str(@date), date_str(date_end))
-    end
-  end
-
-  class SentsinceSearchKey < DateSearchKey
-    def to_query
-      date = @date + 86400
-      return format("date >= %s", date_str(date))
-    end
-  end
-
-  class LargerSearchKey < NullSearchKey
-    def initialize(size_str)
-      @size_str = size_str
-    end
-
-    def to_query
-      return format("size > %s", @size_str)
-    end
-  end
-
-  class SmallerSearchKey < LargerSearchKey
-    def to_query
-      return format("size < %s", @size_str)
-    end
-  end
-
-  class OrSearchKey < NullSearchKey
-    def initialize(key1, key2)
-      @keys = [key1, key2]
-    end
-
-    def to_query
-      qs = []
-      @keys.each do |key|
-        q = key.to_query
-        if q.empty?
-          return ""
-        elsif /\A\s*!/ =~ q
-          qs << "uid > 0 " + q
-        else
-          qs << q
         end
       end
 
-      return format("( %s )", qs.join(" | "))
-    end
-  end
+      class FlagSearchKey < NullSearchKey
+        def initialize(mail_store, flag)
+          @mail_store = mail_store
+          @flag_re = Regexp.new(Regexp.quote(flag) + "\\b", true, "n")
+        end
 
-  class GroupSearchKey < NullSearchKey
-    def initialize(keys)
-      @keys = keys
-    end
+        def select(uids)
+          @mail_store.open_index do |index|
+            return uids.select { |uid|
+              @flag_re.match(index.get_flags(uid, nil, nil))
+            }
+          end
+        end
 
-    def to_query
-      qs = []
-      @keys.each do |key|
-        q = key.to_query
-        if q.empty?
-        elsif /\A\s*!/ =~ q
-          qs << "uid > 0 " + q
-        else
-          qs << q
+        def reject(uids)
+          @mail_store.open_index do |index|
+            return uids.reject { |uid|
+              @flag_re.match(index.get_flags(uid, nil, nil))
+            }
+          end
         end
       end
 
-      return format("( %s )", qs.join(" & "))
-    end
-  end
+      class NoFlagSearchKey < FlagSearchKey
+        alias super_select select
+        alias super_reject reject
+        alias select super_reject
+        alias reject super_select
+      end
 
-  class EndGroupSearchKey
-  end
+      class KeywordSearchKey < NullSearchKey
+        def initialize(mail_store, flag)
+          @mail_store = mail_store
+          if /\A\w/n.match(flag)
+            s = "\\b"
+          else
+            s = ""
+          end
+          @flag_re = Regexp.new(s + Regexp.quote(flag) + "\\b", true, "n")
+        end
+
+        def select(uids)
+          @mail_store.open_index do |index|
+            return uids.select { |uid|
+              @flag_re.match(index.get_flags(uid, nil, nil))
+            }
+          end
+        end
+
+        def reject(uids)
+          @mail_store.open_index do |index|
+            return uids.reject { |uid|
+              @flag_re.match(index.get_flags(uid, nil, nil))
+            }
+          end
+        end
+      end
+
+      class NoKeywordSearchKey < KeywordSearchKey
+        alias super_select select
+        alias super_reject reject
+        alias select super_reject
+        alias reject super_select
+      end
+
+      class SequenceNumberSearchKey < NullSearchKey
+        def initialize(sequence_set)
+          @sequence_set = sequence_set
+        end
+
+        def to_query
+          raise NotImplementedError.new("sequence number search is not implemented")
+        end
+      end
+
+      class UidSearchKey < NullSearchKey
+        def initialize(sequence_set)
+          @sequence_set = sequence_set
+        end
+
+        def to_query
+          if @sequence_set.empty?
+            super
+          end
+          q = "( " + @sequence_set.collect { |i|
+            case i
+            when Range
+              if i.last == -1
+                format("uid >= %d", i.first)
+              else
+                format("%d <= uid <= %d", i.first, i.last)
+              end
+            else
+              format("uid = %d", i)
+            end
+          }.join(" | ") + " )"
+          return {"main" => q, "sub" => nil}
+        end
+      end
+
+      class NotSearchKey
+        def initialize(key)
+          @key = key
+        end
+
+        def to_query
+          q = @key.to_query
+          if q["main"].empty?
+            return {"main" => "", "sub" => nil}
+          else
+            return {"main" => format("! ( %s )", q["main"]), "sub" => nil}
+          end
+        end
+
+        def select(uids)
+          return @key.reject(uids)
+        end
+
+        def reject(uids)
+          return @key.select(uids)
+        end
+      end
+
+      class DateSearchKey < NullSearchKey
+        def to_query
+          return {"main" => format("%s %s %s", field, op, @date.strftime()),
+                  "sub" => nil}
+        end
+
+        private
+
+        def initialize(date_str)
+          @date = parse_date(date_str)
+          @date.gmtime
+        end
+
+        MONTH = {
+          "Jan" =>  1, "Feb" =>  2, "Mar" =>  3, "Apr" =>  4,
+          "May" =>  5, "Jun" =>  6, "Jul" =>  7, "Aug" =>  8,
+          "Sep" =>  9, "Oct" => 10, "Nov" => 11, "Dec" => 12,
+        }
+        def parse_date(date_str)
+          if date_str.match(/\A"?(\d{1,2})-(#{MONTH.keys.join("|")})-(\d{4})"?\z/o)
+            Time.local($3.to_i, MONTH[$2], $1.to_i)
+          else
+            raise "invlid date string #{date_str}"
+          end
+        end
+
+        def date_str(date)
+          date.strftime("%Y-%m-%dT%H:%M:%S")
+        end
+      end
+
+      class BeforeSearchKey < DateSearchKey
+        def to_query
+          return {"main" => format("internal-date < %s", date_str(@date)),
+                  "sub" => nil}
+        end
+      end
+
+      class OnSearchKey < DateSearchKey
+        def to_query
+          date_end = @date + 86400
+          return {"main" => format("%s <= internal-date < %s",
+                                   date_str(@date), date_str(date_end)),
+                  "sub" => nil}
+        end
+      end
+
+      class SinceSearchKey < DateSearchKey
+        def to_query
+          date = @date + 86400
+          return {"main" => format("internal-date >= %s", date_str(date)), "sub" => nil}
+        end
+      end
+
+      class SentbeforeSearchKey < DateSearchKey
+        def to_query
+          return {"main" => format("date < %s", date_str(@date)), "sub" => nil}
+        end
+      end
+
+      class SentonSearchKey < DateSearchKey
+        def to_query
+          date_end = @date + 86400
+          return {"main" => format("%s <= date < %s",
+                                   date_str(@date), date_str(date_end)),
+                  "sub" => nil}
+        end
+      end
+
+      class SentsinceSearchKey < DateSearchKey
+        def to_query
+          date = @date + 86400
+          return {"main" => format("date >= %s", date_str(date)), "sub" => nil}
+        end
+      end
+
+      class LargerSearchKey < NullSearchKey
+        def initialize(size_str)
+          @size_str = size_str
+        end
+
+        def to_query
+          return {"main" => format("size > %s", @size_str), "sub" => nil}
+        end
+      end
+
+      class SmallerSearchKey < LargerSearchKey
+        def to_query
+          return {"main" => format("size < %s", @size_str), "sub" => nil}
+        end
+      end
+
+      class OrSearchKey < NullSearchKey
+        def initialize(key1, key2)
+          @keys = [key1, key2]
+        end
+
+        def to_query
+          qs = []
+          @keys.each do |key|
+            q = key.to_query
+            if q["main"].empty?
+              return ""
+            elsif /\A\s*!/ =~ q["main"]
+              qs << "uid > 0 " + q["main"]
+            else
+              qs << q["main"]
+            end
+          end
+
+          return {"main" => format("( %s )", qs.join(" | ")), "sub" => nil}
+        end
+      end
+
+      class GroupSearchKey < NullSearchKey
+        def initialize(keys)
+          @keys = keys
+        end
+
+        def to_query
+          qs = []
+          @keys.each do |key|
+            q = key.to_query
+            if q["main"].empty?
+            elsif /\A\s*!/ =~ q["main"]
+              qs << "uid > 0 " + q["main"]
+            else
+              qs << q["main"]
+            end
+          end
+
+          return {"main" => format("( %s )", qs.join(" & ")), "sub" => nil}
+        end
+      end
+
+      class EndGroupSearchKey
+      end
+    end # class RastIndex
+  end # if defined?(::Rast)
 
   class AbstractFetchCommand < Command
     def initialize(sequence_set, atts)
@@ -5036,6 +6099,8 @@ class Ximapd
     StringOption.new("profiler_clock_mode", "profiler clock mode"),
     BoolOption.new("verbose", "turn on verbose mode"),
     BoolOption.new("progress", "show progress"),
+    StringOption.new("index_engine",
+                     "index engine (#{INDEX_ENGINES.keys.join(', ')})"),
   ]
 
   ACTIONS = [

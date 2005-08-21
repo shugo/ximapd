@@ -28,6 +28,19 @@ require File.expand_path("test-helper", File.dirname(__FILE__))
 class XimapdMailStoreTest < Test::Unit::TestCase
   include XimapdTestMixin
 
+  def test_index_engine_class
+    mail_store = Ximapd::MailStore.new(@config)
+    case @config["index_engine"]
+    when "rast"
+      expect = "Ximapd::RastIndex"
+    when "estraier"
+      expect = "Ximapd::EstraierIndex"
+    else
+      expect = nil
+    end
+    assert_equal(expect, mail_store.index_engine_class.to_s)
+  end
+
   def test_import_mail
     mail_store = Ximapd::MailStore.new(@config)
     mail_store.create_mailbox("test")
@@ -346,15 +359,23 @@ EOF
         mail_store.get_mailbox("bar")
       end
     end
-    uids = inbox.uid_search("hello")
+    uids = inbox.uid_search({"main" => "hello"})
     assert_equal([uid1], uids)
-    uids = inbox.uid_search("bye")
+    uids = inbox.uid_search({"main" => "bye"})
     assert_equal([uid2], uids)
-    uids = inbox.uid_search("from : shugo")
-    assert_equal([uid1, uid2], uids)
-    uids = foo.uid_search("hello")
+    case @config["index_engine"]
+    when "rast"
+      uids = inbox.uid_search({"main" => "from : shugo"})
+      assert_equal([uid1, uid2], uids)
+    when "estraier"
+      uids = inbox.uid_search({"main" => "", "sub" => "from STRINC shugo"})
+      assert_equal([uid1, uid2], uids)
+    else
+      raise
+    end
+    uids = foo.uid_search({"main" => "hello"})
     assert_equal([uid4], uids)
-    uids = bar.uid_search("hello")
+    uids = bar.uid_search({"main" => "hello"})
     assert_equal([uid5], uids)
     test_mailbox = mail_store.mailbox_db.transaction {
       mail_store.get_mailbox("test")

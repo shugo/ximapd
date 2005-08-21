@@ -86,6 +86,7 @@ module XimapdTestMixin
   def setup
     @tmpdir = mkdtemp("ximapd-test")
     @config = {
+      "index_engine" => "estraier",
       "user" => "foo",
       "password" => "bar",
       "data_dir" => File.expand_path("data", @tmpdir),
