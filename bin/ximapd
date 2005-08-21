@@ -1969,12 +1969,12 @@ class Ximapd
       end
     end
 
-    def header_fields(fields)
+    def header_fields(fields, part = nil)
       pat = "^(?:" + fields.collect { |field|
         Regexp.quote(field)
       }.join("|") + "):.*(?:\r\n[ \t]+.*)*\r\n"
       re = Regexp.new(pat, true, "n")
-      return header.scan(re).join + "\r\n"
+      return header(part).scan(re).join + "\r\n"
     end
 
     def body_structure(extensible)
@@ -1991,7 +1991,11 @@ class Ximapd
     end
 
     def mime_body(part)
-      return get_part(part).body.to_s.gsub(/\n/, "\r\n")
+      if part.nil?
+        return to_s
+      else
+        return get_part(part).body.to_s.gsub(/\n/, "\r\n")
+      end
     end
 
     def delete
@@ -4609,25 +4613,11 @@ class Ximapd
     def fetch(mail)
       if @section.nil? || @section.text.nil?
         if @section.nil?
-          part = ""
+          part = nil
         else
           part = @section.part
         end
-        if @partial.nil?
-          if /\A\d/.match(part)
-            result = format("BODY[%s] %s", part, literal(mail.mime_body(part)))
-          else
-            result = format("BODY[%s] %s", part, literal(mail.to_s))
-          end
-        else
-          if /\A\d/.match(part)
-            s = mail.mime_body(part)[@partial.offset, @partial.size]
-          else
-            s = mail.to_s[@partial.offset, @partial.size]
-          end
-          result = format("BODY[%s]<%d> %s",
-                          part, @partial.offset, literal(s))
-        end
+        result = format_data(mail.mime_body(part))
         unless @peek
           flags = mail.flags(false)
           unless /\\Seen\b/ni.match(flags)
@@ -4644,23 +4634,43 @@ class Ximapd
       end
       case @section.text
       when "MIME"
-        part = @section.part
-        s = mail.mime_header(part)
-        return format("BODY[%s.MIME] %s", part, literal(s))
+        s = mail.mime_header(@section.part)
+        return format_data(s)
       when "HEADER"
         s = mail.header(@section.part)
-        if @section.part
-          return format("BODY[%s.HEADER] %s", @section.part, literal(s))
-        else
-          return format("BODY[HEADER] %s", literal(s))
-        end
+        return format_data(s)
       when "HEADER.FIELDS"
-        s = mail.header_fields(@section.header_list)
-        fields = @section.header_list.collect { |i|
-          quoted(i)
-        }.join(" ")
-        return format("BODY[HEADER.FIELDS (%s)] %s",
-                      fields, literal(s))
+        s = mail.header_fields(@section.header_list, @section.part)
+        return format_data(s)
+      end
+    end
+
+    private
+    
+    def format_data(data)
+      if @section.nil?
+        section = ""
+      else
+        if @section.text.nil?
+          section = @section.part
+        else
+          if @section.part.nil?
+            section = @section.text
+          else
+            section = @section.part + "." + @section.text
+          end
+          if @section.text == "HEADER.FIELDS"
+            section += " (" + @section.header_list.collect { |i|
+              quoted(i)
+            }.join(" ") + ")"
+          end
+        end
+      end
+      if @partial
+        s = data[@partial.offset, @partial.size]
+        return format("BODY[%s]<%d> %s", section, @partial.offset, literal(s))
+      else
+        return format("BODY[%s] %s", section, literal(data))
       end
     end
   end
