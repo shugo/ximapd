@@ -112,7 +112,7 @@ class Ximapd
     attr_reader :config, :path, :mailbox_db, :mailbox_db_path
     attr_reader :plugins
     attr_reader :uid_seq, :uidvalidity_seq, :mailbox_id_seq
-    attr_reader :backend_class
+    attr_reader :backend, :backend_class
 
     def initialize(config)
       super()

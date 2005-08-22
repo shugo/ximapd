@@ -86,7 +86,7 @@ module XimapdTestMixin
   def setup
     @tmpdir = mkdtemp("ximapd-test")
     @config = {
-      "backend" => "Rast",
+      "backend" => ENV["XIMAPD_TEST_BACKEND"] || "Rast",
       "user" => "foo",
       "password" => "bar",
       "data_dir" => File.expand_path("data", @tmpdir),

@@ -444,19 +444,15 @@ class Ximapd
       end
 
       def select(uids)
-        @mail_store.open_backend do |index|
-          return uids.select { |uid|
-            @flag_re.match(index.get_flags(uid, nil, nil))
-          }
-        end
+        return uids.select { |uid|
+          @flag_re.match(@mail_store.backend.get_flags(uid, nil, nil))
+        }
       end
 
       def reject(uids)
-        @mail_store.open_backend do |index|
-          return uids.reject { |uid|
-            @flag_re.match(index.get_flags(uid, nil, nil))
-          }
-        end
+        return uids.reject { |uid|
+          @flag_re.match(@mail_store.backend.get_flags(uid, nil, nil))
+        }
       end
     end
 
@@ -479,19 +475,15 @@ class Ximapd
       end
 
       def select(uids)
-        @mail_store.open_backend do |index|
-          return uids.select { |uid|
-            @flag_re.match(index.get_flags(uid, nil, nil))
-          }
-        end
+        return uids.select { |uid|
+          @flag_re.match(@mail_store.backend.get_flags(uid, nil, nil))
+        }
       end
 
       def reject(uids)
-        @mail_store.open_backend do |index|
-          return uids.reject { |uid|
-            @flag_re.match(index.get_flags(uid, nil, nil))
-          }
-        end
+        return uids.reject { |uid|
+          @flag_re.match(@mail_store.backend.get_flags(uid, nil, nil))
+        }
       end
     end
 
