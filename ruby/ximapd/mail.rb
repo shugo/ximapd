@@ -372,7 +372,7 @@ class Ximapd
       super
       @mail_store.open_backend do |backend|
         backend.delete_flags(@uid, @item_id, @indexed_obj)
-        @indexed_data =  nil
+        @indexed_obj =  nil
         backend.delete(@uid, @item_id)
       end
     end
