@@ -345,8 +345,8 @@ class Ximapd
 
     def flags(get_recent = true)
       s = nil
-      @mail_store.open_index do |index|
-        s = index.get_flags(@uid, @item_id, @indexed_obj)
+      @mail_store.open_backend do |backend|
+        s = backend.get_flags(@uid, @item_id, @indexed_obj)
       end
       if get_recent && uid > @mailbox["last_peeked_uid"]
         if s.empty?
@@ -361,8 +361,8 @@ class Ximapd
 
     def flags=(s)
       r = nil
-      @mail_store.open_index do |index|
-        r = index.set_flags(@uid, @item_id, @indexed_obj, s)
+      @mail_store.open_backend do |backend|
+        r = backend.set_flags(@uid, @item_id, @indexed_obj, s)
       end
       @indexed_obj = nil
       r
@@ -370,10 +370,10 @@ class Ximapd
 
     def delete
       super
-      @mail_store.open_index do |index|
-        index.delete_flags(@uid, @item_id, @indexed_obj)
+      @mail_store.open_backend do |backend|
+        backend.delete_flags(@uid, @item_id, @indexed_obj)
         @indexed_data =  nil
-        index.delete(@uid, @item_id)
+        backend.delete(@uid, @item_id)
       end
     end
   end

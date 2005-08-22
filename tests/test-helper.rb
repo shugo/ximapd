@@ -86,7 +86,7 @@ module XimapdTestMixin
   def setup
     @tmpdir = mkdtemp("ximapd-test")
     @config = {
-      "index_engine" => "rast",
+      "backend" => "Rast",
       "user" => "foo",
       "password" => "bar",
       "data_dir" => File.expand_path("data", @tmpdir),
@@ -101,5 +101,8 @@ end
 
 $:.unshift(File.expand_path("../ruby", File.dirname(__FILE__)))
 require "ximapd"
+
+Ximapd::Backend.directory =
+  File.expand_path("../backends", File.dirname(__FILE__))
 
 # vim: set filetype=ruby expandtab sw=2 :

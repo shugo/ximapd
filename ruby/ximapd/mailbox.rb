@@ -111,32 +111,32 @@ class Ximapd
     end
 
     def status
-      @mail_store.open_index do |index|
-        return index.mailbox_status(self)
+      @mail_store.open_backend do |backend|
+        return backend.mailbox_status(self)
       end
     end
 
     def uid_search(query)
-      @mail_store.open_index do |index|
-        return index.uid_search(self, query)
+      @mail_store.open_backend do |backend|
+        return backend.uid_search(self, query)
       end
     end
 
     def uid_search_by_keys(keys)
-      @mail_store.open_index do |index|
-        return index.uid_search_by_keys(self, keys)
+      @mail_store.open_backend do |backend|
+        return backend.uid_search_by_keys(self, keys)
       end
     end
 
     def fetch(sequence_set)
-      @mail_store.open_index do |index|
-        return index.fetch(self, sequence_set)
+      @mail_store.open_backend do |backend|
+        return backend.fetch(self, sequence_set)
       end
     end
 
     def uid_fetch(sequence_set)
-      @mail_store.open_index do |index|
-        return index.uid_fetch(self, sequence_set)
+      @mail_store.open_backend do |backend|
+        return backend.uid_fetch(self, sequence_set)
       end
     end
 

@@ -24,21 +24,27 @@
 # SUCH DAMAGE.
 
 class Ximapd
-  INDEX_ENGINES = {} # { "Name" => [IndexClass, "library-name", "library-version"], ...}
+  class Backend
+    @@directory = nil
 
-  class AbstractIndex
-    class << self
-      def make_list_query(list_name)
-        raise ScriptError.new("subclass must override this method")
-      end
+    def self.directory
+      return @@directory
+    end
 
-      def make_default_query(mailbox_id)
-        raise ScriptError.new("subclass must override this method")
-      end
+    def self.directory=(dir)
+      @@directory = dir
+    end
 
-      def make_query(mailbox_name)
-        raise ScriptError.new("subclass must override this method")
-      end
+    def self.make_list_query(list_name)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def self.make_default_query(mailbox_id)
+      raise ScriptError.new("subclass must override this method")
+    end
+
+    def self.make_query(mailbox_name)
+      raise ScriptError.new("subclass must override this method")
     end
 
     def initialize(mail_store)
@@ -49,7 +55,6 @@ class Ximapd
       @index = nil
       @index_path = File.expand_path("index", @path)
     end
-    private :initialize
 
     def setup
       raise ScriptError.new("subclass must override this method")
@@ -126,5 +131,5 @@ class Ximapd
     def try_query(query)
       raise ScriptError.new("subclass must override this method")
     end
-  end # class AbstractIndex
+  end
 end

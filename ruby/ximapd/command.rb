@@ -442,7 +442,7 @@ class Ximapd
     end
 
     def search_key(charset)
-      ic = @session.mail_store.index_engine_class
+      ic = @session.mail_store.backend_class
       token = lookahead
       if /\A(\d+|\*)/.match(token.value)
         return ic::SequenceNumberSearchKey.new(sequence_set)

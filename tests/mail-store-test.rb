@@ -28,17 +28,17 @@ require File.expand_path("test-helper", File.dirname(__FILE__))
 class XimapdMailStoreTest < Test::Unit::TestCase
   include XimapdTestMixin
 
-  def test_index_engine_class
+  def test_backend_class
     mail_store = Ximapd::MailStore.new(@config)
-    case @config["index_engine"]
-    when "rast"
-      expect = "Ximapd::RastIndex"
-    when "estraier"
-      expect = "Ximapd::EstraierIndex"
+    case @config["backend"]
+    when "Rast"
+      expect = "Ximapd::RastBackend"
+    when "HyperEstraier"
+      expect = "Ximapd::HyperEstraierBackend"
     else
       expect = nil
     end
-    assert_equal(expect, mail_store.index_engine_class.to_s)
+    assert_equal(expect, mail_store.backend_class.to_s)
   end
 
   def test_import_mail
@@ -363,11 +363,11 @@ EOF
     assert_equal([uid1], uids)
     uids = inbox.uid_search({"main" => "bye"})
     assert_equal([uid2], uids)
-    case @config["index_engine"]
-    when "rast"
+    case @config["backend"]
+    when "Rast"
       uids = inbox.uid_search({"main" => "from : shugo"})
       assert_equal([uid1, uid2], uids)
-    when "estraier"
+    when "HyperEstraier"
       uids = inbox.uid_search({"main" => "", "sub" => "from STRINC shugo"})
       assert_equal([uid1, uid2], uids)
     else

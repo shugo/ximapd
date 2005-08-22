@@ -93,10 +93,12 @@ begin
   $config["bindir"] = "#{$config['prefix']}/bin"
   $config["datadir"] = "#{$config['prefix']}/share/ximapd"
   $config["rubydir"] = "#{$config['datadir']}/ruby"
+  $config["backenddir"] = "#{$config['datadir']}/backends"
   $config["plugindir"] = "#{$config['datadir']}/plugins"
   create_file("ximapd", 0755)
   install_file("ximapd", "#{$config['bindir']}/ximapd", 0755)
   install_files("ruby", $config["rubydir"])
+  install_files("backends", $config["backenddir"])
   install_files("plugins", $config["plugindir"])
 rescue => e
   STDERR.printf("%s: %s\n", SCRIPT_NAME, e.message)

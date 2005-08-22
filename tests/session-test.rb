@@ -564,10 +564,10 @@ EOF
     assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A007 OK LIST completed\r\n", sock.output.gets)
     assert_equal("A008 OK CREATE completed\r\n", sock.output.gets)
-    case @config["index_engine"]
-    when "rast"
+    case @config["backend"]
+    when "Rast"
       assert_equal("A009 NO invalid query\r\n", sock.output.gets)
-    when "estraier"
+    when "HyperEstraier"
       assert_equal("A009 OK CREATE completed\r\n", sock.output.gets)
     else
       raise
@@ -575,10 +575,10 @@ EOF
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
     ruby = mail_store.mailboxes["queries/ruby"]
-    case @config["index_engine"]
-    when "rast"
+    case @config["backend"]
+    when "Rast"
       assert_equal({"main" => "ruby", "sub" => nil}, ruby["query"])
-    when "estraier"
+    when "HyperEstraier"
       assert_equal({"main" => "ruby", "sub" => []}, ruby["query"])
     else
       raise
@@ -705,10 +705,10 @@ EOF
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
     ruby = mail_store.mailboxes["queries/ruby"]
-    case @config["index_engine"]
-    when "rast"
+    case @config["backend"]
+    when "Rast"
       assert_equal({"main" => "ruby", "sub" => nil}, ruby["query"])
-    when "estraier"
+    when "HyperEstraier"
       assert_equal({"main" => "ruby", "sub" => []}, ruby["query"])
     else
       raise
@@ -729,10 +729,10 @@ EOF
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
     ruby = mail_store.mailboxes["ruby"]
-    case @config["index_engine"]
-    when "rast"
+    case @config["backend"]
+    when "Rast"
       assert_equal({"main" => "ruby", "sub" => nil}, ruby["query"])
-    when "estraier"
+    when "HyperEstraier"
       assert_equal({"main" => "ruby", "sub" => []}, ruby["query"])
     else
       raise
@@ -753,11 +753,11 @@ EOF
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
     assert_equal("A002 NO mailbox already exists\r\n", sock.output.gets)
-    case @config["index_engine"]
-    when "rast"
+    case @config["backend"]
+    when "Rast"
       assert_equal("A003 NO invalid query\r\n", sock.output.gets)
       assert_equal("A004 OK RENAME completed\r\n", sock.output.gets)
-    when "estraier"
+    when "HyperEstraier"
       assert_equal("A003 OK RENAME completed\r\n", sock.output.gets)
       assert_equal("A004 NO mailbox does not exist\r\n", sock.output.gets)
     else
@@ -766,11 +766,11 @@ EOF
     assert_equal("A005 NO mailbox does not exist\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
-    case @config["index_engine"]
-    when "rast"
+    case @config["backend"]
+    when "Rast"
       perl = mail_store.mailboxes["queries/perl"]
       assert_equal({"main" => "perl", "sub" => nil}, perl["query"])
-    when "estraier"
+    when "HyperEstraier"
       test = mail_store.mailboxes["queries/&-"]
       assert_equal({"main" => "&", "sub" => []}, test["query"])
     else

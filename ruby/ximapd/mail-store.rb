@@ -112,7 +112,7 @@ class Ximapd
     attr_reader :config, :path, :mailbox_db, :mailbox_db_path
     attr_reader :plugins
     attr_reader :uid_seq, :uidvalidity_seq, :mailbox_id_seq
-    attr_reader :index_engine_class
+    attr_reader :backend_class
 
     def initialize(config)
       super()
@@ -140,30 +140,15 @@ class Ximapd
       @ml_header_fields =
         @config["ml_header_fields"] || DEFAULT_ML_HEADER_FIELDS
       @last_peeked_uids = {}
-      @index_ref_count = 0
+      @backend_ref_count = 0
       lock_path = File.expand_path("lock", @path)
       @lock = File.open(lock_path, "w+")
       @lock_count = 0
-      index_engine_name = "rast"
-      if @config["index_engine"]
-        @config["index_engine"] = @config["index_engine"].downcase
-        index_engine_name = @config["index_engine"]
-      else
-        @config["index_engine"] = index_engine_name
-      end
-      if key = INDEX_ENGINES.keys.detect { |k| k.downcase == index_engine_name }
-        index_engine_name = key
-        index_engine = INDEX_ENGINES[index_engine_name][0]
-      else
-        raise "unknown index engine: #{index_engine_name}"
-      end
-      begin
-        require INDEX_ENGINES[index_engine_name][1]
-      rescue Exception
-        raise "not supported engine: #{index_engine_name}"
-      end
-      @index = index_engine.new(self)
-      @index_engine_class = @index.class
+      backend_name = @config["backend"] || "Rast"
+      lib = File.expand_path(backend_name.downcase, Backend.directory)
+      require lib
+      @backend_class = Ximapd.const_get(backend_name + "Backend")
+      @backend = @backend_class.new(self)
       synchronize do
         if @uidvalidity_seq.current.nil?
           @uidvalidity_seq.current = 1
@@ -177,7 +162,7 @@ class Ximapd
           convert_old_mailbox_db
           @plugins = Plugin.create_plugins(@config, self)
         end
-        @index.setup
+        @backend.setup
         begin
           create_mailbox("INBOX")
         rescue
@@ -194,7 +179,7 @@ class Ximapd
       mon_enter
       if @lock_count == 0
         @lock.flock(File::LOCK_EX)
-        @index.standby
+        @backend.standby
       end
       @lock_count += 1
     end
@@ -202,7 +187,7 @@ class Ximapd
     def unlock
       @lock_count -= 1
       if @lock_count == 0 && !@lock.closed?
-        @index.relax
+        @backend.relax
         @lock.flock(File::LOCK_UN)
       end
       mon_exit
@@ -301,7 +286,7 @@ class Ximapd
     end
 
     def import(args, mailbox_name = nil)
-      open_index do |index|
+      open_backend do |backend|
         for arg in args
           filenames = []
           Find.find(arg) do |filename|
@@ -333,18 +318,18 @@ class Ximapd
     end
 
     def import_file(f, mailbox_name = nil)
-      open_index do |index|
+      open_backend do |backend|
         return import_mail_internal(f.read, mailbox_name)
       end
     end
 
     def import_mbox(args, mailbox_name = nil)
-      open_index do |index|
+      open_backend do |backend|
         for arg in args
           Find.find(arg) do |filename|
             if File.file?(filename)
               File.open(filename) do |f|
-                import_mbox_internal(index, f, mailbox_name)
+                import_mbox_internal(backend, f, mailbox_name)
               end
             end
           end
@@ -353,8 +338,8 @@ class Ximapd
     end
 
     def import_mbox_file(f, mailbox_name = nil)
-      open_index do |index|
-        import_mbox_internal(index, f, mailbox_name)
+      open_backend do |backend|
+        import_mbox_internal(backend, f, mailbox_name)
       end
     end
 
@@ -381,7 +366,7 @@ class Ximapd
       imap.authenticate(auth, user, pass)
 
       visited_folders = Set.new
-      open_index do |index|
+      open_backend do |backend|
         folders.each do |f|
           folders = imap.list('', f)
           if folders.nil?
@@ -475,20 +460,20 @@ class Ximapd
     end
 
     def import_mail(str, mailbox_name = nil, flags = "", indate = nil, override = {})
-      open_index do
+      open_backend do
         import_mail_internal(str, mailbox_name, flags, indate, override)
       end
     end
 
     def index_mail(mail, filename)
       begin
-        @index.register(mail, filename)
+        @backend.register(mail, filename)
         s = mail.properties["x-ml-name"]
         if !s.empty? && mail.properties["mailbox-id"] == 0 &&
           !@mailbox_db["mailing_lists"].key?(s)
           mbox_name = get_mailbox_name_from_x_ml_name(s)
           mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox_name))
-          query = @index.class.make_list_query(mail.properties["x-ml-name"])
+          query = @backend.class.make_list_query(mail.properties["x-ml-name"])
           begin
             create_mailbox_internal(mailbox_name, query)
             mailbox = get_mailbox(mailbox_name)
@@ -501,7 +486,7 @@ class Ximapd
           end
         end
       rescue Exception => e
-        @logger.log_exception(e, "index_mail")
+        @logger.log_exception(e, "backend_mail")
       end
     end
 
@@ -524,7 +509,7 @@ class Ximapd
     end
 
     def delete_mails(mails)
-      open_index do |index|
+      open_backend do |backend|
         for mail in mails
           for plugin in @plugins
             plugin.on_delete_mail(mail)
@@ -534,18 +519,18 @@ class Ximapd
       end
     end
 
-    def open_index(*args)
+    def open_backend(*args)
       synchronize do
-        if @index_ref_count == 0
-          @index.open(*args)
+        if @backend_ref_count == 0
+          @backend.open(*args)
         end
-        @index_ref_count += 1
+        @backend_ref_count += 1
         begin
-          yield(@index)
+          yield(@backend)
         ensure
-          @index_ref_count -= 1
-          if @index_ref_count == 0
-            @index.close
+          @backend_ref_count -= 1
+          if @backend_ref_count == 0
+            @backend.close
           end
         end
       end
@@ -563,7 +548,7 @@ class Ximapd
           @mailbox_db["mailboxes"]["ml"] = DEFAULT_MAILBOXES["ml"]
         end
       end
-      @index.rebuild_index do
+      @backend.rebuild_index do
         mailbox_names = {}
         @mailbox_db.transaction do
           for mailbox_name, mailbox_data in @mailbox_db["mailboxes"]
@@ -573,7 +558,7 @@ class Ximapd
             end
           end
         end
-        open_index do
+        open_backend do
           mail_dir = File.expand_path("mails", @path)
           Dir.glob(mail_dir + "/*/*").sort.each do |dir|
             reindex_month(dir)
@@ -714,7 +699,7 @@ class Ximapd
         query = extract_query(name)
         if query.nil?
           mailbox_id = get_next_mailbox_id
-          query = @index.class.make_default_query(mailbox_id)
+          query = @backend.class.make_default_query(mailbox_id)
           mailbox["id"] = mailbox_id
         end
       end
@@ -725,10 +710,10 @@ class Ximapd
     def extract_query(mailbox_name)
       s = mailbox_name.slice(/\Aqueries\/(.*)/u, 1)
       return nil if s.nil?
-      query = @index.class.make_query(Net::IMAP.decode_utf7(s))
+      query = @backend.class.make_query(Net::IMAP.decode_utf7(s))
       begin
-        open_index do |index|
-          result = index.try_query(query)
+        open_backend do |backend|
+          result = backend.try_query(query)
         end
         return query
       rescue
@@ -736,7 +721,7 @@ class Ximapd
       end
     end
 
-    def import_mbox_internal(index, f, mailbox_name = nil)
+    def import_mbox_internal(backend, f, mailbox_name = nil)
       s = nil
       f.each_line do |line|
         if /\AFrom\s+\S+\s+[A-Z][a-z]{2} [A-Z][a-z]{2}\s+\d+ \d\d:\d\d:\d\d \d+/.match(line)
@@ -797,7 +782,7 @@ class Ximapd
       begin
         str = File.read(filename)
         uid = filename.slice(/\/(\d+)\z/, 1).to_i
-        flags = @index.get_old_flags(uid) || "\\Seen"
+        flags = @backend.get_old_flags(uid) || "\\Seen"
         indate = File.mtime(filename)
         mail = parse_mail(str, uid, flags, indate)
         begin
