@@ -1,5 +1,12 @@
 = ximapd NEWS
 
+== Major changes in release 0.0.4 (2005-08-22)
+
+* improved MIME support.
+* implemented non-UID SEARCH.
+* implemented non-UID STORE.
+* set x-ml-name properly on COPY.
+
 == Major changes in release 0.0.3 (2005-08-09)
 
 * Guess mailing list names intelligently. [Akira Yamada]
