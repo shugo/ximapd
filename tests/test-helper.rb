@@ -99,7 +99,7 @@ module XimapdTestMixin
   end
 end
 
-ximapd = File.expand_path("../bin/ximapd", File.dirname(__FILE__))
-load(ximapd)
+$:.unshift(File.expand_path("../ruby", File.dirname(__FILE__)))
+require "ximapd"
 
 # vim: set filetype=ruby expandtab sw=2 :
