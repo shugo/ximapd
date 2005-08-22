@@ -388,7 +388,7 @@ class Ximapd
         mailbox["query"]["sub"].each { |eq| cond.add_attr(eq) }
       end
       cond.set_order("uid NUMA")
-      cond.set_options(HyperEstraier::Condition::CONDSIMPLE)
+      cond.set_options(HyperEstraier::Condition::SIMPLE)
 
       result = @index.search(cond, 0)
       result.to_a
