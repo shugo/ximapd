@@ -42,13 +42,15 @@ require "optparse"
 require "sdbm"
 require "rmail/parser"
 
+require "ximapd/acceptable"
 require "ximapd/sequence"
+require "ximapd/backend"
 require "ximapd/mail-store"
 require "ximapd/mailbox"
 require "ximapd/mail"
 require "ximapd/session"
 require "ximapd/command"
-require "ximapd/backend"
+require "ximapd/query"
 
 now = DateTime.now
 unless defined?(now.to_time)

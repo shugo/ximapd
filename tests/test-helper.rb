@@ -82,6 +82,20 @@ class Time
   end
 end
 
+class MethodCallChecker
+  attr_reader :method_id, :args
+
+  def initialize
+    @method_id = nil
+    @args = nil
+  end
+
+  def method_missing(mid, *args)
+    @method_id = mid
+    @args = args
+  end
+end
+
 module XimapdTestMixin
   def setup
     @tmpdir = mkdtemp("ximapd-test")
