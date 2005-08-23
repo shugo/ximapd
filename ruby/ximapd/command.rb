@@ -1255,7 +1255,7 @@ class Ximapd
     private
 
     def send_tagged_response
-      raise ScriptError.new("subclass must override send_tagged_response")
+      raise SubclassResponsibilityError.new
     end
   end
 
@@ -1501,7 +1501,7 @@ class Ximapd
     private
 
     def create_result(uids)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
   end
 
@@ -1562,11 +1562,11 @@ class Ximapd
     private
 
     def fetch(mailbox)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def send_fetch_response(mail, flags)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
   end
 
@@ -1773,11 +1773,11 @@ class Ximapd
     private
 
     def fetch(mailbox)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def send_fetch_response(mail, flags)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
   end
 

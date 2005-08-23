@@ -36,15 +36,15 @@ class Ximapd
     end
 
     def self.make_list_query(list_name)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def self.make_default_query(mailbox_id)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def self.make_query(mailbox_name)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def initialize(mail_store)
@@ -57,79 +57,79 @@ class Ximapd
     end
 
     def setup
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def standby
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def relax
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def open(*args)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def close
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def register(mail_data, filename)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def get_flags(uid, item_id, item_obj)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def set_flags(uid, item_id, item_obj, flags)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def delete_flags(uid, item_id, item_obj)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def delete(uid, item_id)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def fetch(mailbox, sequence_set)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def uid_fetch(mailbox, sequence_set)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def mailbox_status(mailbox)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def query(mailbox, query)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def uid_search(mailbox, query)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def uid_search_by_keys(mailbox, keys)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def rebuild_index(*args)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def get_old_flags(uid)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
 
     def try_query(query)
-      raise ScriptError.new("subclass must override this method")
+      raise SubclassResponsibilityError.new
     end
   end
 end

@@ -48,35 +48,35 @@ class Ximapd
     end
 
     def import(mail_data)
-      raise ScriptError.new("subclass must override Mailbox#import")
+      raise SubclassResponsibilityError.new
     end
 
     def get_mail_path(mail)
-      raise ScriptError.new("subclass must override Mailbox#get_mail_path")
+      raise SubclassResponsibilityError.new
     end
 
     def status
-      raise ScriptError.new("subclass must override Mailbox#status")
+      raise SubclassResponsibilityError.new
     end
 
     def uid_search(query)
-      raise ScriptError.new("subclass must override Mailbox#uid_search")
+      raise SubclassResponsibilityError.new
     end
 
     def uid_search_by_keys(keys)
-      raise ScriptError.new("subclass must override Mailbox#uid_search_by_keys")
+      raise SubclassResponsibilityError.new
     end
 
     def fetch(sequence_set)
-      raise ScriptError.new("subclass must override Mailbox#fetch")
+      raise SubclassResponsibilityError.new
     end
 
     def uid_fetch(sequence_set)
-      raise ScriptError.new("subclass must override Mailbox#uid_fetch")
+      raise SubclassResponsibilityError.new
     end
 
     def get_mail(uid)
-      raise ScriptError.new("subclass must override Mailbox#get_mail")
+      raise SubclassResponsibilityError.new
     end
   end
 

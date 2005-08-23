@@ -497,6 +497,12 @@ class Ximapd
     end
   end
 
+  class SubclassResponsibilityError < ScriptError
+    def initialize(s = "subclass must override this method")
+      super(s)
+    end
+  end
+
   class TerminateException < Exception; end
   class MailboxError < StandardError; end
   class MailboxExistError < MailboxError; end
