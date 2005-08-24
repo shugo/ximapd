@@ -102,11 +102,12 @@ class Ximapd
     @threads = []
     @sessions = {}
     @option_parser = OptionParser.new { |opts|
-      opts.banner = "usage: ximapd [options]"
+      opts.banner = "usage: ximapd action [options]"
       opts.separator("")
       opts.separator("options:")
       define_options(opts, @config, OPTIONS)
       opts.separator("")
+      opts.separator("actions:")
       define_options(opts, @config, ACTIONS)
     }
     @max_clients = nil
@@ -140,7 +141,7 @@ class Ximapd
   def parse_options(args)
     begin
       @option_parser.parse!(args)
-      @config["action"] ||= "help"
+      raise "no action are specified" unless @config["action"]
       if @config["action"] != "help" && @config["action"] != "version"
         config_file = File.expand_path(@config["config_file"] || "~/.ximapd")
         config = File.open(config_file) { |f|
