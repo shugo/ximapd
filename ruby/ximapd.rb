@@ -42,7 +42,7 @@ require "optparse"
 require "sdbm"
 require "rmail/parser"
 
-require "ximapd/acceptable"
+require "ximapd/double-dispatchable"
 require "ximapd/sequence"
 require "ximapd/backend"
 require "ximapd/mail-store"

@@ -25,7 +25,9 @@
 
 class Ximapd
   class Query
-    include Acceptable
+    include DoubleDispatchable
+
+    double_dispatch :accept, :visit
 
     def ==(other)
       return self.class == other.class

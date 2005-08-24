@@ -24,22 +24,30 @@
 # SUCH DAMAGE.
 
 class Ximapd
-  module Acceptable
+  module DoubleDispatchable
     def self.append_features(klass)
       super(klass)
-      def klass.inherited(subclass)
-        method = "visit" +
-          subclass.name.slice(/[A-Za-z]+\z/).gsub(/[A-Z]/) { |s|
-          "_" + s.downcase
-        }
-        subclass.class_eval(<<-EOF)
-          def accept(visitor)
-            visitor.#{method}(self)
-          end
-        EOF
+      klass.class_eval do
+        @@double_dispatch_methods = {}
       end
-      klass.send(:define_method, :accept) do |visitor|
-        raise SubclassResponsibilityError.new
+      def klass.double_dispatch(method, prefix)
+        @@double_dispatch_methods[method.to_s] = prefix.to_s
+        define_method(method) do
+          raise SubclassResponsibilityError.new
+        end
+      end
+      def klass.inherited(subclass)
+        for method, prefix in @@double_dispatch_methods
+          method2 = prefix +
+            subclass.name.slice(/[A-Za-z]+\z/).gsub(/[A-Z]/) { |s|
+            "_" + s.downcase
+          }
+          subclass.class_eval(<<-EOF)
+            def #{method}(obj, *args)
+              obj.#{method2}(self, *args)
+            end
+          EOF
+        end
       end
     end
   end
