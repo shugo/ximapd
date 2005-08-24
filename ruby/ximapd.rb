@@ -51,6 +51,7 @@ require "ximapd/mail"
 require "ximapd/session"
 require "ximapd/command"
 require "ximapd/query"
+require "ximapd/error"
 
 now = DateTime.now
 unless defined?(now.to_time)
@@ -497,20 +498,6 @@ class Ximapd
       mail_store.close
     end
   end
-
-  class SubclassResponsibilityError < ScriptError
-    def initialize(s = "subclass must override this method")
-      super(s)
-    end
-  end
-
-  class TerminateException < Exception; end
-  class MailboxError < StandardError; end
-  class MailboxExistError < MailboxError; end
-  class NoMailboxError < MailboxError; end
-  class MailboxAccessError < MailboxError; end
-  class NotSelectableMailboxError < MailboxError; end
-  class InvalidQueryError < StandardError; end
 
   class Plugin
     @@directories = nil

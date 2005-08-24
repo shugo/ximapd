@@ -31,6 +31,11 @@ class XimapdQueryTest < Test::Unit::TestCase
   def test_accept
     checker = MethodCallChecker.new
 
+    q = Ximapd::Query.new
+    assert_raise(Ximapd::SubclassResponsibilityError) do
+      q.accept(checker)
+    end
+
     q1 = Ximapd::NullQuery.new
     q1.accept(checker)
     assert_equal(:visit_null_query, checker.method_id)
@@ -77,22 +82,71 @@ class XimapdQueryTest < Test::Unit::TestCase
     q = Ximapd::Query.parse('"hello"')
     assert_equal(Ximapd::TermQuery.new("hello"), q)
 
+    q = Ximapd::Query.parse('subject : hello')
+    assert_equal(Ximapd::PropertyPeQuery.new("subject", "hello"), q)
+
     q = Ximapd::Query.parse('subject = hello')
     assert_equal(Ximapd::PropertyEqQuery.new("subject", "hello"), q)
 
+    q = Ximapd::Query.parse('date < 2005-08-24')
+    assert_equal(Ximapd::PropertyLtQuery.new("date", "2005-08-24"), q)
+
+    q = Ximapd::Query.parse('date > 2005-08-24')
+    assert_equal(Ximapd::PropertyGtQuery.new("date", "2005-08-24"), q)
+
+    q = Ximapd::Query.parse('date <= 2005-08-24')
+    assert_equal(Ximapd::PropertyLeQuery.new("date", "2005-08-24"), q)
+
+    q = Ximapd::Query.parse('date >= 2005-08-24')
+    assert_equal(Ximapd::PropertyGeQuery.new("date", "2005-08-24"), q)
+
+    q = Ximapd::Query.parse('2005-08-24 < date < 2005-08-25')
+    expected = Ximapd::AndQuery.new([
+      Ximapd::PropertyGtQuery.new("date", "2005-08-24"),
+      Ximapd::PropertyLtQuery.new("date", "2005-08-25"),
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('2005-08-25 > date > 2005-08-24')
+    expected = Ximapd::AndQuery.new([
+      Ximapd::PropertyLtQuery.new("date", "2005-08-25"),
+      Ximapd::PropertyGtQuery.new("date", "2005-08-24"),
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('2005-08-24 <= date <= 2005-08-25')
+    expected = Ximapd::AndQuery.new([
+      Ximapd::PropertyGeQuery.new("date", "2005-08-24"),
+      Ximapd::PropertyLeQuery.new("date", "2005-08-25"),
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('2005-08-25 >= date >= 2005-08-24')
+    expected = Ximapd::AndQuery.new([
+      Ximapd::PropertyLeQuery.new("date", "2005-08-25"),
+      Ximapd::PropertyGeQuery.new("date", "2005-08-24"),
+    ])
+    assert_equal(expected, q)
+
     q = Ximapd::Query.parse('hello & bye')
     expected = Ximapd::AndQuery.new([
-      Ximapd::TermQuery.new("hello"), Ximapd::TermQuery.new("bye")])
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
     assert_equal(expected, q)
 
     q = Ximapd::Query.parse('hello | bye')
     expected = Ximapd::OrQuery.new([
-      Ximapd::TermQuery.new("hello"), Ximapd::TermQuery.new("bye")])
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
     assert_equal(expected, q)
 
     q = Ximapd::Query.parse('hello - bye')
     expected = Ximapd::NotQuery.new([
-      Ximapd::TermQuery.new("hello"), Ximapd::TermQuery.new("bye")])
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
     assert_equal(expected, q)
 
     q = Ximapd::Query.parse('hello-bye')

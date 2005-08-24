@@ -24,23 +24,17 @@
 # SUCH DAMAGE.
 
 class Ximapd
-  module Acceptable
-    def self.append_features(klass)
-      super(klass)
-      def klass.inherited(subclass)
-        method = "visit" +
-          subclass.name.slice(/[A-Za-z]+\z/).gsub(/[A-Z]/) { |s|
-          "_" + s.downcase
-        }
-        subclass.class_eval(<<-EOF)
-          def accept(visitor)
-            visitor.#{method}(self)
-          end
-        EOF
-      end
-      klass.send(:define_method, :accept) do |visitor|
-        raise SubclassResponsibilityError.new
-      end
+  class SubclassResponsibilityError < ScriptError
+    def initialize(s = "subclass must override this method")
+      super(s)
     end
   end
+
+  class TerminateException < Exception; end
+  class MailboxError < StandardError; end
+  class MailboxExistError < MailboxError; end
+  class NoMailboxError < MailboxError; end
+  class MailboxAccessError < MailboxError; end
+  class NotSelectableMailboxError < MailboxError; end
+  class InvalidQueryError < StandardError; end
 end

@@ -109,15 +109,27 @@ class Ximapd
   end
 
   class PropertyLtQuery < PropertyQuery
+    def swap
+      return PropertyGtQuery.new(@value, @name)
+    end
   end
 
   class PropertyGtQuery < PropertyQuery
+    def swap
+      return PropertyLtQuery.new(@value, @name)
+    end
   end
 
   class PropertyLeQuery < PropertyQuery
+    def swap
+      return PropertyGeQuery.new(@value, @name)
+    end
   end
 
   class PropertyGeQuery < PropertyQuery
+    def swap
+      return PropertyLeQuery.new(@value, @name)
+    end
   end
 
   class QueryParser
@@ -191,24 +203,41 @@ class Ximapd
       term = token.value
       token = lookahead
       case token.symbol
-      when T_EQ, T_LT, T_GT, T_LE, T_GE
-        return property_range_query(term)
       when T_COLON
         shift_token
         token = match(T_TERM)
-        return PropertyMatchQuery(term, token.value)
+        return PropertyPeQuery.new(term, token.value)
+      when T_EQ
+        shift_token
+        token = match(T_TERM)
+        return PropertyEqQuery.new(term, token.value)
+      when T_LT, T_GT, T_LE, T_GE
+        return property_cmp_query(term)
       else
         return TermQuery.new(term)
       end
     end
 
-    def property_range_query(name)
+    def property_cmp_query(name)
       token = shift_token
       value = match(T_TERM).value
       case token.symbol
-      when T_EQ
-        result = PropertyEqQuery.new(name, value)
+      when T_LT
+        result = PropertyLtQuery.new(name, value)
+      when T_GT
+        result = PropertyGtQuery.new(name, value)
+      when T_LE
+        result = PropertyLeQuery.new(name, value)
+      when T_GE
+        result = PropertyGeQuery.new(name, value)
       end
+      token = lookahead
+      if [T_LT, T_GT, T_LE, T_GE].include?(token.symbol)
+        q1 = result.swap
+        q2 = property_cmp_query(value)
+        result = AndQuery.new([q1, q2])
+      end
+      return result
     end
 
     def paren_query
