@@ -29,12 +29,10 @@ module HyperEstraier
   class DatabaseWrapper
     class Error < RuntimeError; end
 
-    private
     def initialize()
       @db = Database.new()
     end
 
-    public
     def open(*args)
       unless @db.open(*args)
         raise Error, "could not open index: #{error_message}"
@@ -91,7 +89,7 @@ module HyperEstraier
     def error_message
       errno = error
       if errno
-        HyperEstraier.err_msg(errno)
+        "#{HyperEstraier::Database.err_msg(errno)} (#{errno})"
       else
         '(unknown error)'
       end
