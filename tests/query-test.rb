@@ -151,6 +151,26 @@ class XimapdQueryTest < Test::Unit::TestCase
 
     q = Ximapd::Query.parse('hello-bye')
     assert_equal(Ximapd::TermQuery.new("hello-bye"), q)
+
+    q = Ximapd::Query.parse('hello | hi & bye')
+    expected = Ximapd::AndQuery.new([
+      Ximapd::OrQuery.new([
+        Ximapd::TermQuery.new("hello"),
+        Ximapd::TermQuery.new("hi")
+      ]),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('hello | (hi & bye)')
+    expected = Ximapd::OrQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::AndQuery.new([
+        Ximapd::TermQuery.new("hi"),
+        Ximapd::TermQuery.new("bye")
+      ]),
+    ])
+    assert_equal(expected, q)
   end
 end
 

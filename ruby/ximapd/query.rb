@@ -173,7 +173,7 @@ class Ximapd
 
     def query
       result = NullQuery.new
-      while (token = lookahead).symbol != T_EOF && token != T_RPAR
+      while (token = lookahead).symbol != T_EOF && token.symbol != T_RPAR
         result = result.merge(composite_query, AndQuery)
       end
       return result
@@ -194,7 +194,7 @@ class Ximapd
       when T_TERM
         return term_or_property_query
       when T_LPAR
-        return paren_query
+        return grouped_query
       else
         parse_error("unexpected token %s", token.symbol.id2name)
       end
@@ -242,7 +242,7 @@ class Ximapd
       return result
     end
 
-    def paren_query
+    def grouped_query
       shift_token
       result = query
       match(T_RPAR)
@@ -286,7 +286,7 @@ class Ximapd
 (?# 10: LT    )(<)|\
 (?# 11: GT    )(>)|\
 (?# 12: TERM  )"((?:[^\x00\r\n"\\]|\\["\\])*)"|\
-(?# 13: TERM  )([^\s:=<>&|!]+)|\
+(?# 13: TERM  )([^\s:=<>&|!()]+)|\
 (?# 14: EOF   )(\z))/ni
 
     def next_token
