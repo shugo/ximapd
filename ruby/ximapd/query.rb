@@ -248,19 +248,20 @@ class Ximapd
 
     private
 
-    T_AND   = :AND
-    T_OR    = :OR
-    T_NOT   = :NOT
-    T_LPAR  = :LPAR
-    T_RPAR  = :RPAR
-    T_COLON = :COLON
-    T_EQ    = :EQ
-    T_LT    = :LT
-    T_GT    = :GT
-    T_LE    = :LE
-    T_GE    = :GE
-    T_TERM  = :TERM
-    T_EOF   = :EOF
+    T_AND    = :AND
+    T_OR     = :OR
+    T_NOT    = :NOT
+    T_LPAR   = :LPAR
+    T_RPAR   = :RPAR
+    T_COLON  = :COLON
+    T_EQ     = :EQ
+    T_LT     = :LT
+    T_GT     = :GT
+    T_LE     = :LE
+    T_GE     = :GE
+    T_ATOM   = :ATOM
+    T_QUOTED = :QUOTED
+    T_EOF    = :EOF
 
     COMPOSITE_QUERY_CLASSES = {
       T_AND => AndQuery,
@@ -288,7 +289,7 @@ class Ximapd
     def primary_query
       token = lookahead
       case token.symbol
-      when T_TERM
+      when T_ATOM, T_QUOTED
         return term_or_property_query
       when T_LPAR
         return grouped_query
@@ -298,18 +299,15 @@ class Ximapd
     end
 
     def term_or_property_query
-      token = shift_token
-      term = token.value
+      term = string
       token = lookahead
       case token.symbol
       when T_COLON
         shift_token
-        token = match(T_TERM)
-        return PropertyPeQuery.new(term, token.value)
+        return PropertyPeQuery.new(term, string)
       when T_EQ
         shift_token
-        token = match(T_TERM)
-        return PropertyEqQuery.new(term, token.value)
+        return PropertyEqQuery.new(term, string)
       when T_LT, T_GT, T_LE, T_GE
         return property_cmp_query(term)
       else
@@ -319,7 +317,7 @@ class Ximapd
 
     def property_cmp_query(name)
       token = shift_token
-      value = match(T_TERM).value
+      value = string
       case token.symbol
       when T_LT
         result = PropertyLtQuery.new(name, value)
@@ -344,6 +342,10 @@ class Ximapd
       result = query
       match(T_RPAR)
       return result
+    end
+
+    def string
+      return match(T_ATOM, T_QUOTED).value
     end
 
     def match(*args)
@@ -371,20 +373,20 @@ class Ximapd
     end
 
     TOKEN_REGEXP = /\G\s*(?:\
-(?# 1:  AND   )(&)|\
-(?# 2:  OR    )(\|)|\
-(?# 3:  NOT   )(!|-)|\
-(?# 4:  LPAR  )(\()|\
-(?# 5:  RPAR  )(\))|\
-(?# 6:  COLON )(:)|\
-(?# 7:  EQ    )(=)|\
-(?# 8:  LE    )(<=)|\
-(?# 9:  GE    )(>=)|\
-(?# 10: LT    )(<)|\
-(?# 11: GT    )(>)|\
-(?# 12: TERM  )"((?:[^\x00\r\n"\\]|\\["\\])*)"|\
-(?# 13: TERM  )([^\s:=<>&|!()]+)|\
-(?# 14: EOF   )(\z))/ni
+(?# 1:  AND    )(&)|\
+(?# 2:  OR     )(\|)|\
+(?# 3:  NOT    )(!|-)|\
+(?# 4:  LPAR   )(\()|\
+(?# 5:  RPAR   )(\))|\
+(?# 6:  COLON  )(:)|\
+(?# 7:  EQ     )(=)|\
+(?# 8:  LE     )(<=)|\
+(?# 9:  GE     )(>=)|\
+(?# 10: LT     )(<)|\
+(?# 11: GT     )(>)|\
+(?# 12: QUOTED )"((?:[^\x00\r\n"\\]|\\["\\])*)"|\
+(?# 13: ATOM   )([^\s:=<>&|!()]+)|\
+(?# 14: EOF    )(\z))/ni
 
     def next_token
       if @str.index(TOKEN_REGEXP, @pos)
@@ -414,10 +416,9 @@ class Ximapd
         elsif $11
           return Token.new(T_GT, $+)
         elsif $12
-          return Token.new(T_TERM,
-                           $+.gsub(/\\(["\\])/n, "\\1"))
+          return Token.new(T_QUOTED, $+.gsub(/\\(["\\])/n, "\\1"))
         elsif $13
-          return Token.new(T_TERM, $+)
+          return Token.new(T_ATOM, $+)
         elsif $14
           return Token.new(T_EOF, $+)
         else
