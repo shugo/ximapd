@@ -103,6 +103,12 @@ class XimapdQueryTest < Test::Unit::TestCase
     q = Ximapd::PropertyGeQuery.new("date", "2005-08-24")
     assert_equal('date >= "2005-08-24"', q.to_s)
 
+    q = Ximapd::FlagQuery.new("\\Seen")
+    assert_equal('flag : "\\\\Seen"', q.to_s)
+
+    q = Ximapd::NoFlagQuery.new("\\Seen")
+    assert_equal('noflag : "\\\\Seen"', q.to_s)
+
     q = Ximapd::AndQuery.new([
       Ximapd::TermQuery.new("hello"),
       Ximapd::TermQuery.new("bye")
@@ -121,7 +127,6 @@ class XimapdQueryTest < Test::Unit::TestCase
     ])
     assert_equal('"hello" - "bye"', q.to_s)
 
-    q = Ximapd::Query.parse('hello | hi & bye')
     q = Ximapd::AndQuery.new([
       Ximapd::OrQuery.new([
         Ximapd::TermQuery.new("hello"),
@@ -184,6 +189,12 @@ class XimapdQueryTest < Test::Unit::TestCase
       Ximapd::PropertyGeQuery.new("date", "2005-08-24"),
     ])
     assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('flag : "\\\\Seen"')
+    assert_equal(Ximapd::FlagQuery.new("\\Seen"), q)
+
+    q = Ximapd::Query.parse('noflag : "\\\\Seen"')
+    assert_equal(Ximapd::NoFlagQuery.new("\\Seen"), q)
 
     q = Ximapd::Query.parse('hello & bye')
     expected = Ximapd::AndQuery.new([

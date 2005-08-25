@@ -49,7 +49,7 @@ class Ximapd
     private
     
     def quote(s)
-      return format('"%s"', @value.gsub(/[\\"]/, "\\\\\\&"))
+      return format('"%s"', s.gsub(/[\\"]/, "\\\\\\&"))
     end
   end
 
@@ -231,6 +231,44 @@ class Ximapd
     end
   end
 
+  class AbstractFlagQuery < Query
+    attr_reader :flag
+
+    def initialize(flag)
+      @flag = flag
+    end
+
+    def ==(other)
+      return super(other) && @flag == other.flag
+    end
+
+    def to_s
+      return format("%s : %s", key, quote(@flag))
+    end
+
+    private
+
+    def key
+      raise SubclassResponsibilityError.new
+    end
+  end
+
+  class FlagQuery < AbstractFlagQuery
+    private
+
+    def key
+      return "flag"
+    end
+  end
+
+  class NoFlagQuery < AbstractFlagQuery
+    private
+
+    def key
+      return "noflag"
+    end
+  end
+
   class QueryParser
     def initialize(logger = NullObject.new)
       @logger = logger
@@ -304,7 +342,14 @@ class Ximapd
       case token.symbol
       when T_COLON
         shift_token
-        return PropertyPeQuery.new(term, string)
+        case term
+        when "flag"
+          return FlagQuery.new(string)
+        when "noflag"
+          return NoFlagQuery.new(string)
+        else
+          return PropertyPeQuery.new(term, string)
+        end
       when T_EQ
         shift_token
         return PropertyEqQuery.new(term, string)
