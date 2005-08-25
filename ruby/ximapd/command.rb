@@ -24,6 +24,816 @@
 # SUCH DAMAGE.
 
 class Ximapd
+  class Command
+    attr_reader :session
+    attr_accessor :tag, :name
+
+    def initialize
+      @session = nil
+      @config = nil
+      @tag = nil
+      @name = nil
+    end
+
+    def session=(session)
+      @session = session
+      @config = session.config
+      @mail_store = session.mail_store
+      @logger = @config["logger"]
+    end
+
+    def send_tagged_ok(code = nil)
+      if code.nil?
+        @session.send_tagged_ok(@tag, "%s completed", @name)
+      else
+        @session.send_tagged_ok(@tag, "[%s] %s completed", code, @name)
+      end
+    end
+  end
+
+  class NullCommand < Command
+    def exec
+      @session.send_bad("Null command")
+    end
+  end
+
+  class MissingCommand < Command
+    def exec
+      @session.send_tagged_bad(@tag, "Missing command")
+    end
+  end
+
+  class UnrecognizedCommand < Command
+    def exec
+      msg = "Command unrecognized"
+      if @session.state == NON_AUTHENTICATED_STATE
+        msg.concat("/login please")
+      end
+      @session.send_tagged_bad(@tag, msg)
+    end
+  end
+
+  class RequireSecureSessionCommand < Command
+    def exec
+      @session.send_tagged_no(@tag, "secure session required by the server/use IMAPS or TLS please")
+    end
+  end
+
+  class CapabilityCommand < Command
+    def exec
+      capa = "CAPABILITY IMAP4REV1 IDLE LOGINDISABLED AUTH=CRAM-MD5"
+      if @session.config["starttls"]
+        capa += " STARTTLS"
+      end
+      @session.send_data(capa)
+      send_tagged_ok
+    end
+  end
+
+  class StarttlsCommand < Command
+    def exec
+      begin
+        @session.starttls
+        send_tagged_ok
+      rescue => e
+        @session.send_tagged_bad(@tag, e.message)
+      end
+      begin
+        @session.starttls_accept
+      rescue Exception => e
+        @session.send_tagged_bad(@tag, e.message)
+      end
+    end
+  end
+
+  class NoopCommand < Command
+    def exec
+      @session.synchronize do
+        @session.sync
+      end
+      send_tagged_ok
+    end
+  end
+
+  class LogoutCommand < Command
+    def exec
+      @session.synchronize do
+        @session.sync
+      end
+      @session.send_data("BYE IMAP server terminating connection")
+      send_tagged_ok
+      @session.logout
+    end
+  end
+
+  class AuthenticateCramMD5Command < Command
+    def exec
+      challenge = @@challenge_generator.call
+      @session.send_continue_req([challenge].pack("m").gsub("\n", ""))
+      line = @session.recv_line
+      s = line.unpack("m")[0]
+      digest = hmac_md5(challenge, @config["password"])
+      expected = @config["user"] + " " + digest
+      if s == expected
+        @session.login
+        send_tagged_ok
+      else
+        sleep(3)
+        @session.send_tagged_no(@tag, "AUTHENTICATE failed")
+      end
+    end
+
+    @@challenge_generator = Proc.new {
+      format("<%s.%f@%s>",
+             Process.pid, Time.new.to_f,
+             TCPSocket.gethostbyname(Socket.gethostname)[0])
+    }
+
+    def self.challenge_generator
+      return @@challenge_generator
+    end
+
+    def self.challenge_generator=(proc)
+      @@challenge_generator = proc
+    end
+
+    private
+
+    def hmac_md5(text, key)
+      if key.length > 64
+        key = Digest::MD5.digest(key)
+      end
+
+      k_ipad = key + "\0" * (64 - key.length)
+      k_opad = key + "\0" * (64 - key.length)
+      for i in 0..63
+        k_ipad[i] ^= 0x36
+        k_opad[i] ^= 0x5c
+      end
+
+      digest = Digest::MD5.digest(k_ipad + text)
+
+      return Digest::MD5.hexdigest(k_opad + digest)
+    end
+  end
+
+  class LoginCommand < Command
+    def initialize(userid, password)
+      @userid = userid
+      @password = password
+    end
+
+    def exec
+      @session.send_tagged_no(@tag, "LOGIN failed")
+    end
+  end
+
+  class MailboxCheckCommand < Command
+    def initialize(mailbox_name)
+      @mailbox_name = mailbox_name
+    end
+
+    def exec
+      begin
+        status = nil
+        @session.synchronize do
+          status = @mail_store.get_mailbox_status(@mailbox_name,
+                                                  @session.read_only?)
+        end
+        @session.send_data("%d EXISTS", status.messages)
+        @session.send_data("%d RECENT", status.recent)
+        @session.send_ok("[UIDVALIDITY %d] UIDs valid", status.uidvalidity)
+        @session.send_ok("[UIDNEXT %d] Predicted next UID", status.uidnext)
+        @session.send_data("FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
+        @session.send_ok("[PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited")
+        send_tagged_response
+      rescue MailboxError => e
+        @session.send_tagged_no(@tag, "%s", e)
+      end
+    end
+
+    private
+
+    def send_tagged_response
+      raise SubclassResponsibilityError.new
+    end
+  end
+
+  class SelectCommand < MailboxCheckCommand
+    private
+
+    def send_tagged_response
+      @session.synchronize do
+        #@session.sync
+        @session.select(@mailbox_name)
+      end
+      send_tagged_ok("READ-WRITE")
+    end
+  end
+
+  class ExamineCommand < MailboxCheckCommand
+    private
+
+    def send_tagged_response
+      @session.synchronize do
+        #@session.sync
+        @session.examine(@mailbox_name)
+      end
+      send_tagged_ok("READ-ONLY")
+    end
+  end
+
+  class CreateCommand < Command
+    def initialize(mailbox_name)
+      @mailbox_name = mailbox_name
+    end
+
+    def exec
+      begin
+        @session.synchronize do
+          @mail_store.create_mailbox(@mailbox_name)
+        end
+        send_tagged_ok
+      rescue InvalidQueryError
+        @session.send_tagged_no(@tag, "invalid query")
+      end
+    end
+  end
+
+  class DeleteCommand < Command
+    def initialize(mailbox_name)
+      @mailbox_name = mailbox_name
+    end
+
+    def exec
+      if /\A(INBOX|ml|queries)\z/ni.match(@mailbox_name)
+        @session.send_tagged_no(@tag, "can't delete %s", @mailbox_name)
+        return
+      end
+      @session.synchronize do
+        @mail_store.delete_mailbox(@mailbox_name)
+      end
+      send_tagged_ok
+    end
+  end
+
+  class RenameCommand < Command
+    def initialize(mailbox_name, new_mailbox_name)
+      @mailbox_name = mailbox_name
+      @new_mailbox_name = new_mailbox_name
+    end
+
+    def exec
+      if /\A(INBOX|ml|queries)\z/ni.match(@mailbox_name)
+        @session.send_tagged_no(@tag, "can't rename %s", @mailbox_name)
+        return
+      end
+      begin
+        @session.synchronize do
+          @mail_store.rename_mailbox(@mailbox_name, @new_mailbox_name)
+        end
+        send_tagged_ok
+      rescue InvalidQueryError
+        @session.send_tagged_no(@tag, "invalid query")
+      rescue MailboxExistError
+        @session.send_tagged_no(@tag, "mailbox already exists")
+      rescue NoMailboxError
+        @session.send_tagged_no(@tag, "mailbox does not exist")
+      end
+    end
+  end
+
+  class ListCommand < Command
+    include DataFormat
+
+    def initialize(reference_name, mailbox_name)
+      @reference_name = reference_name
+      @mailbox_name = mailbox_name
+    end
+
+    def exec
+      unless @reference_name.empty?
+        @session.send_tagged_no(@tag, "%s failed", @name)
+        return
+      end
+      if @mailbox_name.empty?
+        @session.send_data("%s (\\Noselect) \"/\" \"\"", @name)
+        send_tagged_ok
+        return
+      end
+      pat = @mailbox_name.gsub(/\*|%|[^*%]+/n) { |s|
+        case s
+        when "*"
+          ".*"
+        when "%"
+          "[^/]*"
+        else
+          Regexp.quote(s)
+        end
+      }
+      re = Regexp.new("\\A" + pat + "\\z", nil, "n")
+      mailboxes = nil
+      @session.synchronize do
+        mailboxes = @mail_store.mailboxes.to_a.select { |mbox_name,|
+          re.match(mbox_name)
+        }
+      end
+      mailboxes.sort_by { |i| i[0] }.each do |mbox_name, mbox|
+        @session.send_data("%s (%s) \"/\" %s",
+                           @name, mbox["flags"], quoted(mbox_name))
+      end
+      send_tagged_ok
+    end
+  end
+
+  class StatusCommand < Command
+    include DataFormat
+
+    def initialize(mailbox_name, atts)
+      @mailbox_name = mailbox_name
+      @atts = atts
+    end
+
+    def exec
+      status = nil
+      @session.synchronize do
+        status = @mail_store.get_mailbox_status(@mailbox_name,
+                                                @session.read_only?)
+      end
+      s = @atts.collect { |att|
+        format("%s %d", att, status.send(att.downcase))
+      }.join(" ")
+      @session.send_data("STATUS %s (%s)", quoted(@mailbox_name), s)
+      send_tagged_ok
+    end
+  end
+
+  class AppendCommand < Command
+    def initialize(mailbox_name, flags, datetime, message)
+      @mailbox_name = mailbox_name
+      @flags = flags
+      @datetime = datetime
+      @message = message
+    end
+
+    def exec
+      @session.synchronize do
+        @mail_store.import_mail(@message, @mailbox_name, @flags.join(" "))
+      end
+      send_tagged_ok
+    end
+  end
+
+  class IdleCommand < Command
+    def exec
+      @session.send_continue_req("Waiting for DONE")
+      @session.synchronize do
+        @session.sync
+        @mail_store.mailbox_db.transaction do
+          for plugin in @mail_store.plugins
+            plugin.on_idle
+          end
+        end
+      end
+      @session.recv_line
+      send_tagged_ok
+    end
+  end
+
+  class CloseCommand < Command
+    def exec
+      @session.synchronize do
+        @session.sync
+        mailbox = @session.get_current_mailbox
+        mails = mailbox.fetch([1 .. -1])
+        deleted_mails = mails.select { |mail|
+          /\\Deleted\b/ni.match(mail.flags(false))
+        }
+        @mail_store.delete_mails(deleted_mails)
+      end
+      @session.close_mailbox
+      send_tagged_ok
+    end
+  end
+
+  class ExpungeCommand < Command
+    def exec
+      deleted_seqnos = nil
+      @session.synchronize do
+        @session.sync
+        mailbox = @session.get_current_mailbox
+        mails = mailbox.fetch([1 .. -1])
+        deleted_mails = mails.select { |mail|
+          /\\Deleted\b/ni.match(mail.flags(false))
+        }.reverse
+        deleted_seqnos = deleted_mails.collect { |mail|
+          mail.seqno
+        }
+        @mail_store.delete_mails(deleted_mails)
+      end
+      for seqno in deleted_seqnos
+        @session.send_data("%d EXPUNGE", seqno)
+      end
+      send_tagged_ok
+    end
+  end
+
+  class AbstractSearchCommand < Command
+    def initialize(keys)
+      @keys = keys
+    end
+
+    def exec
+      result = nil
+      @session.synchronize do
+        mailbox = @session.get_current_mailbox
+        uids = mailbox.uid_search_by_keys(@keys)
+        result = create_result(mailbox, uids)
+      end
+      if result.empty?
+        @session.send_data("SEARCH")
+      else
+        @session.send_data("SEARCH %s", result.join(" "))
+      end
+      send_tagged_ok
+    end
+
+    private
+
+    def create_result(uids)
+      raise SubclassResponsibilityError.new
+    end
+  end
+
+  class SearchCommand < AbstractSearchCommand
+    private
+
+    def create_result(mailbox, uids)
+      if uids.empty?
+        return []
+      else
+        mails = mailbox.fetch([1 .. -1])
+        uid_tbl = uids.inject({}) { |tbl, uid|
+          tbl[uid] = true
+          tbl
+        }
+        return mails.inject([]) { |ary, mail|
+          if uid_tbl.key?(mail.uid)
+            ary.push(mail.seqno)
+          end
+          ary
+        }
+      end
+    end
+  end
+
+  class UidSearchCommand < AbstractSearchCommand
+    private
+
+    def create_result(mailbox, uids)
+      return uids
+    end
+  end
+
+  class AbstractFetchCommand < Command
+    def initialize(sequence_set, atts)
+      @sequence_set = sequence_set
+      @atts = atts
+    end
+
+    def exec
+      mails = nil
+      @session.synchronize do
+        mailbox = @session.get_current_mailbox
+        mails = fetch(mailbox)
+      end
+      for mail in mails
+        data = nil
+        @session.synchronize do
+          data = @atts.collect { |att|
+            att.fetch(mail)
+          }.join(" ")
+        end
+        send_fetch_response(mail, data)
+      end
+      send_tagged_ok
+    end
+
+    private
+
+    def fetch(mailbox)
+      raise SubclassResponsibilityError.new
+    end
+
+    def send_fetch_response(mail, flags)
+      raise SubclassResponsibilityError.new
+    end
+  end
+
+  class FetchCommand < AbstractFetchCommand
+    private
+
+    def fetch(mailbox)
+      return mailbox.fetch(@sequence_set)
+    end
+
+    def send_fetch_response(mail, data)
+      @session.send_data("%d FETCH (%s)", mail.seqno, data)
+    end
+  end
+
+  class UidFetchCommand < FetchCommand
+    def initialize(sequence_set, atts)
+      super(sequence_set, atts)
+      unless @atts[0].kind_of?(UidFetchAtt)
+        @atts.unshift(UidFetchAtt.new)
+      end
+    end
+
+    private
+
+    def fetch(mailbox)
+      return mailbox.uid_fetch(@sequence_set)
+    end
+
+    def send_fetch_response(mail, data)
+      @session.send_data("%d FETCH (%s)", mail.uid, data)
+    end
+  end
+
+  class EnvelopeFetchAtt
+    def fetch(mail)
+      return format("ENVELOPE %s", mail.envelope)
+    end
+  end
+
+  class FlagsFetchAtt
+    def fetch(mail)
+      return format("FLAGS (%s)", mail.flags)
+    end
+  end
+
+  class InternalDateFetchAtt
+    include DataFormat
+
+    def fetch(mail)
+      indate = mail.internal_date.strftime("%d-%b-%Y %H:%M:%S %z")
+      return format("INTERNALDATE %s", quoted(indate))
+    end
+  end
+
+  class RFC822FetchAtt
+    include DataFormat
+
+    def fetch(mail)
+      return format("RFC822 %s", literal(mail.to_s))
+    end
+  end
+
+  class RFC822HeaderFetchAtt
+    include DataFormat
+
+    def fetch(mail)
+      return format("RFC822.HEADER %s", literal(mail.header))
+    end
+  end
+
+  class RFC822SizeFetchAtt
+    def fetch(mail)
+      return format("RFC822.SIZE %s", mail.size)
+    end
+  end
+
+  class RFC822TextFetchAtt
+    def fetch(mail)
+    end
+  end
+
+  class BodyFetchAtt
+    def fetch(mail)
+      return format("BODY %s", mail.body_structure(false))
+    end
+  end
+
+  class BodyStructureFetchAtt
+    def fetch(mail)
+      return format("BODYSTRUCTURE %s", mail.body_structure(true))
+    end
+  end
+
+  class UidFetchAtt
+    def fetch(mail)
+      return format("UID %s", mail.uid)
+    end
+  end
+
+  class BodySectionFetchAtt
+    include DataFormat
+
+    def initialize(section, partial, peek)
+      @section = section
+      @partial = partial
+      @peek = peek
+    end
+
+    def fetch(mail)
+      if @section.nil? || @section.text.nil?
+        if @section.nil?
+          part = nil
+        else
+          part = @section.part
+        end
+        result = format_data(mail.mime_body(part))
+        unless @peek
+          flags = mail.flags(false)
+          unless /\\Seen\b/ni.match(flags)
+            if flags.empty?
+              flags = "\\Seen"
+            else
+              flags += " \\Seen"
+            end
+            mail.flags = flags
+            result += format(" FLAGS (%s)", flags)
+          end
+        end
+        return result
+      end
+      case @section.text
+      when "MIME"
+        s = mail.mime_header(@section.part)
+        return format_data(s)
+      when "HEADER"
+        s = mail.header(@section.part)
+        return format_data(s)
+      when "HEADER.FIELDS"
+        s = mail.header_fields(@section.header_list, @section.part)
+        return format_data(s)
+      end
+    end
+
+    private
+    
+    def format_data(data)
+      if @section.nil?
+        section = ""
+      else
+        if @section.text.nil?
+          section = @section.part
+        else
+          if @section.part.nil?
+            section = @section.text
+          else
+            section = @section.part + "." + @section.text
+          end
+          if @section.text == "HEADER.FIELDS"
+            section += " (" + @section.header_list.collect { |i|
+              quoted(i)
+            }.join(" ") + ")"
+          end
+        end
+      end
+      if @partial
+        s = data[@partial.offset, @partial.size]
+        return format("BODY[%s]<%d> %s", section, @partial.offset, literal(s))
+      else
+        return format("BODY[%s] %s", section, literal(data))
+      end
+    end
+  end
+
+  Section = Struct.new(:part, :text, :header_list)
+
+  class AbstractStoreCommand < Command
+    def initialize(sequence_set, att)
+      @sequence_set = sequence_set
+      @att = att
+    end
+
+    def exec
+      mails = nil
+      @session.synchronize do
+        mailbox = @session.get_current_mailbox
+        mails = fetch(mailbox)
+      end
+      unless @session.read_only?
+        for mail in mails
+          flags = nil
+          @session.synchronize do
+            @att.store(mail)
+            flags = mail.flags
+          end
+          unless @att.silent?
+            send_fetch_response(mail, flags)
+          end
+        end
+      end
+      send_tagged_ok
+    end
+
+    private
+
+    def fetch(mailbox)
+      raise SubclassResponsibilityError.new
+    end
+
+    def send_fetch_response(mail, flags)
+      raise SubclassResponsibilityError.new
+    end
+  end
+
+  class StoreCommand < AbstractStoreCommand
+    private
+
+    def fetch(mailbox)
+      return mailbox.fetch(@sequence_set)
+    end
+
+    def send_fetch_response(mail, flags)
+      @session.send_data("%d FETCH (FLAGS (%s))", mail.seqno, flags)
+    end
+  end
+
+  class UidStoreCommand < AbstractStoreCommand
+    private
+
+    def fetch(mailbox)
+      return mailbox.uid_fetch(@sequence_set)
+    end
+
+    def send_fetch_response(mail, flags)
+      @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
+                         mail.uid, flags, mail.uid)
+    end
+  end
+
+  class FlagsStoreAtt
+    def initialize(flags, silent = false)
+      @flags = flags
+      @silent = silent
+    end
+
+    def silent?
+      return @silent
+    end
+  end
+
+  class SetFlagsStoreAtt < FlagsStoreAtt
+    def store(mail)
+      mail.flags = @flags.join(" ")
+    end
+  end
+
+  class AddFlagsStoreAtt < FlagsStoreAtt
+    def store(mail)
+      flags = mail.flags(false).split(/ /)
+      flags |= @flags
+      mail.flags = flags.join(" ")
+    end
+  end
+
+  class RemoveFlagsStoreAtt < FlagsStoreAtt
+    def store(mail)
+      flags = mail.flags(false).split(/ /)
+      flags -= @flags
+      mail.flags = flags.join(" ")
+    end
+  end
+
+  class UidCopyCommand < Command
+    def initialize(sequence_set, mailbox_name)
+      @sequence_set = sequence_set
+      @mailbox_name = mailbox_name
+    end
+
+    def exec
+      mails = nil
+      dest_mailbox = nil
+      @session.synchronize do
+        mailbox = @session.get_current_mailbox
+        mails = mailbox.uid_fetch(@sequence_set)
+        @mail_store.mailbox_db.transaction(true) do
+          dest_mailbox = @mail_store.get_mailbox(@mailbox_name)
+        end
+      end
+      override = {"x-ml-name" => dest_mailbox["list_id"] || ""}
+      for mail in mails
+        @session.synchronize do
+          for plugin in @mail_store.plugins
+            plugin.on_copy(mail, dest_mailbox)
+          end
+          uid = @mail_store.import_mail(mail.to_s, dest_mailbox.name,
+                                        mail.flags(false), mail.internal_date,
+                                        override)
+          dest_mail = dest_mailbox.get_mail(uid)
+          for plugin in @mail_store.plugins
+            plugin.on_copied(mail, dest_mail)
+          end
+        end
+      end
+      send_tagged_ok
+    end
+  end
+
   class CommandParser
     def initialize(session, logger)
       @session = session
@@ -1062,815 +1872,5 @@ class Ximapd
   end
 
   class CommandParseError < StandardError
-  end
-
-  class Command
-    attr_reader :session
-    attr_accessor :tag, :name
-
-    def initialize
-      @session = nil
-      @config = nil
-      @tag = nil
-      @name = nil
-    end
-
-    def session=(session)
-      @session = session
-      @config = session.config
-      @mail_store = session.mail_store
-      @logger = @config["logger"]
-    end
-
-    def send_tagged_ok(code = nil)
-      if code.nil?
-        @session.send_tagged_ok(@tag, "%s completed", @name)
-      else
-        @session.send_tagged_ok(@tag, "[%s] %s completed", code, @name)
-      end
-    end
-  end
-
-  class NullCommand < Command
-    def exec
-      @session.send_bad("Null command")
-    end
-  end
-
-  class MissingCommand < Command
-    def exec
-      @session.send_tagged_bad(@tag, "Missing command")
-    end
-  end
-
-  class UnrecognizedCommand < Command
-    def exec
-      msg = "Command unrecognized"
-      if @session.state == NON_AUTHENTICATED_STATE
-        msg.concat("/login please")
-      end
-      @session.send_tagged_bad(@tag, msg)
-    end
-  end
-
-  class RequireSecureSessionCommand < Command
-    def exec
-      @session.send_tagged_no(@tag, "secure session required by the server/use IMAPS or TLS please")
-    end
-  end
-
-  class CapabilityCommand < Command
-    def exec
-      capa = "CAPABILITY IMAP4REV1 IDLE LOGINDISABLED AUTH=CRAM-MD5"
-      if @session.config["starttls"]
-        capa += " STARTTLS"
-      end
-      @session.send_data(capa)
-      send_tagged_ok
-    end
-  end
-
-  class StarttlsCommand < Command
-    def exec
-      begin
-        @session.starttls
-        send_tagged_ok
-      rescue => e
-        @session.send_tagged_bad(@tag, e.message)
-      end
-      begin
-        @session.starttls_accept
-      rescue Exception => e
-        @session.send_tagged_bad(@tag, e.message)
-      end
-    end
-  end
-
-  class NoopCommand < Command
-    def exec
-      @session.synchronize do
-        @session.sync
-      end
-      send_tagged_ok
-    end
-  end
-
-  class LogoutCommand < Command
-    def exec
-      @session.synchronize do
-        @session.sync
-      end
-      @session.send_data("BYE IMAP server terminating connection")
-      send_tagged_ok
-      @session.logout
-    end
-  end
-
-  class AuthenticateCramMD5Command < Command
-    def exec
-      challenge = @@challenge_generator.call
-      @session.send_continue_req([challenge].pack("m").gsub("\n", ""))
-      line = @session.recv_line
-      s = line.unpack("m")[0]
-      digest = hmac_md5(challenge, @config["password"])
-      expected = @config["user"] + " " + digest
-      if s == expected
-        @session.login
-        send_tagged_ok
-      else
-        sleep(3)
-        @session.send_tagged_no(@tag, "AUTHENTICATE failed")
-      end
-    end
-
-    @@challenge_generator = Proc.new {
-      format("<%s.%f@%s>",
-             Process.pid, Time.new.to_f,
-             TCPSocket.gethostbyname(Socket.gethostname)[0])
-    }
-
-    def self.challenge_generator
-      return @@challenge_generator
-    end
-
-    def self.challenge_generator=(proc)
-      @@challenge_generator = proc
-    end
-
-    private
-
-    def hmac_md5(text, key)
-      if key.length > 64
-        key = Digest::MD5.digest(key)
-      end
-
-      k_ipad = key + "\0" * (64 - key.length)
-      k_opad = key + "\0" * (64 - key.length)
-      for i in 0..63
-        k_ipad[i] ^= 0x36
-        k_opad[i] ^= 0x5c
-      end
-
-      digest = Digest::MD5.digest(k_ipad + text)
-
-      return Digest::MD5.hexdigest(k_opad + digest)
-    end
-  end
-
-  class LoginCommand < Command
-    def initialize(userid, password)
-      @userid = userid
-      @password = password
-    end
-
-    def exec
-      @session.send_tagged_no(@tag, "LOGIN failed")
-    end
-  end
-
-  class MailboxCheckCommand < Command
-    def initialize(mailbox_name)
-      @mailbox_name = mailbox_name
-    end
-
-    def exec
-      begin
-        status = nil
-        @session.synchronize do
-          status = @mail_store.get_mailbox_status(@mailbox_name,
-                                                  @session.read_only?)
-        end
-        @session.send_data("%d EXISTS", status.messages)
-        @session.send_data("%d RECENT", status.recent)
-        @session.send_ok("[UIDVALIDITY %d] UIDs valid", status.uidvalidity)
-        @session.send_ok("[UIDNEXT %d] Predicted next UID", status.uidnext)
-        @session.send_data("FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
-        @session.send_ok("[PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited")
-        send_tagged_response
-      rescue MailboxError => e
-        @session.send_tagged_no(@tag, "%s", e)
-      end
-    end
-
-    private
-
-    def send_tagged_response
-      raise SubclassResponsibilityError.new
-    end
-  end
-
-  class SelectCommand < MailboxCheckCommand
-    private
-
-    def send_tagged_response
-      @session.synchronize do
-        #@session.sync
-        @session.select(@mailbox_name)
-      end
-      send_tagged_ok("READ-WRITE")
-    end
-  end
-
-  class ExamineCommand < MailboxCheckCommand
-    private
-
-    def send_tagged_response
-      @session.synchronize do
-        #@session.sync
-        @session.examine(@mailbox_name)
-      end
-      send_tagged_ok("READ-ONLY")
-    end
-  end
-
-  class CreateCommand < Command
-    def initialize(mailbox_name)
-      @mailbox_name = mailbox_name
-    end
-
-    def exec
-      begin
-        @session.synchronize do
-          @mail_store.create_mailbox(@mailbox_name)
-        end
-        send_tagged_ok
-      rescue InvalidQueryError
-        @session.send_tagged_no(@tag, "invalid query")
-      end
-    end
-  end
-
-  class DeleteCommand < Command
-    def initialize(mailbox_name)
-      @mailbox_name = mailbox_name
-    end
-
-    def exec
-      if /\A(INBOX|ml|queries)\z/ni.match(@mailbox_name)
-        @session.send_tagged_no(@tag, "can't delete %s", @mailbox_name)
-        return
-      end
-      @session.synchronize do
-        @mail_store.delete_mailbox(@mailbox_name)
-      end
-      send_tagged_ok
-    end
-  end
-
-  class RenameCommand < Command
-    def initialize(mailbox_name, new_mailbox_name)
-      @mailbox_name = mailbox_name
-      @new_mailbox_name = new_mailbox_name
-    end
-
-    def exec
-      if /\A(INBOX|ml|queries)\z/ni.match(@mailbox_name)
-        @session.send_tagged_no(@tag, "can't rename %s", @mailbox_name)
-        return
-      end
-      begin
-        @session.synchronize do
-          @mail_store.rename_mailbox(@mailbox_name, @new_mailbox_name)
-        end
-        send_tagged_ok
-      rescue InvalidQueryError
-        @session.send_tagged_no(@tag, "invalid query")
-      rescue MailboxExistError
-        @session.send_tagged_no(@tag, "mailbox already exists")
-      rescue NoMailboxError
-        @session.send_tagged_no(@tag, "mailbox does not exist")
-      end
-    end
-  end
-
-  class ListCommand < Command
-    include DataFormat
-
-    def initialize(reference_name, mailbox_name)
-      @reference_name = reference_name
-      @mailbox_name = mailbox_name
-    end
-
-    def exec
-      unless @reference_name.empty?
-        @session.send_tagged_no(@tag, "%s failed", @name)
-        return
-      end
-      if @mailbox_name.empty?
-        @session.send_data("%s (\\Noselect) \"/\" \"\"", @name)
-        send_tagged_ok
-        return
-      end
-      pat = @mailbox_name.gsub(/\*|%|[^*%]+/n) { |s|
-        case s
-        when "*"
-          ".*"
-        when "%"
-          "[^/]*"
-        else
-          Regexp.quote(s)
-        end
-      }
-      re = Regexp.new("\\A" + pat + "\\z", nil, "n")
-      mailboxes = nil
-      @session.synchronize do
-        mailboxes = @mail_store.mailboxes.to_a.select { |mbox_name,|
-          re.match(mbox_name)
-        }
-      end
-      mailboxes.sort_by { |i| i[0] }.each do |mbox_name, mbox|
-        @session.send_data("%s (%s) \"/\" %s",
-                           @name, mbox["flags"], quoted(mbox_name))
-      end
-      send_tagged_ok
-    end
-  end
-
-  class StatusCommand < Command
-    include DataFormat
-
-    def initialize(mailbox_name, atts)
-      @mailbox_name = mailbox_name
-      @atts = atts
-    end
-
-    def exec
-      status = nil
-      @session.synchronize do
-        status = @mail_store.get_mailbox_status(@mailbox_name,
-                                                @session.read_only?)
-      end
-      s = @atts.collect { |att|
-        format("%s %d", att, status.send(att.downcase))
-      }.join(" ")
-      @session.send_data("STATUS %s (%s)", quoted(@mailbox_name), s)
-      send_tagged_ok
-    end
-  end
-
-  class AppendCommand < Command
-    def initialize(mailbox_name, flags, datetime, message)
-      @mailbox_name = mailbox_name
-      @flags = flags
-      @datetime = datetime
-      @message = message
-    end
-
-    def exec
-      @session.synchronize do
-        @mail_store.import_mail(@message, @mailbox_name, @flags.join(" "))
-      end
-      send_tagged_ok
-    end
-  end
-
-  class IdleCommand < Command
-    def exec
-      @session.send_continue_req("Waiting for DONE")
-      @session.synchronize do
-        @session.sync
-        @mail_store.mailbox_db.transaction do
-          for plugin in @mail_store.plugins
-            plugin.on_idle
-          end
-        end
-      end
-      @session.recv_line
-      send_tagged_ok
-    end
-  end
-
-  class CloseCommand < Command
-    def exec
-      @session.synchronize do
-        @session.sync
-        mailbox = @session.get_current_mailbox
-        mails = mailbox.fetch([1 .. -1])
-        deleted_mails = mails.select { |mail|
-          /\\Deleted\b/ni.match(mail.flags(false))
-        }
-        @mail_store.delete_mails(deleted_mails)
-      end
-      @session.close_mailbox
-      send_tagged_ok
-    end
-  end
-
-  class ExpungeCommand < Command
-    def exec
-      deleted_seqnos = nil
-      @session.synchronize do
-        @session.sync
-        mailbox = @session.get_current_mailbox
-        mails = mailbox.fetch([1 .. -1])
-        deleted_mails = mails.select { |mail|
-          /\\Deleted\b/ni.match(mail.flags(false))
-        }.reverse
-        deleted_seqnos = deleted_mails.collect { |mail|
-          mail.seqno
-        }
-        @mail_store.delete_mails(deleted_mails)
-      end
-      for seqno in deleted_seqnos
-        @session.send_data("%d EXPUNGE", seqno)
-      end
-      send_tagged_ok
-    end
-  end
-
-  class AbstractSearchCommand < Command
-    def initialize(keys)
-      @keys = keys
-    end
-
-    def exec
-      result = nil
-      @session.synchronize do
-        mailbox = @session.get_current_mailbox
-        uids = mailbox.uid_search_by_keys(@keys)
-        result = create_result(mailbox, uids)
-      end
-      if result.empty?
-        @session.send_data("SEARCH")
-      else
-        @session.send_data("SEARCH %s", result.join(" "))
-      end
-      send_tagged_ok
-    end
-
-    private
-
-    def create_result(uids)
-      raise SubclassResponsibilityError.new
-    end
-  end
-
-  class SearchCommand < AbstractSearchCommand
-    private
-
-    def create_result(mailbox, uids)
-      if uids.empty?
-        return []
-      else
-        mails = mailbox.fetch([1 .. -1])
-        uid_tbl = uids.inject({}) { |tbl, uid|
-          tbl[uid] = true
-          tbl
-        }
-        return mails.inject([]) { |ary, mail|
-          if uid_tbl.key?(mail.uid)
-            ary.push(mail.seqno)
-          end
-          ary
-        }
-      end
-    end
-  end
-
-  class UidSearchCommand < AbstractSearchCommand
-    private
-
-    def create_result(mailbox, uids)
-      return uids
-    end
-  end
-
-  class AbstractFetchCommand < Command
-    def initialize(sequence_set, atts)
-      @sequence_set = sequence_set
-      @atts = atts
-    end
-
-    def exec
-      mails = nil
-      @session.synchronize do
-        mailbox = @session.get_current_mailbox
-        mails = fetch(mailbox)
-      end
-      for mail in mails
-        data = nil
-        @session.synchronize do
-          data = @atts.collect { |att|
-            att.fetch(mail)
-          }.join(" ")
-        end
-        send_fetch_response(mail, data)
-      end
-      send_tagged_ok
-    end
-
-    private
-
-    def fetch(mailbox)
-      raise SubclassResponsibilityError.new
-    end
-
-    def send_fetch_response(mail, flags)
-      raise SubclassResponsibilityError.new
-    end
-  end
-
-  class FetchCommand < AbstractFetchCommand
-    private
-
-    def fetch(mailbox)
-      return mailbox.fetch(@sequence_set)
-    end
-
-    def send_fetch_response(mail, data)
-      @session.send_data("%d FETCH (%s)", mail.seqno, data)
-    end
-  end
-
-  class UidFetchCommand < FetchCommand
-    def initialize(sequence_set, atts)
-      super(sequence_set, atts)
-      unless @atts[0].kind_of?(UidFetchAtt)
-        @atts.unshift(UidFetchAtt.new)
-      end
-    end
-
-    private
-
-    def fetch(mailbox)
-      return mailbox.uid_fetch(@sequence_set)
-    end
-
-    def send_fetch_response(mail, data)
-      @session.send_data("%d FETCH (%s)", mail.uid, data)
-    end
-  end
-
-  class EnvelopeFetchAtt
-    def fetch(mail)
-      return format("ENVELOPE %s", mail.envelope)
-    end
-  end
-
-  class FlagsFetchAtt
-    def fetch(mail)
-      return format("FLAGS (%s)", mail.flags)
-    end
-  end
-
-  class InternalDateFetchAtt
-    include DataFormat
-
-    def fetch(mail)
-      indate = mail.internal_date.strftime("%d-%b-%Y %H:%M:%S %z")
-      return format("INTERNALDATE %s", quoted(indate))
-    end
-  end
-
-  class RFC822FetchAtt
-    include DataFormat
-
-    def fetch(mail)
-      return format("RFC822 %s", literal(mail.to_s))
-    end
-  end
-
-  class RFC822HeaderFetchAtt
-    include DataFormat
-
-    def fetch(mail)
-      return format("RFC822.HEADER %s", literal(mail.header))
-    end
-  end
-
-  class RFC822SizeFetchAtt
-    def fetch(mail)
-      return format("RFC822.SIZE %s", mail.size)
-    end
-  end
-
-  class RFC822TextFetchAtt
-    def fetch(mail)
-    end
-  end
-
-  class BodyFetchAtt
-    def fetch(mail)
-      return format("BODY %s", mail.body_structure(false))
-    end
-  end
-
-  class BodyStructureFetchAtt
-    def fetch(mail)
-      return format("BODYSTRUCTURE %s", mail.body_structure(true))
-    end
-  end
-
-  class UidFetchAtt
-    def fetch(mail)
-      return format("UID %s", mail.uid)
-    end
-  end
-
-  class BodySectionFetchAtt
-    include DataFormat
-
-    def initialize(section, partial, peek)
-      @section = section
-      @partial = partial
-      @peek = peek
-    end
-
-    def fetch(mail)
-      if @section.nil? || @section.text.nil?
-        if @section.nil?
-          part = nil
-        else
-          part = @section.part
-        end
-        result = format_data(mail.mime_body(part))
-        unless @peek
-          flags = mail.flags(false)
-          unless /\\Seen\b/ni.match(flags)
-            if flags.empty?
-              flags = "\\Seen"
-            else
-              flags += " \\Seen"
-            end
-            mail.flags = flags
-            result += format(" FLAGS (%s)", flags)
-          end
-        end
-        return result
-      end
-      case @section.text
-      when "MIME"
-        s = mail.mime_header(@section.part)
-        return format_data(s)
-      when "HEADER"
-        s = mail.header(@section.part)
-        return format_data(s)
-      when "HEADER.FIELDS"
-        s = mail.header_fields(@section.header_list, @section.part)
-        return format_data(s)
-      end
-    end
-
-    private
-    
-    def format_data(data)
-      if @section.nil?
-        section = ""
-      else
-        if @section.text.nil?
-          section = @section.part
-        else
-          if @section.part.nil?
-            section = @section.text
-          else
-            section = @section.part + "." + @section.text
-          end
-          if @section.text == "HEADER.FIELDS"
-            section += " (" + @section.header_list.collect { |i|
-              quoted(i)
-            }.join(" ") + ")"
-          end
-        end
-      end
-      if @partial
-        s = data[@partial.offset, @partial.size]
-        return format("BODY[%s]<%d> %s", section, @partial.offset, literal(s))
-      else
-        return format("BODY[%s] %s", section, literal(data))
-      end
-    end
-  end
-
-  Section = Struct.new(:part, :text, :header_list)
-
-  class AbstractStoreCommand < Command
-    def initialize(sequence_set, att)
-      @sequence_set = sequence_set
-      @att = att
-    end
-
-    def exec
-      mails = nil
-      @session.synchronize do
-        mailbox = @session.get_current_mailbox
-        mails = fetch(mailbox)
-      end
-      unless @session.read_only?
-        for mail in mails
-          flags = nil
-          @session.synchronize do
-            @att.store(mail)
-            flags = mail.flags
-          end
-          unless @att.silent?
-            send_fetch_response(mail, flags)
-          end
-        end
-      end
-      send_tagged_ok
-    end
-
-    private
-
-    def fetch(mailbox)
-      raise SubclassResponsibilityError.new
-    end
-
-    def send_fetch_response(mail, flags)
-      raise SubclassResponsibilityError.new
-    end
-  end
-
-  class StoreCommand < AbstractStoreCommand
-    private
-
-    def fetch(mailbox)
-      return mailbox.fetch(@sequence_set)
-    end
-
-    def send_fetch_response(mail, flags)
-      @session.send_data("%d FETCH (FLAGS (%s))", mail.seqno, flags)
-    end
-  end
-
-  class UidStoreCommand < AbstractStoreCommand
-    private
-
-    def fetch(mailbox)
-      return mailbox.uid_fetch(@sequence_set)
-    end
-
-    def send_fetch_response(mail, flags)
-      @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
-                         mail.uid, flags, mail.uid)
-    end
-  end
-
-  class FlagsStoreAtt
-    def initialize(flags, silent = false)
-      @flags = flags
-      @silent = silent
-    end
-
-    def silent?
-      return @silent
-    end
-  end
-
-  class SetFlagsStoreAtt < FlagsStoreAtt
-    def store(mail)
-      mail.flags = @flags.join(" ")
-    end
-  end
-
-  class AddFlagsStoreAtt < FlagsStoreAtt
-    def store(mail)
-      flags = mail.flags(false).split(/ /)
-      flags |= @flags
-      mail.flags = flags.join(" ")
-    end
-  end
-
-  class RemoveFlagsStoreAtt < FlagsStoreAtt
-    def store(mail)
-      flags = mail.flags(false).split(/ /)
-      flags -= @flags
-      mail.flags = flags.join(" ")
-    end
-  end
-
-  class UidCopyCommand < Command
-    def initialize(sequence_set, mailbox_name)
-      @sequence_set = sequence_set
-      @mailbox_name = mailbox_name
-    end
-
-    def exec
-      mails = nil
-      dest_mailbox = nil
-      @session.synchronize do
-        mailbox = @session.get_current_mailbox
-        mails = mailbox.uid_fetch(@sequence_set)
-        @mail_store.mailbox_db.transaction(true) do
-          dest_mailbox = @mail_store.get_mailbox(@mailbox_name)
-        end
-      end
-      override = {"x-ml-name" => dest_mailbox["list_id"] || ""}
-      for mail in mails
-        @session.synchronize do
-          for plugin in @mail_store.plugins
-            plugin.on_copy(mail, dest_mailbox)
-          end
-          uid = @mail_store.import_mail(mail.to_s, dest_mailbox.name,
-                                        mail.flags(false), mail.internal_date,
-                                        override)
-          dest_mail = dest_mailbox.get_mail(uid)
-          for plugin in @mail_store.plugins
-            plugin.on_copied(mail, dest_mail)
-          end
-        end
-      end
-      send_tagged_ok
-    end
   end
 end
