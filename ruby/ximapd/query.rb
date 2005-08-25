@@ -41,9 +41,23 @@ class Ximapd
       parser = QueryParser.new
       return parser.parse(s)
     end
+
+    def composite?
+      return false
+    end
+
+    private
+    
+    def quote(s)
+      return format('"%s"', @value.gsub(/[\\"]/, "\\\\\\&"))
+    end
   end
 
   class NullQuery < Query
+    def to_s
+      return ""
+    end
+
     def merge(other, query_class)
       return other
     end
@@ -60,6 +74,16 @@ class Ximapd
       return super(other) && @operands == other.operands
     end
 
+    def to_s
+      return @operands.collect { |operand|
+        if operand.composite?
+          "( " + operand.to_s + " )"
+        else
+          operand.to_s
+        end
+      }.join(" " + operator + " ")
+    end
+
     def merge(other, query_class)
       if self.is_a?(query_class)
         @operands.push(other)
@@ -68,15 +92,40 @@ class Ximapd
         return super(other, query_class)
       end
     end
+
+    def composite?
+      return true
+    end
+
+    private
+
+    def operator
+      raise SubclassResponsibilityError.new
+    end
   end
 
   class AndQuery < CompositeQuery
+    private
+
+    def operator
+      return "&"
+    end
   end
 
   class OrQuery < CompositeQuery
+    private
+
+    def operator
+      return "|"
+    end
   end
 
   class NotQuery < CompositeQuery
+    private
+
+    def operator
+      return "-"
+    end
   end
 
   class TermQuery < Query
@@ -88,6 +137,10 @@ class Ximapd
 
     def ==(other)
       return super(other) && @value == other.value
+    end
+
+    def to_s
+      return quote(@value)
     end
   end
 
@@ -102,17 +155,43 @@ class Ximapd
     def ==(other)
       return super(other) && @name == other.name && @value == other.value
     end
+
+    def to_s
+      return format("%s %s %s", @name, operator, quote(@value))
+    end
+
+    private
+
+    def operator
+      raise SubclassResponsibilityError.new
+    end
   end
 
   class PropertyPeQuery < PropertyQuery
+    private
+
+    def operator
+      return ":"
+    end
   end
 
   class PropertyEqQuery < PropertyQuery
+    private
+
+    def operator
+      return "="
+    end
   end
 
   class PropertyLtQuery < PropertyQuery
     def swap
       return PropertyGtQuery.new(@value, @name)
+    end
+
+    private
+
+    def operator
+      return "<"
     end
   end
 
@@ -120,17 +199,35 @@ class Ximapd
     def swap
       return PropertyLtQuery.new(@value, @name)
     end
+
+    private
+
+    def operator
+      return ">"
+    end
   end
 
   class PropertyLeQuery < PropertyQuery
     def swap
       return PropertyGeQuery.new(@value, @name)
     end
+
+    private
+
+    def operator
+      return "<="
+    end
   end
 
   class PropertyGeQuery < PropertyQuery
     def swap
       return PropertyLeQuery.new(@value, @name)
+    end
+
+    private
+
+    def operator
+      return ">="
     end
   end
 

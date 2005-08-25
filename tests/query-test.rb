@@ -75,6 +75,63 @@ class XimapdQueryTest < Test::Unit::TestCase
                      Ximapd::AndQuery.new([q1, q3]))
   end
 
+  def test_to_s
+    q = Ximapd::NullQuery.new
+    assert_equal('', q.to_s)
+
+    q = Ximapd::TermQuery.new("hello")
+    assert_equal('"hello"', q.to_s)
+
+    q = Ximapd::TermQuery.new("\\\"")
+    assert_equal('"\\\\\\""', q.to_s)
+
+    q = Ximapd::PropertyPeQuery.new("subject", "hello")
+    assert_equal('subject : "hello"', q.to_s)
+
+    q = Ximapd::PropertyEqQuery.new("subject", "hello")
+    assert_equal('subject = "hello"', q.to_s)
+
+    q = Ximapd::PropertyLtQuery.new("date", "2005-08-24")
+    assert_equal('date < "2005-08-24"', q.to_s)
+
+    q = Ximapd::PropertyGtQuery.new("date", "2005-08-24")
+    assert_equal('date > "2005-08-24"', q.to_s)
+
+    q = Ximapd::PropertyLeQuery.new("date", "2005-08-24")
+    assert_equal('date <= "2005-08-24"', q.to_s)
+
+    q = Ximapd::PropertyGeQuery.new("date", "2005-08-24")
+    assert_equal('date >= "2005-08-24"', q.to_s)
+
+    q = Ximapd::AndQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal('"hello" & "bye"', q.to_s)
+
+    q = Ximapd::OrQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal('"hello" | "bye"', q.to_s)
+
+    q = Ximapd::NotQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal('"hello" - "bye"', q.to_s)
+
+    q = Ximapd::Query.parse('hello | hi & bye')
+    q = Ximapd::AndQuery.new([
+      Ximapd::OrQuery.new([
+        Ximapd::TermQuery.new("hello"),
+        Ximapd::TermQuery.new("hi")
+      ]),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal('( "hello" | "hi" ) & "bye"', q.to_s)
+  end
+
   def test_parse
     q = Ximapd::Query.parse('hello')
     assert_equal(Ximapd::TermQuery.new("hello"), q)
