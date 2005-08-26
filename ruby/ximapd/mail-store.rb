@@ -459,7 +459,8 @@ class Ximapd
       @logger.info("imported from #{host}")
     end
 
-    def import_mail(str, mailbox_name = nil, flags = "", indate = nil, override = {})
+    def import_mail(str, mailbox_name = nil, flags = "", indate = nil,
+                    override = {})
       open_backend do
         import_mail_internal(str, mailbox_name, flags, indate, override)
       end
@@ -473,7 +474,8 @@ class Ximapd
           !@mailbox_db["mailing_lists"].key?(s)
           mbox_name = get_mailbox_name_from_x_ml_name(s)
           mailbox_name = format("ml/%s", Net::IMAP.encode_utf7(mbox_name))
-          query = @backend.class.make_list_query(mail.properties["x-ml-name"])
+          x_ml_name = mail.properties["x-ml-name"]
+          query = PropertyEqQuery.new("x-ml-name", x_ml_name).to_s
           begin
             create_mailbox_internal(mailbox_name, query)
             mailbox = get_mailbox(mailbox_name)
@@ -699,7 +701,7 @@ class Ximapd
         query = extract_query(name)
         if query.nil?
           mailbox_id = get_next_mailbox_id
-          query = @backend.class.make_default_query(mailbox_id)
+          query = format('mailbox-id = %d', mailbox_id)
           mailbox["id"] = mailbox_id
         end
       end
@@ -710,7 +712,7 @@ class Ximapd
     def extract_query(mailbox_name)
       s = mailbox_name.slice(/\Aqueries\/(.*)/u, 1)
       return nil if s.nil?
-      query = @backend.class.make_query(Net::IMAP.decode_utf7(s))
+      query = Net::IMAP.decode_utf7(s)
       begin
         open_backend do |backend|
           result = backend.try_query(query)

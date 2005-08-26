@@ -35,18 +35,6 @@ class Ximapd
       @@directory = dir
     end
 
-    def self.make_list_query(list_name)
-      raise SubclassResponsibilityError.new
-    end
-
-    def self.make_default_query(mailbox_id)
-      raise SubclassResponsibilityError.new
-    end
-
-    def self.make_query(mailbox_name)
-      raise SubclassResponsibilityError.new
-    end
-
     def initialize(mail_store)
       @mail_store = mail_store
       @config = @mail_store.config

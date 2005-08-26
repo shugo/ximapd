@@ -162,21 +162,6 @@ class Ximapd
       end
     end
 
-    extend QueryFormat
-    class << self
-      def make_list_query(list_name)
-        return format("x-ml-name = %s", quote_query(list_name))
-      end
-
-      def make_default_query(mailbox_id)
-        return format('mailbox-id = %d', mailbox_id)
-      end
-
-      def make_query(mailbox_name)
-        return mailbox_name
-      end
-    end
-
     def initialize(mail_store)
       super(mail_store)
       @flags_db_path = File.expand_path("flags.sdbm", @path)
@@ -362,7 +347,8 @@ class Ximapd
     end
 
     def try_query(query)
-      return @index.search(query, "num_items" => Rast::RESULT_MIN_ITEMS)
+      return search_query(Query.parse(query),
+                          "num_items" => Rast::RESULT_MIN_ITEMS)
     end
 
     def search_query(query, options)
