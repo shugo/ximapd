@@ -96,10 +96,6 @@ class Ximapd
       raise SubclassResponsibilityError.new
     end
 
-    def query(mailbox, query)
-      raise SubclassResponsibilityError.new
-    end
-
     def uid_search(mailbox, query)
       raise SubclassResponsibilityError.new
     end

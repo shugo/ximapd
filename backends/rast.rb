@@ -303,10 +303,6 @@ class Ximapd
       mailbox_status
     end
 
-    # returns Rast::Result#items.to_a
-    def query(mailbox, query)
-    end
-
     def uid_search(query)
       result = search_query(query,
                             "properties" => ["uid"],
