@@ -28,35 +28,6 @@ require File.expand_path("test-helper", File.dirname(__FILE__))
 class XimapdQueryTest < Test::Unit::TestCase
   include XimapdTestMixin
 
-  def test_accept
-    checker = MethodCallChecker.new
-
-    q = Ximapd::Query.new
-    assert_raise(Ximapd::SubclassResponsibilityError) do
-      q.accept(checker)
-    end
-
-    q1 = Ximapd::NullQuery.new
-    q1.accept(checker)
-    assert_equal(:visit_null_query, checker.method_id)
-    assert_equal([q1], checker.args)
-
-    q2 = Ximapd::TermQuery.new("hello")
-    q2.accept(checker)
-    assert_equal(:visit_term_query, checker.method_id)
-    assert_equal([q2], checker.args)
-
-    q3 = Ximapd::PropertyEqQuery.new("subject", "hello")
-    q3.accept(checker)
-    assert_equal(:visit_property_eq_query, checker.method_id)
-    assert_equal([q3], checker.args)
-
-    q4 = Ximapd::AndQuery.new([q2, q3])
-    q4.accept(checker)
-    assert_equal(:visit_and_query, checker.method_id)
-    assert_equal([q4], checker.args)
-  end
-
   def test_eq
     assert_equal(Ximapd::NullQuery.new, Ximapd::NullQuery.new)
     assert_not_equal(Ximapd::TermQuery.new("hello"), Ximapd::NullQuery.new)
@@ -73,6 +44,69 @@ class XimapdQueryTest < Test::Unit::TestCase
                      Ximapd::OrQuery.new([q1, q2]))
     assert_not_equal(Ximapd::AndQuery.new([q1, q2]),
                      Ximapd::AndQuery.new([q1, q3]))
+  end
+
+  def test_and
+    q1 = Ximapd::NullQuery.new
+    q2 = Ximapd::TermQuery.new("hello")
+    assert_equal(q2, q1 & q2)
+
+    q1 = Ximapd::TermQuery.new("hello")
+    q2 = Ximapd::TermQuery.new("bye")
+    assert_equal(Ximapd::AndQuery.new([q1, q2]), q1 & q2)
+
+    q3 = Ximapd::AndQuery.new([q1, q2])
+    q4 = Ximapd::TermQuery.new("die")
+    assert_equal(Ximapd::AndQuery.new([q1, q2, q4]), q3 & q4)
+    assert_equal([q1, q2], q3.operands)
+
+    q5 = Ximapd::OrQuery.new([q1, q2])
+    assert_equal(Ximapd::AndQuery.new([q5, q4]), q5 & q4)
+
+    q6 = Ximapd::DiffQuery.new([q1, q2])
+    assert_equal(Ximapd::AndQuery.new([q6, q4]), q6 & q4)
+  end
+
+  def test_or
+    q1 = Ximapd::NullQuery.new
+    q2 = Ximapd::TermQuery.new("hello")
+    assert_equal(q2, q1 | q2)
+
+    q1 = Ximapd::TermQuery.new("hello")
+    q2 = Ximapd::TermQuery.new("bye")
+    assert_equal(Ximapd::OrQuery.new([q1, q2]), q1 | q2)
+
+    q3 = Ximapd::OrQuery.new([q1, q2])
+    q4 = Ximapd::TermQuery.new("die")
+    assert_equal(Ximapd::OrQuery.new([q1, q2, q4]), q3 | q4)
+    assert_equal([q1, q2], q3.operands)
+
+    q5 = Ximapd::AndQuery.new([q1, q2])
+    assert_equal(Ximapd::OrQuery.new([q5, q4]), q5 | q4)
+
+    q6 = Ximapd::DiffQuery.new([q1, q2])
+    assert_equal(Ximapd::OrQuery.new([q6, q4]), q6 | q4)
+  end
+
+  def test_diff
+    q1 = Ximapd::NullQuery.new
+    q2 = Ximapd::TermQuery.new("hello")
+    assert_equal(q2, q1 - q2)
+
+    q1 = Ximapd::TermQuery.new("hello")
+    q2 = Ximapd::TermQuery.new("bye")
+    assert_equal(Ximapd::DiffQuery.new([q1, q2]), q1 - q2)
+
+    q3 = Ximapd::DiffQuery.new([q1, q2])
+    q4 = Ximapd::TermQuery.new("die")
+    assert_equal(Ximapd::DiffQuery.new([q1, q2, q4]), q3 - q4)
+    assert_equal([q1, q2], q3.operands)
+
+    q5 = Ximapd::AndQuery.new([q1, q2])
+    assert_equal(Ximapd::DiffQuery.new([q5, q4]), q5 - q4)
+
+    q6 = Ximapd::OrQuery.new([q1, q2])
+    assert_equal(Ximapd::DiffQuery.new([q6, q4]), q6 - q4)
   end
 
   def test_to_s
@@ -121,7 +155,7 @@ class XimapdQueryTest < Test::Unit::TestCase
     ])
     assert_equal('"hello" | "bye"', q.to_s)
 
-    q = Ximapd::NotQuery.new([
+    q = Ximapd::DiffQuery.new([
       Ximapd::TermQuery.new("hello"),
       Ximapd::TermQuery.new("bye")
     ])
@@ -211,7 +245,7 @@ class XimapdQueryTest < Test::Unit::TestCase
     assert_equal(expected, q)
 
     q = Ximapd::Query.parse('hello - bye')
-    expected = Ximapd::NotQuery.new([
+    expected = Ximapd::DiffQuery.new([
       Ximapd::TermQuery.new("hello"),
       Ximapd::TermQuery.new("bye")
     ])

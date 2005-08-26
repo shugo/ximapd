@@ -23,46 +23,44 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-class Ximapd
-  module DoubleDispatchable
-    def self.append_features(klass)
-      super(klass)
+require File.expand_path("test-helper", File.dirname(__FILE__))
 
-      klass.class_eval do
-        @double_dispatch_methods = {}
-        @double_dispatched_methods = {}
+class XimapdMailboxTest < Test::Unit::TestCase
+  class Figure
+    include Ximapd::DoubleDispatchable
 
-        class << self
-          attr_reader :double_dispatch_methods
-          attr_reader :double_dispatched_methods
-        end
-      end
+    double_dispatch :print_on, :print
+  end
 
-      class << klass
-        self
-      end.send(:define_method, :double_dispatch) do |method, prefix|
-        klass.double_dispatch_methods[method] = prefix
-        @double_dispatched_methods[prefix] = []
-        define_method(method) do
-          raise SubclassResponsibilityError.new
-        end
-      end
+  class Circle < Figure
+  end
 
-      class << klass
-        self
-      end.send(:define_method, :inherited) do |subclass|
-        klass.double_dispatch_methods.each do |method, prefix|
-          m = prefix.to_s +
-            subclass.name.slice(/[A-Za-z]+\z/).gsub(/[A-Z]/) { |s|
-            "_" + s.downcase
-          }
-          mid = m.intern
-          subclass.send(:define_method, method) do |obj, *args|
-            obj.send(mid, self, *args)
-          end
-          klass.double_dispatched_methods[prefix].push(mid)
-        end
-      end
+  class Rectangle < Figure
+  end
+
+  def test_accept
+    printer = MethodCallChecker.new
+
+    fig = Figure.new
+    assert_raise(Ximapd::SubclassResponsibilityError) do
+      fig.print_on(printer)
     end
+
+    fig = Circle.new
+    fig.print_on(printer)
+    assert_equal(:print_circle, printer.method_id)
+    assert_equal([fig], printer.args)
+
+    fig = Rectangle.new
+    fig.print_on(printer)
+    assert_equal(:print_rectangle, printer.method_id)
+    assert_equal([fig], printer.args)
+  end
+
+  def test_double_dispatched_methods
+    assert_equal([:print_circle, :print_rectangle],
+                 Figure.double_dispatched_methods[:print])
   end
 end
+
+# vim: set filetype=ruby expandtab sw=2 :

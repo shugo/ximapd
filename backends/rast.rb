@@ -165,17 +165,15 @@ class Ximapd
     extend QueryFormat
     class << self
       def make_list_query(list_name)
-        {"main" => format("x-ml-name = %s",
-                          quote_query(list_name)),
-         "sub" => nil}
+        return format("x-ml-name = %s", quote_query(list_name))
       end
 
       def make_default_query(mailbox_id)
-        {"main" => format('mailbox-id = %d', mailbox_id), "sub" => nil}
+        return format('mailbox-id = %d', mailbox_id)
       end
 
       def make_query(mailbox_name)
-        {"main" => mailbox_name, "sub" => nil}
+        return mailbox_name
       end
     end
 
@@ -236,13 +234,13 @@ class Ximapd
     end
 
     def fetch(mailbox, sequence_set)
-      result = @index.search(mailbox["query"]["main"],
-                             "properties" => ["uid", "internal-date"],
-                             "start_no" => 0,
-                             "num_items" => Rast::RESULT_ALL_ITEMS,
-                             "sort_method" => Rast::SORT_METHOD_PROPERTY,
-                             "sort_property" => "uid",
-                             "sort_order" => Rast::SORT_ORDER_ASCENDING)
+      result = search_query(mailbox.query,
+                            "properties" => ["uid", "internal-date"],
+                            "start_no" => 0,
+                            "num_items" => Rast::RESULT_ALL_ITEMS,
+                            "sort_method" => Rast::SORT_METHOD_PROPERTY,
+                            "sort_property" => "uid",
+                            "sort_order" => Rast::SORT_ORDER_ASCENDING)
       mails = []
       sequence_set.each do |seq_number|
         case seq_number
@@ -276,28 +274,26 @@ class Ximapd
         "sort_property" => "uid",
         "sort_order" => Rast::SORT_ORDER_ASCENDING
       }
+      query = mailbox.query
       additional_queries = sequence_set.collect { |seq_number|
         case seq_number
         when Range
-          q = ""
+          q = NullQuery.new
           if seq_number.first > 1
-            q += format(" uid >= %d", seq_number.first)
+            q &= PropertyGeQuery.new("uid", seq_number.first)
           end
           if seq_number.last != -1
-            q += format(" uid <= %d", seq_number.last)
+            q &= PropertyLeQuery.new("uid", seq_number.last)
           end
           q
         else
-          format("uid = %d", seq_number)
+          PropertyEqQuery.new("uid", seq_number)
         end
-      }.reject { |q| q.empty? }
-      if additional_queries.empty?
-        query = mailbox["query"]["main"]
-      else
-        query = mailbox["query"]["main"] +
-          " ( " + additional_queries.join(" | ") + " )"
+      }.reject { |q| q.null? }
+      unless additional_queries.empty?
+        query &= OrQuery.new(additional_queries)
       end
-      result = @index.search(query, options)
+      result = search_query(query, options)
       return result.items.collect { |i|
         uid = i.properties[0]
         IndexedMail.new(@config, mailbox, uid, uid, i.doc_id, i.properties[1])
@@ -307,19 +303,19 @@ class Ximapd
     def mailbox_status(mailbox)
       mailbox_status = MailboxStatus.new
 
-      result = @index.search(mailbox["query"]["main"],
-                             "properties" => ["uid"],
-                             "start_no" => 0)
+      result = search_query(mailbox.query,
+                            "properties" => ["uid"],
+                            "start_no" => 0)
       mailbox_status.messages = result.hit_count
       mailbox_status.unseen = result.items.select { |i|
         !/\\Seen\b/ni.match(get_flags(i.properties[0].to_s, nil, nil))
       }.length
-      query = format("%s uid > %d",
-                      mailbox["query"]["main"], mailbox["last_peeked_uid"])
-      result = @index.search(query,
-                             "properties" => ["uid"],
-                             "start_no" => 0,
-                             "num_items" => Rast::RESULT_MIN_ITEMS)
+      query = mailbox.query &
+        PropertyGtQuery.new("uid", mailbox["last_peeked_uid"])
+      result = search_query(query,
+                            "properties" => ["uid"],
+                            "start_no" => 0,
+                            "num_items" => Rast::RESULT_MIN_ITEMS)
       mailbox_status.recent = result.hit_count
 
       mailbox_status
@@ -329,30 +325,8 @@ class Ximapd
     def query(mailbox, query)
     end
 
-    def uid_search(mailbox, query)
-      options = {
-        "properties" => ["uid"],
-        "start_no" => 0,
-        "num_items" => Rast::RESULT_ALL_ITEMS,
-        "sort_method" => Rast::SORT_METHOD_PROPERTY,
-        "sort_property" => "uid",
-        "sort_order" => Rast::SORT_ORDER_ASCENDING
-      }
-      q = query["main"] + " " + mailbox["query"]["main"]
-      result = @index.search(q, options)
-      return result.items.collect { |i| i.properties[0] }
-    end
-
-    def uid_search_by_keys(mailbox, keys)
-      query = keys.collect { |key| key.to_query["main"] }.reject { |q|
-        q.empty?
-      }.join(" ")
-      query = "uid > 0 " + query if /\A\s*!/ =~ query
-      uids = uid_search(mailbox, {"main" => query, "sub" => nil})
-      for key in keys
-        uids = key.select(uids)
-      end
-      uids
+    def uid_search(query)
+      return query.search_by(self)
     end
 
     def rebuild_index(*args)
@@ -381,313 +355,192 @@ class Ximapd
 
     def get_old_flags(uid)
       if @old_index
-        @flags_db[uid.to_s]
+        return @flags_db[uid.to_s]
       else
-        nil
+        return nil
       end
     end
 
     def try_query(query)
-      @index.search(query["main"], "num_items" => Rast::RESULT_MIN_ITEMS)
+      return @index.search(query, "num_items" => Rast::RESULT_MIN_ITEMS)
     end
 
-    class NullSearchKey
-      def to_query
-        return {"main" => "", "sub" => nil}
-      end
-
-      def select(uids)
-        return uids
-      end
-
-      def reject(uids)
-        return uids
-      end
+    def search_query(query, options)
+      s = query.compile_by(self)
+      return @index.search(s, options)
     end
 
-    class BodySearchKey < NullSearchKey
-      def initialize(value)
-        @value = value
-      end
-
-      def to_query
-        return {"main" => @value, "sub" => nil}
-      end
-    end
-
-    class HeaderSearchKey < NullSearchKey
-      include QueryFormat
-
-      def initialize(name, value)
-        @name = name
-        @value = value
-      end
-
-      def to_query
-        case @name
-        when "subject", "from", "to", "cc", "bcc"
-          return {"main" => format("%s : %s", @name, quote_query(@value)),
-                  "sub" => nil}
-        when "x-ml-name", "x-mail-count"
-          return {"main" => format("%s = %s", @name, quote_query(@value)),
-                  "sub" => nil}
-        else
-          super
-        end
-      end
-    end
-
-    class FlagSearchKey < NullSearchKey
-      def initialize(mail_store, flag)
-        @mail_store = mail_store
-        @flag_re = Regexp.new(Regexp.quote(flag) + "\\b", true, "n")
-      end
-
-      def select(uids)
-        return uids.select { |uid|
-          @flag_re.match(@mail_store.backend.get_flags(uid, nil, nil))
-        }
-      end
-
-      def reject(uids)
-        return uids.reject { |uid|
-          @flag_re.match(@mail_store.backend.get_flags(uid, nil, nil))
-        }
-      end
-    end
-
-    class NoFlagSearchKey < FlagSearchKey
-      alias super_select select
-      alias super_reject reject
-      alias select super_reject
-      alias reject super_select
-    end
-
-    class KeywordSearchKey < NullSearchKey
-      def initialize(mail_store, flag)
-        @mail_store = mail_store
-        if /\A\w/n.match(flag)
-          s = "\\b"
-        else
-          s = ""
-        end
-        @flag_re = Regexp.new(s + Regexp.quote(flag) + "\\b", true, "n")
-      end
-
-      def select(uids)
-        return uids.select { |uid|
-          @flag_re.match(@mail_store.backend.get_flags(uid, nil, nil))
-        }
-      end
-
-      def reject(uids)
-        return uids.reject { |uid|
-          @flag_re.match(@mail_store.backend.get_flags(uid, nil, nil))
-        }
-      end
-    end
-
-    class NoKeywordSearchKey < KeywordSearchKey
-      alias super_select select
-      alias super_reject reject
-      alias select super_reject
-      alias reject super_select
-    end
-
-    class SequenceNumberSearchKey < NullSearchKey
-      def initialize(sequence_set)
-        @sequence_set = sequence_set
-      end
-
-      def to_query
-        raise NotImplementedError.new("sequence number search is not implemented")
-      end
-    end
-
-    class UidSearchKey < NullSearchKey
-      def initialize(sequence_set)
-        @sequence_set = sequence_set
-      end
-
-      def to_query
-        if @sequence_set.empty?
-          super
-        end
-        q = "( " + @sequence_set.collect { |i|
-          case i
-          when Range
-            if i.last == -1
-              format("uid >= %d", i.first)
-            else
-              format("%d <= uid <= %d", i.first, i.last)
-            end
-          else
-            format("uid = %d", i)
-          end
-        }.join(" | ") + " )"
-        return {"main" => q, "sub" => nil}
-      end
-    end
-
-    class NotSearchKey
-      def initialize(key)
-        @key = key
-      end
-
-      def to_query
-        q = @key.to_query
-        if q["main"].empty?
-          return {"main" => "", "sub" => nil}
-        else
-          return {"main" => format("! ( %s )", q["main"]), "sub" => nil}
-        end
-      end
-
-      def select(uids)
-        return @key.reject(uids)
-      end
-
-      def reject(uids)
-        return @key.select(uids)
-      end
-    end
-
-    class DateSearchKey < NullSearchKey
-      def to_query
-        return {"main" => format("%s %s %s", field, op, @date.strftime()),
-                "sub" => nil}
-      end
-
-      private
-
-      def initialize(date_str)
-        @date = parse_date(date_str)
-        @date.gmtime
-      end
-
-      MONTH = {
-        "Jan" =>  1, "Feb" =>  2, "Mar" =>  3, "Apr" =>  4,
-        "May" =>  5, "Jun" =>  6, "Jul" =>  7, "Aug" =>  8,
-        "Sep" =>  9, "Oct" => 10, "Nov" => 11, "Dec" => 12,
+    def search_uids(s)
+      result = @index.search(s, 
+                             "properties" => ["uid"],
+                             "start_no" => 0,
+                             "num_items" => Rast::RESULT_ALL_ITEMS,
+                             "sort_method" => Rast::SORT_METHOD_PROPERTY,
+                             "sort_property" => "uid",
+                             "sort_order" => Rast::SORT_ORDER_ASCENDING)
+      return result.items.collect { |i|
+        i.properties[0]
       }
-      def parse_date(date_str)
-        if date_str.match(/\A"?(\d{1,2})-(#{MONTH.keys.join("|")})-(\d{4})"?\z/o)
-          Time.local($3.to_i, MONTH[$2], $1.to_i)
+    end
+
+    for method in Query.double_dispatched_methods[:search]
+      define_method(method) do |query|
+        search_uids(query.compile_by(self))
+      end
+    end
+
+    def search_and_query(query)
+      uids = search_uids(query.compile_by(self))
+      return query.select_by(self, uids)
+    end
+
+    def search_diff_query(query)
+      uids = search_uids(query.compile_by(self))
+      return query.select_by(self, uids)
+    end
+
+    def compile_null_query(query)
+      return ""
+    end
+
+    def compile_term_query(query)
+      return quote_query(query.value)
+    end
+
+    def compile_property_pe_query(query)
+      return compile_property_query(query, ":")
+    end
+
+    def compile_property_eq_query(query)
+      return compile_property_query(query, "=")
+    end
+
+    def compile_property_lt_query(query)
+      return compile_property_query(query, "<")
+    end
+
+    def compile_property_gt_query(query)
+      return compile_property_query(query, ">")
+    end
+
+    def compile_property_le_query(query)
+      return compile_property_query(query, "<=")
+    end
+
+    def compile_property_ge_query(query)
+      return compile_property_query(query, ">=")
+    end
+
+    def compile_flag_query(query)
+      return ""
+    end
+
+    def compile_no_flag_query(query)
+      return ""
+    end
+
+    def compile_and_query(query)
+      return compile_composite_query(query, "&")
+    end
+
+    def compile_or_query(query)
+      return compile_composite_query(query, "|")
+    end
+
+    def compile_diff_query(query)
+      return compile_composite_query(query, "-")
+    end
+
+    for method in Query.double_dispatched_methods[:select]
+      define_method(method) do |query, uids|
+        uids
+      end
+    end
+
+    for method in Query.double_dispatched_methods[:reject]
+      define_method(method) do |query, uids|
+        uids
+      end
+    end
+
+    def select_and_query(query, uids)
+      result = uids
+      for q in query.operands
+        result = q.select_by(self, result)
+      end
+      return result
+    end
+
+    def reject_and_query(query, uids)
+      result = uids
+      for q in query.operands
+        result = q.reject_by(self, result)
+      end
+      return result
+    end
+
+    def select_diff_query(query, uids)
+      result = uids
+      first, *rest = query.operands
+      result = first.select_by(self, result)
+      for q in rest
+        result = q.reject_by(self, result)
+      end
+      return result
+    end
+
+    def reject_diff_query(query, uids)
+      result = uids
+      first, *rest = query.operands
+      result = first.reject_by(self, result)
+      for q in rest
+        result = q.select_by(self, result)
+      end
+      return result
+    end
+
+    def select_flag_query(query, uids)
+      re = query.regexp
+      result = uids.select { |uid|
+        re.match(get_flags(uid, nil, nil))
+      }
+      return result
+    end
+
+    def reject_flag_query(query, uids)
+      re = query.regexp
+      return uids.reject { |uid|
+        re.match(get_flags(uid, nil, nil))
+      }
+    end
+
+    def select_no_flag_query(query, uids)
+      return reject_flag_query(query, uids)
+    end
+
+    def reject_no_flag_query(query, uids)
+      return select_flag_query(query, uids)
+    end
+
+    private
+
+    def compile_property_query(query, operator)
+      return format('%s %s %s', query.name, operator, quote_query(query.value))
+    end
+
+    def compile_composite_query(query, operator)
+      return query.operands.collect { |operand|
+        s = operand.compile_by(self)
+        if operand.composite?
+          "( " + s + " )"
         else
-          raise "invlid date string #{date_str}"
+          s
         end
-      end
-
-      def date_str(date)
-        date.strftime("%Y-%m-%dT%H:%M:%S")
-      end
+      }.reject { |s| s.empty? }.join(" " + operator + " ")
     end
 
-    class BeforeSearchKey < DateSearchKey
-      def to_query
-        return {"main" => format("internal-date < %s", date_str(@date)),
-                "sub" => nil}
-      end
-    end
-
-    class OnSearchKey < DateSearchKey
-      def to_query
-        date_end = @date + 86400
-        return {"main" => format("%s <= internal-date < %s",
-                                 date_str(@date), date_str(date_end)),
-                "sub" => nil}
-      end
-    end
-
-    class SinceSearchKey < DateSearchKey
-      def to_query
-        date = @date + 86400
-        return {"main" => format("internal-date >= %s", date_str(date)), "sub" => nil}
-      end
-    end
-
-    class SentbeforeSearchKey < DateSearchKey
-      def to_query
-        return {"main" => format("date < %s", date_str(@date)), "sub" => nil}
-      end
-    end
-
-    class SentonSearchKey < DateSearchKey
-      def to_query
-        date_end = @date + 86400
-        return {"main" => format("%s <= date < %s",
-                                 date_str(@date), date_str(date_end)),
-                "sub" => nil}
-      end
-    end
-
-    class SentsinceSearchKey < DateSearchKey
-      def to_query
-        date = @date + 86400
-        return {"main" => format("date >= %s", date_str(date)), "sub" => nil}
-      end
-    end
-
-    class LargerSearchKey < NullSearchKey
-      def initialize(size_str)
-        @size_str = size_str
-      end
-
-      def to_query
-        return {"main" => format("size > %s", @size_str), "sub" => nil}
-      end
-    end
-
-    class SmallerSearchKey < LargerSearchKey
-      def to_query
-        return {"main" => format("size < %s", @size_str), "sub" => nil}
-      end
-    end
-
-    class OrSearchKey < NullSearchKey
-      def initialize(key1, key2)
-        @keys = [key1, key2]
-      end
-
-      def to_query
-        qs = []
-        @keys.each do |key|
-          q = key.to_query
-          if q["main"].empty?
-            return ""
-          elsif /\A\s*!/ =~ q["main"]
-            qs << "uid > 0 " + q["main"]
-          else
-            qs << q["main"]
-          end
-        end
-
-        return {"main" => format("( %s )", qs.join(" | ")), "sub" => nil}
-      end
-    end
-
-    class GroupSearchKey < NullSearchKey
-      def initialize(keys)
-        @keys = keys
-      end
-
-      def to_query
-        qs = []
-        @keys.each do |key|
-          q = key.to_query
-          if q["main"].empty?
-          elsif /\A\s*!/ =~ q["main"]
-            qs << "uid > 0 " + q["main"]
-          else
-            qs << q["main"]
-          end
-        end
-
-        return {"main" => format("( %s )", qs.join(" & ")), "sub" => nil}
-      end
-    end
-
-    class EndGroupSearchKey
+    def quote_query(s)
+      return format('"%s"', s.gsub(/[\\"]/n, "\\\\\\&"))
     end
   end
 end

@@ -27,19 +27,34 @@ class Ximapd
   class Query
     include DoubleDispatchable
 
-    double_dispatch :accept, :visit
+    double_dispatch :search_by, :search
+    double_dispatch :compile_by, :compile
+    double_dispatch :select_by, :select
+    double_dispatch :reject_by, :reject
 
     def ==(other)
       return self.class == other.class
     end
 
-    def merge(other, query_class)
-      return query_class.new([self, other])
+    def &(other)
+      return AndQuery.new([self, other])
+    end
+
+    def |(other)
+      return OrQuery.new([self, other])
+    end
+
+    def -(other)
+      return DiffQuery.new([self, other])
     end
 
     def self.parse(s)
       parser = QueryParser.new
       return parser.parse(s)
+    end
+
+    def null?
+      return false
     end
 
     def composite?
@@ -54,12 +69,24 @@ class Ximapd
   end
 
   class NullQuery < Query
+    def &(other)
+      return other
+    end
+
+    def |(other)
+      return other
+    end
+
+    def -(other)
+      return other
+    end
+
     def to_s
       return ""
     end
 
-    def merge(other, query_class)
-      return other
+    def null?
+      return true
     end
   end
 
@@ -84,15 +111,6 @@ class Ximapd
       }.join(" " + operator + " ")
     end
 
-    def merge(other, query_class)
-      if self.is_a?(query_class)
-        @operands.push(other)
-        return self
-      else
-        return super(other, query_class)
-      end
-    end
-
     def composite?
       return true
     end
@@ -105,6 +123,10 @@ class Ximapd
   end
 
   class AndQuery < CompositeQuery
+    def &(other)
+      return AndQuery.new(@operands + [other])
+    end
+
     private
 
     def operator
@@ -113,6 +135,10 @@ class Ximapd
   end
 
   class OrQuery < CompositeQuery
+    def |(other)
+      return OrQuery.new(@operands + [other])
+    end
+
     private
 
     def operator
@@ -120,7 +146,11 @@ class Ximapd
     end
   end
 
-  class NotQuery < CompositeQuery
+  class DiffQuery < CompositeQuery
+    def -(other)
+      return DiffQuery.new(@operands + [other])
+    end
+
     private
 
     def operator
@@ -149,7 +179,7 @@ class Ximapd
 
     def initialize(name, value)
       @name = name
-      @value = value
+      @value = value.to_s
     end
 
     def ==(other)
@@ -246,6 +276,14 @@ class Ximapd
       return format("%s : %s", key, quote(@flag))
     end
 
+    def regexp
+      if /\A\w/.match(@flag)
+        return Regexp.new("\\b" + Regexp.quote(@flag) + "\\b", true, "n")
+      else
+        return Regexp.new(Regexp.quote(@flag) + "\\b", true, "n")
+      end
+    end
+
     private
 
     def key
@@ -301,25 +339,25 @@ class Ximapd
     T_QUOTED = :QUOTED
     T_EOF    = :EOF
 
-    COMPOSITE_QUERY_CLASSES = {
-      T_AND => AndQuery,
-      T_OR => OrQuery,
-      T_NOT => NotQuery,
+    COMPOSITE_QUERY_OPERATORS = {
+      T_AND => :&,
+      T_OR => :|,
+      T_NOT => :-,
     }
 
     def query
       result = NullQuery.new
       while (token = lookahead).symbol != T_EOF && token.symbol != T_RPAR
-        result = result.merge(composite_query, AndQuery)
+        result &= composite_query
       end
       return result
     end
 
     def composite_query
       result = primary_query
-      while query_class = COMPOSITE_QUERY_CLASSES[lookahead.symbol]
+      while operator = COMPOSITE_QUERY_OPERATORS[lookahead.symbol]
         shift_token
-        result = result.merge(primary_query, query_class)
+        result = result.send(operator, primary_query)
       end
       return result
     end

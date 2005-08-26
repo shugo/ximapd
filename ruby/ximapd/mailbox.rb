@@ -42,6 +42,10 @@ class Ximapd
       @data[key] = val
     end
 
+    def query
+      return NullQuery.new
+    end
+
     def save
       @data["class"] = self.class.name.slice(/\AXimapd::(.*)\z/, 1)
       @mail_store.mailbox_db["mailboxes"][@name] = @data
@@ -60,10 +64,6 @@ class Ximapd
     end
 
     def uid_search(query)
-      raise SubclassResponsibilityError.new
-    end
-
-    def uid_search_by_keys(keys)
       raise SubclassResponsibilityError.new
     end
 
@@ -103,6 +103,10 @@ class Ximapd
       @mail_store.index_mail(mail_data, path)
     end
 
+    def query
+      return Query.parse(@data["query"])
+    end
+
     def get_mail_path(mail)
       relpath = format("mails/%s/%d",
                        mail.internal_date.strftime("%Y/%m/%d"),
@@ -118,13 +122,7 @@ class Ximapd
 
     def uid_search(query)
       @mail_store.open_backend do |backend|
-        return backend.uid_search(self, query)
-      end
-    end
-
-    def uid_search_by_keys(keys)
-      @mail_store.open_backend do |backend|
-        return backend.uid_search_by_keys(self, keys)
+        return backend.uid_search(query)
       end
     end
 

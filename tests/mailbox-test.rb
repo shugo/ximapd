@@ -39,6 +39,16 @@ class XimapdMailboxTest < Test::Unit::TestCase
       assert_equal("\\Noselect", mailbox_data["flags"])
     end
   end
+
+  def test_query
+    mail_store = Ximapd::MailStore.new(@config)
+    mailbox = Ximapd::SearchBasedMailbox.new(mail_store,
+                                             "mailbox-test",
+                                             "query" => "subject : hello",
+                                             "flags" => "\\Noselect")
+    q = Ximapd::PropertyPeQuery.new("subject", "hello")
+    assert_equal(q, mailbox.query)
+  end
 end
 
 # vim: set filetype=ruby expandtab sw=2 :

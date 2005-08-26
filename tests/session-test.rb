@@ -575,14 +575,7 @@ EOF
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
     ruby = mail_store.mailboxes["queries/ruby"]
-    case @config["backend"]
-    when "Rast"
-      assert_equal({"main" => "ruby", "sub" => nil}, ruby["query"])
-    when "HyperEstraier"
-      assert_equal({"main" => "ruby", "sub" => []}, ruby["query"])
-    else
-      raise
-    end
+    assert_equal("ruby", ruby["query"])
     mail_store.close
   end
 
@@ -705,14 +698,7 @@ EOF
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
     ruby = mail_store.mailboxes["queries/ruby"]
-    case @config["backend"]
-    when "Rast"
-      assert_equal({"main" => "ruby", "sub" => nil}, ruby["query"])
-    when "HyperEstraier"
-      assert_equal({"main" => "ruby", "sub" => []}, ruby["query"])
-    else
-      raise
-    end
+    assert_equal("ruby", ruby["query"])
     mail_store.close
 
     sock = SpoofSocket.new(<<EOF)
@@ -729,14 +715,7 @@ EOF
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
     ruby = mail_store.mailboxes["ruby"]
-    case @config["backend"]
-    when "Rast"
-      assert_equal({"main" => "ruby", "sub" => nil}, ruby["query"])
-    when "HyperEstraier"
-      assert_equal({"main" => "ruby", "sub" => []}, ruby["query"])
-    else
-      raise
-    end
+    assert_equal("ruby", ruby["query"])
     mail_store.close
 
     sock = SpoofSocket.new(<<EOF)
@@ -753,29 +732,13 @@ EOF
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
     assert_equal("A002 NO mailbox already exists\r\n", sock.output.gets)
-    case @config["backend"]
-    when "Rast"
-      assert_equal("A003 NO invalid query\r\n", sock.output.gets)
-      assert_equal("A004 OK RENAME completed\r\n", sock.output.gets)
-    when "HyperEstraier"
-      assert_equal("A003 OK RENAME completed\r\n", sock.output.gets)
-      assert_equal("A004 NO mailbox does not exist\r\n", sock.output.gets)
-    else
-      raise
-    end
+    assert_equal("A003 NO invalid query\r\n", sock.output.gets)
+    assert_equal("A004 OK RENAME completed\r\n", sock.output.gets)
     assert_equal("A005 NO mailbox does not exist\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
-    case @config["backend"]
-    when "Rast"
-      perl = mail_store.mailboxes["queries/perl"]
-      assert_equal({"main" => "perl", "sub" => nil}, perl["query"])
-    when "HyperEstraier"
-      test = mail_store.mailboxes["queries/&-"]
-      assert_equal({"main" => "&", "sub" => []}, test["query"])
-    else
-      raise
-    end
+    perl = mail_store.mailboxes["queries/perl"]
+    assert_equal("perl", perl["query"])
     mail_store.close
   end
 
@@ -1366,9 +1329,9 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 A003 SEARCH BODY hello\r
 A004 SEARCH CHARSET US-ASCII BODY hello\r
-A005 SEARCH BODY "hello world"\r
-A006 SEARCH BODY "\\"hello world\\""\r
-A007 SEARCH BODY "\\"hello, world\\""\r
+A005 SEARCH BODY "hello"\r
+A006 SEARCH BODY "hello world"\r
+A007 SEARCH BODY "hello, world"\r
 A008 SEARCH HEADER SUBJECT hello\r
 A009 STORE 1 FLAGS (\\Seen)\r
 A010 SEARCH BODY hello SEEN\r
@@ -1376,8 +1339,8 @@ A011 SEARCH BODY hello UNSEEN\r
 A012 SEARCH CHARSET UTF-8 HEADER SUBJECT "こんにちは"\r
 A013 SEARCH CHARSET UTF-8 BODY "みなさん"\r
 A014 SEARCH BODY hello NOT SEEN\r
-A018 SEARCH BODY hello BODY "\\"hello, world\\""\r
-A019 SEARCH BODY hello NOT BODY "\\"hello, world\\""\r
+A018 SEARCH BODY hello BODY "hello, world"\r
+A019 SEARCH BODY hello NOT BODY "hello, world"\r
 A020 SEARCH NOT BODY hello
 A021 SEARCH UID 12\r
 A022 SEARCH UID 12,13\r
@@ -1440,7 +1403,7 @@ EOF
     assert_equal("A003 OK SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
     assert_equal("A004 OK SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH 1\r\n", sock.output.gets)
+    assert_equal("* SEARCH 1 3\r\n", sock.output.gets)
     assert_equal("A005 OK SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH\r\n", sock.output.gets)
     assert_equal("A006 OK SEARCH completed\r\n", sock.output.gets)
@@ -1644,9 +1607,9 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 A003 UID SEARCH BODY hello\r
 A004 UID SEARCH CHARSET US-ASCII BODY hello\r
-A005 UID SEARCH BODY "hello world"\r
-A006 UID SEARCH BODY "\\"hello world\\""\r
-A007 UID SEARCH BODY "\\"hello, world\\""\r
+A005 UID SEARCH BODY "hello"\r
+A006 UID SEARCH BODY "hello world"\r
+A007 UID SEARCH BODY "hello, world"\r
 A008 UID SEARCH HEADER SUBJECT hello\r
 A009 UID STORE #{uid1} FLAGS (\\Seen)\r
 A010 UID SEARCH BODY hello SEEN\r
@@ -1654,8 +1617,8 @@ A011 UID SEARCH BODY hello UNSEEN\r
 A012 UID SEARCH CHARSET UTF-8 HEADER SUBJECT "こんにちは"\r
 A013 UID SEARCH CHARSET UTF-8 BODY "みなさん"\r
 A014 UID SEARCH BODY hello NOT SEEN\r
-A018 UID SEARCH BODY hello BODY "\\"hello, world\\""\r
-A019 UID SEARCH BODY hello NOT BODY "\\"hello, world\\""\r
+A018 UID SEARCH BODY hello BODY "hello, world"\r
+A019 UID SEARCH BODY hello NOT BODY "hello, world"\r
 A020 UID SEARCH NOT BODY hello
 A021 UID SEARCH UID 2\r
 A022 UID SEARCH UID 2,3\r
@@ -1703,7 +1666,7 @@ EOF
     assert_equal("A003 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid1} #{uid3}\r\n", sock.output.gets)
     assert_equal("A004 OK UID SEARCH completed\r\n", sock.output.gets)
-    assert_equal("* SEARCH #{uid1}\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1} #{uid3}\r\n", sock.output.gets)
     assert_equal("A005 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH\r\n", sock.output.gets)
     assert_equal("A006 OK UID SEARCH completed\r\n", sock.output.gets)

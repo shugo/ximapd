@@ -359,23 +359,15 @@ EOF
         mail_store.get_mailbox("bar")
       end
     end
-    uids = inbox.uid_search({"main" => "hello"})
+    uids = inbox.uid_search(inbox.query & Ximapd::TermQuery.new("hello"))
     assert_equal([uid1], uids)
-    uids = inbox.uid_search({"main" => "bye"})
+    uids = inbox.uid_search(inbox.query & Ximapd::TermQuery.new("bye"))
     assert_equal([uid2], uids)
-    case @config["backend"]
-    when "Rast"
-      uids = inbox.uid_search({"main" => "from : shugo"})
-      assert_equal([uid1, uid2], uids)
-    when "HyperEstraier"
-      uids = inbox.uid_search({"main" => "", "sub" => "from STRINC shugo"})
-      assert_equal([uid1, uid2], uids)
-    else
-      raise
-    end
-    uids = foo.uid_search({"main" => "hello"})
+    uids = inbox.uid_search(inbox.query & Ximapd::PropertyPeQuery.new("from", "shugo"))
+    assert_equal([uid1, uid2], uids)
+    uids = foo.uid_search(foo.query & Ximapd::TermQuery.new("hello"))
     assert_equal([uid4], uids)
-    uids = bar.uid_search({"main" => "hello"})
+    uids = bar.uid_search(bar.query & Ximapd::TermQuery.new("hello"))
     assert_equal([uid5], uids)
     test_mailbox = mail_store.mailbox_db.transaction {
       mail_store.get_mailbox("test")

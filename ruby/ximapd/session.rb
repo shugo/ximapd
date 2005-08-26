@@ -113,6 +113,7 @@ class Ximapd
           begin
             cmd = recv_cmd
           rescue StandardError => e
+            raise if @@test
             send_bad("parse error: %s", e)
             next
           end

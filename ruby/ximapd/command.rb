@@ -439,15 +439,15 @@ class Ximapd
   end
 
   class AbstractSearchCommand < Command
-    def initialize(keys)
-      @keys = keys
+    def initialize(query)
+      @query = query
     end
 
     def exec
       result = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
-        uids = mailbox.uid_search_by_keys(@keys)
+        uids = mailbox.uid_search(@query)
         result = create_result(mailbox, uids)
       end
       if result.empty?
@@ -1235,150 +1235,196 @@ class Ximapd
       else
         charset = "us-ascii"
       end
-      return command_class.new(search_keys(charset))
+      mailbox = @session.get_current_mailbox
+      @current_mailbox_query = mailbox.query
+      return command_class.new(search_keys(charset, @current_mailbox_query))
     end
 
-    def search_keys(charset)
-      result = [search_key(charset)]
+    def search_keys(charset, query = NullQuery.new)
+      result = query
+      token = lookahead
+      if token.symbol == T_ATOM && token.value.upcase == "NOT"
+        shift_token
+        match(T_SPACE)
+        result = @current_mailbox_query - search_key(charset)
+      else
+        result &= search_key(charset)
+      end
       loop do
         token = lookahead
         if token.symbol != T_SPACE
           break
         end
         shift_token
-        result.push(search_key(charset))
+        token = lookahead
+        if token.symbol == T_ATOM && token.value.upcase == "NOT"
+          shift_token
+          match(T_SPACE)
+          result -= search_key(charset)
+        else
+          result &= search_key(charset)
+        end
       end
       return result
     end
 
     def search_key(charset)
-      ic = @session.mail_store.backend_class
       token = lookahead
       if /\A(\d+|\*)/.match(token.value)
-        return ic::SequenceNumberSearchKey.new(sequence_set)
+        raise NotImplementedError.new("sequence number search is not implemented")
       elsif token.symbol == T_LPAR
         shift_token
-        keys = []
-        until (key = search_key(charset)).kind_of?(ic::EndGroupSearchKey)
-          keys << key
-        end
-        return ic::GroupSearchKey.new(keys)
-      elsif token.symbol == T_RPAR
-        shift_token
-        return ic::EndGroupSearchKey.new
+        result = search_keys(charset)
+        match(T_RPAR)
+        return result
       end
 
       name = tokens([T_ATOM, T_NUMBER, T_NIL, T_PLUS, T_STAR])
       case name.upcase
       when "UID"
         match(T_SPACE)
-        return ic::UidSearchKey.new(sequence_set)
+        return uid_search_key(sequence_set)
       when "BODY", "TEXT"
         match(T_SPACE)
-        s = Iconv.conv("utf-8", charset, astring)
-        return ic::BodySearchKey.new(s)
+        return TermQuery.new(utf8_astring(charset))
       when "HEADER"
         match(T_SPACE)
         header_name = astring.downcase
         match(T_SPACE)
-        s = Iconv.conv("utf-8", charset, astring)
-        return ic::HeaderSearchKey.new(header_name, s)
+        case header_name
+        when "x-ml-name", "x-mail-count"
+          return PropertyEqQuery.new(header_name, utf8_astring(charset))
+        else
+          return PropertyPeQuery.new(header_name, utf8_astring(charset))
+        end
       when "SUBJECT"
         match(T_SPACE)
-        s = Iconv.conv("utf-8", charset, astring)
-        return ic::HeaderSearchKey.new("subject", s)
+        return PropertyPeQuery.new("subject", utf8_astring(charset))
       when "FROM"
         match(T_SPACE)
-        s = Iconv.conv("utf-8", charset, astring)
-        return ic::HeaderSearchKey.new("from", s)
+        return PropertyPeQuery.new("from", utf8_astring(charset))
       when "TO"
         match(T_SPACE)
-        s = Iconv.conv("utf-8", charset, astring)
-        return ic::HeaderSearchKey.new("to", s)
+        return PropertyPeQuery.new("to", utf8_astring(charset))
       when "CC"
         match(T_SPACE)
-        s = Iconv.conv("utf-8", charset, astring)
-        return ic::HeaderSearchKey.new("cc", s)
+        return PropertyPeQuery.new("cc", utf8_astring(charset))
       when "BCC"
         match(T_SPACE)
-        s = Iconv.conv("utf-8", charset, astring)
-        return ic::HeaderSearchKey.new("bcc", s)
+        return PropertyPeQuery.new("bcc", utf8_astring(charset))
       when "BEFORE"
         match(T_SPACE)
-        s = tokens([T_ATOM, T_QUOTED])
-        return ic::BeforeSearchKey.new(s)
+        return PropertyLeQuery.new("internal-date", iso8601_date(date))
       when "ON"
         match(T_SPACE)
-        s = tokens([T_ATOM, T_QUOTED])
-        return ic::OnSearchKey.new(s)
+        d = date
+        next_d = d + 1
+        return AndQuery.new([
+          PropertyGeQuery.new("internal-date", iso8601_date(d)),
+          PropertyLtQuery.new("internal-date", iso8601_date(next_d))
+        ])
       when "SINCE"
         match(T_SPACE)
-        s = tokens([T_ATOM, T_QUOTED])
-        return ic::SinceSearchKey.new(s)
+        return PropertyGeQuery.new("internal-date", iso8601_date(date + 1))
       when "SENTBEFORE"
         match(T_SPACE)
-        s = tokens([T_ATOM, T_QUOTED])
-        return ic::SentbeforeSearchKey.new(s)
+        return PropertyLeQuery.new("date", iso8601_date(date))
       when "SENTON"
         match(T_SPACE)
-        s = tokens([T_ATOM, T_QUOTED])
-        return ic::SentonSearchKey.new(s)
+        d = date
+        next_d = d + 1
+        return AndQuery.new([
+          PropertyGeQuery.new("date", iso8601_date(d)),
+          PropertyLtQuery.new("date", iso8601_date(next_d))
+        ])
       when "SENTSINCE"
         match(T_SPACE)
-        s = tokens([T_ATOM, T_QUOTED])
-        return ic::SentsinceSearchKey.new(s)
+        return PropertyGeQuery.new("date", iso8601_date(date + 1))
       when "LARGER"
         match(T_SPACE)
-        s = tokens([T_NUMBER])
-        return ic::LargerSearchKey.new(s)
+        return PropertyGtQuery.new("size", number)
       when "SMALLER"
         match(T_SPACE)
-        s = tokens([T_NUMBER])
-        return ic::SmallerSearchKey.new(s)
+        return PropertyLtQuery.new("size", number)
       when "ANSWERED"
-        return ic::FlagSearchKey.new(@session.mail_store, "\\Answered")
+        return FlagQuery.new("\\Answered")
       when "DELETED"
-        return ic::FlagSearchKey.new(@session.mail_store, "\\Deleted")
+        return FlagQuery.new("\\Deleted")
       when "DRAFT"
-        return ic::FlagSearchKey.new(@session.mail_store, "\\Draft")
+        return FlagQuery.new("\\Draft")
       when "FLAGGED"
-        return ic::FlagSearchKey.new(@session.mail_store, "\\Flagged")
+        return FlagQuery.new("\\Flagged")
       when "RECENT", "NEW"
-        return ic::FlagSearchKey.new(@session.mail_store, "\\Recent")
+        return FlagQuery.new("\\Recent")
       when "SEEN"
-        return ic::FlagSearchKey.new(@session.mail_store, "\\Seen")
+        return FlagQuery.new("\\Seen")
       when "KEYWORD"
         match(T_SPACE)
-        flag = atom
-        return ic::KeywordSearchKey.new(@session.mail_store, flag)
+        return FlagQuery.new(atom)
       when "UNANSWERED"
-        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Answered")
+        return NoFlagQuery.new("\\Answered")
       when "UNDELETED"
-        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Deleted")
+        return NoFlagQuery.new("\\Deleted")
       when "UNDRAFT"
-        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Draft")
+        return NoFlagQuery.new("\\Draft")
       when "UNFLAGGED"
-        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Flagged")
+        return NoFlagQuery.new("\\Flagged")
       when "UNSEEN"
-        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Seen")
+        return NoFlagQuery.new("\\Seen")
       when "OLD"
-        return ic::NoFlagSearchKey.new(@session.mail_store, "\\Recent")
+        return NoFlagQuery.new("\\Recent")
       when "UNKEYWORD"
         match(T_SPACE)
-        flag = atom
-        return ic::NoKeywordSearchKey.new(@session.mail_store, flag)
-      when "NOT"
-        match(T_SPACE)
-        return ic::NotSearchKey.new(search_key(charset))
+        return NoFlagQuery.new(atom)
       when "OR"
         match(T_SPACE)
-        key1 = search_key(charset)
+        q1 = search_key(charset)
         match(T_SPACE)
-        key2 = search_key(charset)
-        return ic::OrSearchKey.new(key1, key2)
+        q2 = search_key(charset)
+        return OrQuery.new([q1, q2])
+      when "NOT"
+        match(T_SPACE)
+        return @current_mailbox_query - search_key(charset)
       else
-        return ic::NullSearchKey.new
+        return NullQuery.new
       end
+    end
+
+    def uid_search_key(sequence_set)
+      result = NullQuery.new
+      for i in sequence_set
+        case i
+        when Range
+          if i.last == -1
+            q = PropertyGeQuery.new("uid", i.first)
+          else
+            q = AndQuery.new([
+              PropertyGeQuery.new("uid", i.first),
+              PropertyLeQuery.new("uid", i.last)
+            ])
+          end
+        else
+          q = PropertyEqQuery.new("uid", i)
+        end
+        result |= q
+      end
+      return result
+    end
+
+    def utf8_astring(charset)
+      return Iconv.conv("utf-8", charset, astring)
+    end
+
+    def date
+      begin
+        return DateTime.strptime(astring, "%d-%b-%Y")
+      rescue ArgumentError
+        raise InvalidQueryError.new("invlid date string #{date_str}")
+      end
+    end
+
+    def iso8601_date(d)
+      return d.strftime("%Y-%m-%dT%H:%M:%S")
     end
 
     def fetch
