@@ -438,80 +438,65 @@ class Ximapd
         @backend = backend
       end
 
+      def visit_and_query(query, uids)
+        result = uids
+        for q in query.operands
+          result = q.accept(self, result)
+        end
+        return result
+      end
+
       private
 
       def visit_default(query, uids)
         return uids
       end
 
-      def select_flag_query(query, uids)
+      def process_flag_query(method, query, uids)
         re = query.regexp
-        return uids.select { |uid|
+        return uids.send(method) { |uid|
           re.match(@backend.get_flags(uid, nil, nil))
         }
       end
 
-      def reject_flag_query(query, uids)
-        re = query.regexp
-        return uids.reject { |uid|
-          re.match(@backend.get_flags(uid, nil, nil))
-        }
+      def process_diff_query(visitor, query, uids)
+        result = uids
+        first, *rest = query.operands
+        result = first.accept(self, result)
+        for q in rest
+          result = q.accept(visitor, result)
+        end
+        return result
       end
     end
 
     class ResultSelectingVisitor < ResultVisitor
       def visit_flag_query(query, uids)
-        return select_flag_query(query, uids)
+        return process_flag_query(:select, query, uids)
       end
 
       def visit_no_flag_query(query, uids)
-        return reject_flag_query(query, uids)
-      end
-
-      def visit_and_query(query, uids)
-        result = uids
-        for q in query.operands
-          result = q.accept(self, result)
-        end
-        return result
+        return process_flag_query(:reject, query, uids)
       end
 
       def visit_diff_query(query, uids)
-        result = uids
-        first, *rest = query.operands
-        result = first.accept(self, result)
-        for q in rest
-          result = q.accept(@backend.result_rejecting_visitor, result)
-        end
-        return result
+        return process_diff_query(@backend.result_rejecting_visitor,
+                                  query, uids)
       end
     end
 
     class ResultRejectingVisitor < ResultVisitor
       def visit_flag_query(query, uids)
-        return reject_flag_query(query, uids)
+        return process_flag_query(:reject, query, uids)
       end
 
       def visit_no_flag_query(query, uids)
-        return select_flag_query(query, uids)
-      end
-
-      def visit_and_query(query, uids)
-        result = uids
-        for q in query.operands
-          result = q.accept(self, result)
-        end
-        return result
+        return process_flag_query(:select, query, uids)
       end
 
       def visit_diff_query(query, uids)
-        result = uids
-        first, *rest = query.operands
-        result = first.accept(self, result)
-        for q in rest
-          result = q.accept(@backend.result_selecting_visitor, result)
-        end
-        return result
+        return process_diff_query(@backend.result_rejecting_visitor,
+                                  query, uids)
       end
     end
   end
