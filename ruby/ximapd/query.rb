@@ -27,10 +27,7 @@ class Ximapd
   class Query
     include DoubleDispatchable
 
-    double_dispatch :search_by, :search
-    double_dispatch :compile_by, :compile
-    double_dispatch :select_by, :select
-    double_dispatch :reject_by, :reject
+    double_dispatch :accept, :visit
 
     def ==(other)
       return self.class == other.class
@@ -304,6 +301,20 @@ class Ximapd
 
     def key
       return "noflag"
+    end
+  end
+
+  class QueryVisitor
+    for method in Query.double_dispatched_methods[:visit]
+      define_method(method) do |query, *args|
+        visit_default(query, *args)
+      end
+    end
+
+    private
+
+    def visit_default(query, *args)
+      raise SubclassResponsibilityError.new
     end
   end
 

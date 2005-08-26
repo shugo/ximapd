@@ -154,18 +154,15 @@ class Ximapd
     }
     DEFAULT_SYNC_THRESHOLD_CHARS = 500000
 
-    module QueryFormat
-      module_function
-
-      def quote_query(s)
-        return format('"%s"', s.gsub(/[\\"]/n, "\\\\\\&"))
-      end
-    end
+    attr_reader :result_selecting_visitor, :result_rejecting_visitor
 
     def initialize(mail_store)
       super(mail_store)
       @flags_db_path = File.expand_path("flags.sdbm", @path)
       @flags_db = nil
+      @query_compiling_visitor = QueryCompilingVisitor.new
+      @result_selecting_visitor = ResultSelectingVisitor.new(self)
+      @result_rejecting_visitor = ResultRejectingVisitor.new(self)
     end
 
     def setup
@@ -311,7 +308,17 @@ class Ximapd
     end
 
     def uid_search(query)
-      return query.search_by(self)
+      result = search_query(query,
+                            "properties" => ["uid"],
+                            "start_no" => 0,
+                            "num_items" => Rast::RESULT_ALL_ITEMS,
+                            "sort_method" => Rast::SORT_METHOD_PROPERTY,
+                            "sort_property" => "uid",
+                            "sort_order" => Rast::SORT_ORDER_ASCENDING)
+      uids = result.items.collect { |i|
+        i.properties[0]
+      }
+      return query.accept(@result_selecting_visitor, uids)
     end
 
     def rebuild_index(*args)
@@ -351,182 +358,161 @@ class Ximapd
                           "num_items" => Rast::RESULT_MIN_ITEMS)
     end
 
+    private
+
     def search_query(query, options)
-      s = query.compile_by(self)
+      s = query.accept(@query_compiling_visitor)
       return @index.search(s, options)
     end
 
-    def search_uids(s)
-      result = @index.search(s, 
-                             "properties" => ["uid"],
-                             "start_no" => 0,
-                             "num_items" => Rast::RESULT_ALL_ITEMS,
-                             "sort_method" => Rast::SORT_METHOD_PROPERTY,
-                             "sort_property" => "uid",
-                             "sort_order" => Rast::SORT_ORDER_ASCENDING)
-      return result.items.collect { |i|
-        i.properties[0]
-      }
-    end
+    class QueryCompilingVisitor < QueryVisitor
+      def visit_term_query(query)
+        return quote_query(query.value)
+      end
 
-    for method in Query.double_dispatched_methods[:search]
-      define_method(method) do |query|
-        search_uids(query.compile_by(self))
+      def visit_property_pe_query(query)
+        return compile_property_query(query, ":")
+      end
+
+      def visit_property_eq_query(query)
+        return compile_property_query(query, "=")
+      end
+
+      def visit_property_lt_query(query)
+        return compile_property_query(query, "<")
+      end
+
+      def visit_property_gt_query(query)
+        return compile_property_query(query, ">")
+      end
+
+      def visit_property_le_query(query)
+        return compile_property_query(query, "<=")
+      end
+
+      def visit_property_ge_query(query)
+        return compile_property_query(query, ">=")
+      end
+
+      def visit_and_query(query)
+        return compile_composite_query(query, "&")
+      end
+
+      def visit_or_query(query)
+        return compile_composite_query(query, "|")
+      end
+
+      def visit_diff_query(query)
+        return compile_composite_query(query, "-")
+      end
+
+      private
+
+      def visit_default(query)
+        return ""
+      end
+
+      def compile_property_query(query, operator)
+        return format('%s %s %s',
+                      query.name, operator, quote_query(query.value))
+      end
+
+      def compile_composite_query(query, operator)
+        return query.operands.collect { |operand|
+          s = operand.accept(self)
+          if operand.composite?
+            "( " + s + " )"
+          else
+            s
+          end
+        }.reject { |s| s.empty? }.join(" " + operator + " ")
+      end
+
+      def quote_query(s)
+        return format('"%s"', s.gsub(/[\\"]/n, "\\\\\\&"))
       end
     end
 
-    def search_and_query(query)
-      uids = search_uids(query.compile_by(self))
-      return query.select_by(self, uids)
-    end
+    class ResultVisitor < QueryVisitor
+      def initialize(backend)
+        @backend = backend
+      end
 
-    def search_diff_query(query)
-      uids = search_uids(query.compile_by(self))
-      return query.select_by(self, uids)
-    end
+      private
 
-    def compile_null_query(query)
-      return ""
-    end
+      def visit_default(query, uids)
+        return uids
+      end
 
-    def compile_term_query(query)
-      return quote_query(query.value)
-    end
+      def select_flag_query(query, uids)
+        re = query.regexp
+        return uids.select { |uid|
+          re.match(@backend.get_flags(uid, nil, nil))
+        }
+      end
 
-    def compile_property_pe_query(query)
-      return compile_property_query(query, ":")
-    end
-
-    def compile_property_eq_query(query)
-      return compile_property_query(query, "=")
-    end
-
-    def compile_property_lt_query(query)
-      return compile_property_query(query, "<")
-    end
-
-    def compile_property_gt_query(query)
-      return compile_property_query(query, ">")
-    end
-
-    def compile_property_le_query(query)
-      return compile_property_query(query, "<=")
-    end
-
-    def compile_property_ge_query(query)
-      return compile_property_query(query, ">=")
-    end
-
-    def compile_flag_query(query)
-      return ""
-    end
-
-    def compile_no_flag_query(query)
-      return ""
-    end
-
-    def compile_and_query(query)
-      return compile_composite_query(query, "&")
-    end
-
-    def compile_or_query(query)
-      return compile_composite_query(query, "|")
-    end
-
-    def compile_diff_query(query)
-      return compile_composite_query(query, "-")
-    end
-
-    for method in Query.double_dispatched_methods[:select]
-      define_method(method) do |query, uids|
-        uids
+      def reject_flag_query(query, uids)
+        re = query.regexp
+        return uids.reject { |uid|
+          re.match(@backend.get_flags(uid, nil, nil))
+        }
       end
     end
 
-    for method in Query.double_dispatched_methods[:reject]
-      define_method(method) do |query, uids|
-        uids
+    class ResultSelectingVisitor < ResultVisitor
+      def visit_flag_query(query, uids)
+        return select_flag_query(query, uids)
       end
-    end
 
-    def select_and_query(query, uids)
-      result = uids
-      for q in query.operands
-        result = q.select_by(self, result)
+      def visit_no_flag_query(query, uids)
+        return reject_flag_query(query, uids)
       end
-      return result
-    end
 
-    def reject_and_query(query, uids)
-      result = uids
-      for q in query.operands
-        result = q.reject_by(self, result)
-      end
-      return result
-    end
-
-    def select_diff_query(query, uids)
-      result = uids
-      first, *rest = query.operands
-      result = first.select_by(self, result)
-      for q in rest
-        result = q.reject_by(self, result)
-      end
-      return result
-    end
-
-    def reject_diff_query(query, uids)
-      result = uids
-      first, *rest = query.operands
-      result = first.reject_by(self, result)
-      for q in rest
-        result = q.select_by(self, result)
-      end
-      return result
-    end
-
-    def select_flag_query(query, uids)
-      re = query.regexp
-      result = uids.select { |uid|
-        re.match(get_flags(uid, nil, nil))
-      }
-      return result
-    end
-
-    def reject_flag_query(query, uids)
-      re = query.regexp
-      return uids.reject { |uid|
-        re.match(get_flags(uid, nil, nil))
-      }
-    end
-
-    def select_no_flag_query(query, uids)
-      return reject_flag_query(query, uids)
-    end
-
-    def reject_no_flag_query(query, uids)
-      return select_flag_query(query, uids)
-    end
-
-    private
-
-    def compile_property_query(query, operator)
-      return format('%s %s %s', query.name, operator, quote_query(query.value))
-    end
-
-    def compile_composite_query(query, operator)
-      return query.operands.collect { |operand|
-        s = operand.compile_by(self)
-        if operand.composite?
-          "( " + s + " )"
-        else
-          s
+      def visit_and_query(query, uids)
+        result = uids
+        for q in query.operands
+          result = q.accept(self, result)
         end
-      }.reject { |s| s.empty? }.join(" " + operator + " ")
+        return result
+      end
+
+      def visit_diff_query(query, uids)
+        result = uids
+        first, *rest = query.operands
+        result = first.accept(self, result)
+        for q in rest
+          result = q.accept(@backend.result_rejecting_visitor, result)
+        end
+        return result
+      end
     end
 
-    def quote_query(s)
-      return format('"%s"', s.gsub(/[\\"]/n, "\\\\\\&"))
+    class ResultRejectingVisitor < ResultVisitor
+      def visit_flag_query(query, uids)
+        return reject_flag_query(query, uids)
+      end
+
+      def visit_no_flag_query(query, uids)
+        return select_flag_query(query, uids)
+      end
+
+      def visit_and_query(query, uids)
+        result = uids
+        for q in query.operands
+          result = q.accept(self, result)
+        end
+        return result
+      end
+
+      def visit_diff_query(query, uids)
+        result = uids
+        first, *rest = query.operands
+        result = first.accept(self, result)
+        for q in rest
+          result = q.accept(@backend.result_selecting_visitor, result)
+        end
+        return result
+      end
     end
   end
 end
