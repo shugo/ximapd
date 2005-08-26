@@ -100,10 +100,6 @@ class Ximapd
       raise SubclassResponsibilityError.new
     end
 
-    def uid_search_by_keys(mailbox, keys)
-      raise SubclassResponsibilityError.new
-    end
-
     def rebuild_index(*args)
       raise SubclassResponsibilityError.new
     end
