@@ -84,6 +84,28 @@ unless defined?(now.to_time)
   end
 end
 
+class Net::IMAP
+  unless defined?(starttls)
+    def starttls(ctx = nil)
+      require "openssl"
+      if @sock.kind_of?(OpenSSL::SSL::SSLSocket)
+        raise RuntimeError, "already using SSL"
+      end
+      send_command("STARTTLS") do |resp|
+        if resp.kind_of?(TaggedResponse) && resp.name == "OK"
+          if ctx
+            @sock = OpenSSL::SSL::SSLSocket.new(@sock, ctx)
+          else
+            @sock = OpenSSL::SSL::SSLSocket.new(@sock)
+          end
+          @sock.sync_close = true
+          @sock.connect
+        end
+      end
+    end
+  end
+end
+
 class Ximapd
   VERSION = "0.1.0"
   REVISION = "$Revision$".slice(/\A\$Revision: (.*) \$\z/, 1)
@@ -361,6 +383,16 @@ class Ximapd
         mail_store.import(@args, @config["dest_mailbox"])
       end
     end
+  end
+
+  def import_via_imap
+    imap = Net::IMAP.new("localhost", @config["port"], @config["ssl"])
+    if @config["starttls"] && @config["require_secure"]
+      imap.starttls
+    end
+    imap.authenticate("CRAM-MD5", @config["user"], @config["password"])
+    imap.append(@config["dest_mailbox"], STDIN.read)
+    imap.logout
   end
 
   def import_mbox
@@ -727,6 +759,7 @@ class Ximapd
     Action.new("start", "start daemon"),
     Action.new("stop", "stop daemon"),
     Action.new("import", "import mail"),
+    Action.new("import_via_imap", "import mail via imap"),
     Action.new("import_mbox", "import mbox"),
     Action.new("import_imap", "import from another imap server"),
     Action.new("rebuild_index", "rebuild index"),
