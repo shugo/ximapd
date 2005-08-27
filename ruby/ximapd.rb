@@ -147,9 +147,15 @@ class Ximapd
       @sessions = {}
       init_profiler if @config["profile"]
       send(@config["action"])
-    rescue StandardError => e
+    rescue Exception => e
       STDERR.printf("ximapd: %s\n", e)
       @logger.log_exception(e) if @logger
+      if @config["action"] == "import" || @config["action"] == "import_via_imap"
+        exit(75)
+      end
+      unless e.kind_of?(StandardError)
+        raise
+      end
     end
   end
 
