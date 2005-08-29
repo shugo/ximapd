@@ -344,10 +344,7 @@ class Ximapd
     end
 
     def flags(get_recent = true)
-      s = nil
-      @mail_store.open_backend do |backend|
-        s = backend.get_flags(@uid, @item_id, @indexed_obj)
-      end
+      s = @mail_store.backend.get_flags(@uid, @item_id, @indexed_obj)
       if get_recent && uid > @mailbox["last_peeked_uid"]
         if s.empty?
           return "\\Recent"
@@ -360,12 +357,9 @@ class Ximapd
     end
 
     def flags=(s)
-      r = nil
-      @mail_store.open_backend do |backend|
-        r = backend.set_flags(@uid, @item_id, @indexed_obj, s)
-      end
+      result = @mail_store.backend.set_flags(@uid, @item_id, @indexed_obj, s)
       @indexed_obj = nil
-      r
+      return result
     end
 
     def delete

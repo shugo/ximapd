@@ -200,7 +200,7 @@ class Ximapd
     end
 
     def get_flags(uid, item_id, item_obj)
-      @flags_db[uid.to_s]
+      return @flags_db[uid.to_s]
     end
 
     def set_flags(uid, item_id, item_obj, flags)
@@ -300,7 +300,7 @@ class Ximapd
                             "num_items" => Rast::RESULT_MIN_ITEMS)
       mailbox_status.recent = result.hit_count
 
-      mailbox_status
+      return mailbox_status
     end
 
     def uid_search(query)

@@ -722,9 +722,10 @@ class Ximapd
               flags = plugin.on_store(mail, flags)
             end
             mail.flags = flags
+            flags = mail.flags
           end
           unless @att.silent?
-            send_fetch_response(mail, mail.flags)
+            send_fetch_response(mail, flags)
           end
         end
       end
