@@ -29,6 +29,7 @@ $:.unshift("%rubydir%")
 require "ximapd"
 
 Ximapd::Backend.directory = "%backenddir%"
+Ximapd::Plugin.directories = ["%plugindir%"]
 
 File.umask(0077)
 imapd = Ximapd.new

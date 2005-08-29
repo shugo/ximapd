@@ -917,7 +917,7 @@ class Ximapd
       begin
         properties["date"] = DateTime.parse(mail.header["date"].to_s).to_time.getlocal.strftime("%Y-%m-%dT%H:%M:%S")
       rescue Exception => e
-        @logger.log_exception(e, "failed to parse Date", Logger::WARN)
+        @logger.log_exception(e, "failed to parse date - `#{mail.header["date"].to_s}'", Logger::WARN)
       end
       s = nil
       @ml_header_fields.each do |field_name|

@@ -181,11 +181,12 @@ class Ximapd
         }
         @config = config.merge(@config)
         check_config(@config)
-        path = @config["plugin_path"] ||
-          File.join(@config["data_dir"], "plugins")
-        Plugin.directories = path.split(File::PATH_SEPARATOR).collect { |dir|
-          File.expand_path(dir)
-        }
+        if @config.key?("plugin_path")
+          path = @config["plugin_path"]
+          Plugin.directories = path.split(File::PATH_SEPARATOR).collect { |dir|
+            File.expand_path(dir)
+          }
+        end
         @logger = open_logger
       end
     rescue StandardError => e
@@ -546,7 +547,7 @@ class Ximapd
     end
 
     def self.create_plugins(config, mail_store)
-      return [] unless config.key?("plugins")
+      return Plugins.new([]) unless config.key?("plugins")
       if !@@loaded && @@directories
         logger = config["logger"]
         for plugin in config["plugins"]
@@ -562,10 +563,11 @@ class Ximapd
         end
         @@loaded = true
       end
-      return config["plugins"].collect { |plugin|
+      plugins = config["plugins"].collect { |plugin|
         Ximapd.const_get(plugin["name"]).new(plugin, mail_store,
                                              config["logger"])
       }
+      return Plugins.new(plugins)
     end
 
     def initialize(config, mail_store, logger)
@@ -592,6 +594,16 @@ class Ximapd
     end
 
     def on_idle
+    end
+  end
+
+  class Plugins
+    def initialize(plugins)
+      @plugins = plugins
+    end
+
+    def each(&block)
+      @plugins.each(&block)
     end
   end
 
