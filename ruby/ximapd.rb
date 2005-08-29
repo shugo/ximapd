@@ -584,7 +584,7 @@ class Ximapd
       return nil
     end
 
-    def on_store(mail, flags)
+    def on_store(mail, att, flags)
       return flags
     end
 
