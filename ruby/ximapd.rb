@@ -584,6 +584,10 @@ class Ximapd
       return nil
     end
 
+    def on_store(mail, flags)
+      return flags
+    end
+
     def on_copy(src_mail, dest_mailbox)
     end
 
@@ -604,6 +608,12 @@ class Ximapd
 
     def each(&block)
       @plugins.each(&block)
+    end
+
+    def fire_event(name, *args)
+      for plugin in @plugins
+        plugin.send(name, *args)
+      end
     end
   end
 

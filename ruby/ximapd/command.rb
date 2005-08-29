@@ -390,9 +390,7 @@ class Ximapd
       @session.synchronize do
         @session.sync
         @mail_store.mailbox_db.transaction do
-          for plugin in @mail_store.plugins
-            plugin.on_idle
-          end
+          @mail_store.plugins.fire_event(:on_idle)
         end
       end
       @session.recv_line
@@ -719,11 +717,14 @@ class Ximapd
         for mail in mails
           flags = nil
           @session.synchronize do
-            @att.store(mail)
-            flags = mail.flags
+            flags = @att.get_new_flags(mail)
+            for plugin in @mail_store.plugins
+              flags = plugin.on_store(mail, flags)
+            end
+            mail.flags = flags
           end
           unless @att.silent?
-            send_fetch_response(mail, flags)
+            send_fetch_response(mail, mail.flags)
           end
         end
       end
@@ -775,27 +776,31 @@ class Ximapd
     def silent?
       return @silent
     end
+
+    def get_new_flags(mail)
+      raise SubclassResponsibilityError.new
+    end
   end
 
   class SetFlagsStoreAtt < FlagsStoreAtt
-    def store(mail)
-      mail.flags = @flags.join(" ")
+    def get_new_flags(mail)
+      return @flags.join(" ")
     end
   end
 
   class AddFlagsStoreAtt < FlagsStoreAtt
-    def store(mail)
+    def get_new_flags(mail)
       flags = mail.flags(false).split(/ /)
       flags |= @flags
-      mail.flags = flags.join(" ")
+      return flags.join(" ")
     end
   end
 
   class RemoveFlagsStoreAtt < FlagsStoreAtt
-    def store(mail)
+    def get_new_flags(mail)
       flags = mail.flags(false).split(/ /)
       flags -= @flags
-      mail.flags = flags.join(" ")
+      return flags.join(" ")
     end
   end
 
@@ -818,16 +823,12 @@ class Ximapd
       override = {"x-ml-name" => dest_mailbox["list_id"] || ""}
       for mail in mails
         @session.synchronize do
-          for plugin in @mail_store.plugins
-            plugin.on_copy(mail, dest_mailbox)
-          end
+          @mail_store.plugins.fire_event(:on_copy, mail, dest_mailbox)
           uid = @mail_store.import_mail(mail.to_s, dest_mailbox.name,
                                         mail.flags(false), mail.internal_date,
                                         override)
           dest_mail = dest_mailbox.get_mail(uid)
-          for plugin in @mail_store.plugins
-            plugin.on_copied(mail, dest_mail)
-          end
+          @mail_store.plugins.fire_event(:on_copied, mail, dest_mail)
         end
       end
       send_tagged_ok
