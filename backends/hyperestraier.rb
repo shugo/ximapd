@@ -164,7 +164,7 @@ class Ximapd
     end
     public :relax
 
-    def open(*args)
+    def open_index(*args)
       if args.empty?
         flags = HyperEstraier::Database::DBWRITER
       else
@@ -181,12 +181,12 @@ class Ximapd
         raise
       end
     end
-    public :open
+    private :open_index
 
-    def close
+    def close_index
       @index.close
     end
-    public :close
+    private :close_index
 
     def register(mail_data, filename)
       doc = HyperEstraier::Document.new

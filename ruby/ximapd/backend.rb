@@ -42,6 +42,7 @@ class Ximapd
       @path = @mail_store.path
       @index = nil
       @index_path = File.expand_path("index", @path)
+      @index_ref_count = 0
     end
 
     def setup
@@ -57,11 +58,27 @@ class Ximapd
     end
 
     def open(*args)
-      raise SubclassResponsibilityError.new
+      if block_given?
+        if @index_ref_count == 0
+          open_index(*args)
+        end
+        @index_ref_count += 1
+        begin
+          yield(self)
+        ensure
+          close
+        end
+      else
+        open_index(*args)
+        @index_ref_count += 1
+      end
     end
 
     def close
-      raise SubclassResponsibilityError.new
+      @index_ref_count -= 1
+      if @index_ref_count == 0
+        close_index
+      end
     end
 
     def register(mail_data, filename)
@@ -109,6 +126,16 @@ class Ximapd
     end
 
     def try_query(query)
+      raise SubclassResponsibilityError.new
+    end
+
+    private
+
+    def open_index(*args)
+      raise SubclassResponsibilityError.new
+    end
+
+    def close_index
       raise SubclassResponsibilityError.new
     end
   end

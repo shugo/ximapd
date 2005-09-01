@@ -180,20 +180,6 @@ class Ximapd
        @flags_db = nil
     end
 
-    def open(*args)
-      if args.empty?
-        flags = Rast::DB::RDWR
-      else
-        flags = args.last
-      end
-      @index = Rast::DB.open(@index_path, flags,
-                             "sync_threshold_chars" => @config["sync_threshold_chars"] || DEFAULT_SYNC_THRESHOLD_CHARS)
-    end
-
-    def close
-      @index.close
-    end
-
     def register(mail_data, filename)
       doc_id = @index.register(mail_data.text, mail_data.properties)
       set_flags(mail_data.uid, doc_id, nil, mail_data.flags)
@@ -355,6 +341,20 @@ class Ximapd
     end
 
     private
+
+    def open_index(*args)
+      if args.empty?
+        flags = Rast::DB::RDWR
+      else
+        flags = args.last
+      end
+      @index = Rast::DB.open(@index_path, flags,
+                             "sync_threshold_chars" => @config["sync_threshold_chars"] || DEFAULT_SYNC_THRESHOLD_CHARS)
+    end
+
+    def close_index
+      @index.close
+    end
 
     def search_query(query, options)
       s = query.accept(@query_compiling_visitor)

@@ -521,20 +521,9 @@ class Ximapd
       end
     end
 
-    def open_backend(*args)
+    def open_backend(*args, &block)
       synchronize do
-        if @backend_ref_count == 0
-          @backend.open(*args)
-        end
-        @backend_ref_count += 1
-        begin
-          yield(@backend)
-        ensure
-          @backend_ref_count -= 1
-          if @backend_ref_count == 0
-            @backend.close
-          end
-        end
+        @backend.open(*args, &block)
       end
     end
 
