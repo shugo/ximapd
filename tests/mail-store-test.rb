@@ -28,19 +28,6 @@ require File.expand_path("test-helper", File.dirname(__FILE__))
 class XimapdMailStoreTest < Test::Unit::TestCase
   include XimapdTestMixin
 
-  def test_backend_class
-    mail_store = Ximapd::MailStore.new(@config)
-    case @config["backend"]
-    when "Rast"
-      expect = "Ximapd::RastBackend"
-    when "HyperEstraier"
-      expect = "Ximapd::HyperEstraierBackend"
-    else
-      expect = nil
-    end
-    assert_equal(expect, mail_store.backend_class.to_s)
-  end
-
   def test_import_mail
     mail_store = Ximapd::MailStore.new(@config)
     mail_store.create_mailbox("test")

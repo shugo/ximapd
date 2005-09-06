@@ -112,7 +112,7 @@ class Ximapd
     attr_reader :config, :path, :mailbox_db, :mailbox_db_path
     attr_reader :plugins
     attr_reader :uid_seq, :uidvalidity_seq, :mailbox_id_seq
-    attr_reader :backend, :backend_class
+    attr_reader :backend
 
     def initialize(config)
       super()
@@ -147,8 +147,8 @@ class Ximapd
       backend_name = @config["backend"] || "Rast"
       lib = File.expand_path(backend_name.downcase, Backend.directory)
       require lib
-      @backend_class = Ximapd.const_get(backend_name + "Backend")
-      @backend = @backend_class.new(self)
+      backend_class = Ximapd.const_get(backend_name + "Backend")
+      @backend = backend_class.new(self)
       synchronize do
         if @uidvalidity_seq.current.nil?
           @uidvalidity_seq.current = 1
