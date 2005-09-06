@@ -184,14 +184,14 @@ class Ximapd
       elsif item_id
         doc = index.get_doc(item_id, 0)
       elsif uid
-        doc_id = query(PropertyEqQuery.new("uid", uid))[0]
+        doc_id = query(PropertyEqQuery.new("uid", uid), index)[0]
         doc = index.get_doc(doc_id, 0)
       else
         doc = nil
       end
       unless doc
         raise ArgumentError,
-          "no such document (uid = #{uid.inspect}, item_id = #{item_id.inspect}, indexed_data.class = #{indexed_data.class})"
+          "no such document (uid = #{uid.inspect}, item_id = #{item_id.inspect})"
       end
       doc
     end
@@ -316,8 +316,8 @@ class Ximapd
     end
     public :mailbox_status
 
-    def query(query)
-      visitor = QueryExecutingVisitor.new(@index)
+    def query(query, index = @index)
+      visitor = QueryExecutingVisitor.new(index)
       return visitor.visit(query)
     end
     public :query
@@ -392,10 +392,7 @@ class Ximapd
 
       def visit_and_query(query)
         begin
-          cond = @query_compiling_visitor.visit(query)
-          cond.set_order("uid NUMA")
-          result = @index.search(cond, 0)
-          return result.to_a
+          return visit_default(query)
         rescue QueryCompileError
           first, *rest = query.operands
           result = first.accept(self)
@@ -408,14 +405,11 @@ class Ximapd
 
       def visit_or_query(query)
         begin
-          cond = @query_compiling_visitor.visit(query)
-          cond.set_order("uid NUMA")
-          result = @index.search(cond, 0)
-          return result.to_a
+          return visit_default(query)
         rescue QueryCompileError
           result = []
-          for operand in query.operands
-            result |= operand.accept(self)
+          for q in query.operands
+            result |= q.accept(self)
           end
           return result
         end
@@ -423,10 +417,7 @@ class Ximapd
 
       def visit_diff_query(query)
         begin
-          cond = @query_compiling_visitor.visit(query)
-          cond.set_order("uid NUMA")
-          result = @index.search(cond, 0)
-          return result.to_a
+          return visit_default(query)
         rescue QueryCompileError
           first, *rest = query.operands
           result = first.accept(self)
@@ -444,28 +435,6 @@ class Ximapd
         cond.set_order("uid NUMA")
         result = @index.search(cond, 0)
         return result.to_a
-      end
-
-      def search(query)
-        cond = @query_compiling_visitor.visit(query)
-        cond.set_order("uid NUMA")
-        result = @index.search(cond, 0)
-        return result.to_a
-      end
-
-      def compile_property_query(query, operator)
-        @cond.add_attr("#{query.name} #{operator} #{query.value}")
-        return ""
-      end
-
-      def compile_composite_query(query, operator)
-        return query.operands.collect { |operand|
-          operand.accept(self)
-        }.reject { |s| s.empty? }.join(" " + operator + " ")
-      end
-
-      def numeric_or_date_property?(property)
-        return NUMERIC_OR_DATE_PROPERTIES.include?(property)
       end
     end
 
@@ -608,259 +577,5 @@ class Ximapd
     end
 
     class QueryCompileError < StandardError; end
-
-    class AbstractSearchKey
-      def to_query
-        nil
-      end
-
-      def exec
-        raise
-      end
-    end
-
-    class NullSearchKey < AbstractSearchKey
-      def to_query
-        {"main" => "", "sub" => []}
-      end
-    end
-
-    class BodySearchKey < AbstractSearchKey
-      def initialize(value)
-        @value = value
-      end
-
-      def to_query
-        {"main" => @value, "sub" => []}
-      end
-    end
-
-    class HeaderSearchKey < AbstractSearchKey
-      def initialize(name, value)
-        @name = name
-        @value = value
-      end
-
-      def to_query
-        query = nil
-        case @name
-        when "subject"
-          return {"main" => "", 
-                  "sub" => [format("@title STRINC %s", @value)]}
-        when "from", "to", "cc", "bcc"
-          return {"main" => "",
-                   "sub" => [format("%s STRINC %s", @name, @value)]}
-        when "x-ml-name", "x-mail-count"
-          return {"main" => "",
-                   "sub" => [format("%s STREQ %s", @name, @value)]}
-        else
-          return {"main" => "", "sub" => []}
-        end
-      end
-    end
-
-    class FlagSearchKey < AbstractSearchKey
-      def initialize(mail_store, flag)
-        @mail_store = mail_store
-        @flag = "<" + flag + ">"
-      end
-
-      def to_query
-        return {"main" => "", "sub" => [format("flags STRINC %s", @flag)]}
-      end
-    end
-
-    class NoFlagSearchKey < FlagSearchKey
-      def to_query
-        return {"main" => "", "sub" => [format("flags !STRINC %s", @flag)]}
-      end
-    end
-
-    class KeywordSearchKey < FlagSearchKey
-      def to_query
-        return {"main" => "", "sub" => [format("flags STRINC %s", @flag)]}
-      end
-    end
-
-    class NoKeywordSearchKey < FlagSearchKey
-      def to_query
-        return {"main" => "", "sub" => [format("flags !STRINC %s", @flag)]}
-      end
-    end
-
-    class SequenceNumberSearchKey < AbstractSearchKey
-      def initialize(sequence_set)
-        @sequence_set = sequence_set
-      end
-
-      def to_query
-        raise NotImplementedError.new("sequence number search is not implemented")
-      end
-      def exec(index, mailbox, result)
-        raise NotImplementedError.new("sequence number search is not implemented")
-      end
-    end
-
-    class UidSearchKey < AbstractSearchKey
-      def initialize(sequence_set)
-        @sequence_set = sequence_set
-      end
-
-      def exec(index, mailbox, result)
-        if @sequence_set.empty?
-          return result
-        end
-        sr = []
-        @sequence_set.collect { |i|
-          sq = []
-          case i
-          when Range
-            if i.last == -1
-              sq << format("uid NUMGE %d", i.first)
-            else
-              sq << format("uid NUMGE %d", i.first)
-              sq << format("uid NUMLE %d", i.last)
-            end
-          else
-            sq << format("uid NUMEQ %d", i)
-          end
-          sr |= index.query(mailbox, {"main" => "", "sub" => sq})
-        }
-        return result & sr
-      end
-    end
-
-    class NotSearchKey < AbstractSearchKey
-      def initialize(key)
-        @key = key
-      end
-
-      def exec(index, mailbox, result)
-        result - index.query_by_keys(mailbox, [@key])
-      end
-    end
-
-    class DateSearchKey < NullSearchKey
-      def to_query
-        return {"main" => format("%s %s %s", field, op, @date.strftime()),
-                "sub" => nil}
-      end
-
-      private
-
-      def initialize(date_str)
-        @date = parse_date(date_str)
-        @date.gmtime
-      end
-
-      MONTH = {
-        "Jan" =>  1, "Feb" =>  2, "Mar" =>  3, "Apr" =>  4,
-        "May" =>  5, "Jun" =>  6, "Jul" =>  7, "Aug" =>  8,
-        "Sep" =>  9, "Oct" => 10, "Nov" => 11, "Dec" => 12,
-      }
-      def parse_date(date_str)
-        if date_str.match(/\A"?(\d{1,2})-(#{MONTH.keys.join("|")})-(\d{4})"?\z/o)
-          Time.local($3.to_i, MONTH[$2], $1.to_i)
-        else
-          raise "invlid date string #{date_str}"
-        end
-      end
-
-      def date_str(date)
-        date.strftime("%Y-%m-%dT%H:%M:%S")
-      end
-    end
-
-    class BeforeSearchKey < DateSearchKey
-      def to_query
-        return {"main" => "",
-                "sub" => [format("@cdate NUMLT %s", date_str(@date))]}
-      end
-    end
-
-    class OnSearchKey < DateSearchKey
-      def to_query
-        date_end = @date + 86400
-        return {"main" => "",
-                "sub" => [format("@cdate NUMGE %s", date_str(@date)),
-                          format("@cdate NUMLT %s", date_str(date_end))]}
-      end
-    end
-
-    class SinceSearchKey < DateSearchKey
-      def to_query
-        date = @date + 86400
-        return {"main" => "",
-                "sub" => [format("@cdate NUMGE %s", date_str(date))]}
-      end
-    end
-
-    class SentbeforeSearchKey < DateSearchKey
-      def to_query
-        return {"main" => "",
-                "sub" => [format("date NUMLT %s", date_str(@date))]}
-      end
-    end
-
-    class SentonSearchKey < DateSearchKey
-      def to_query
-        date_end = @date + 86400
-        return {"main" => "",
-                "sub" => [format("date NUMGE %s", date_str(@date)),
-                          format("date NUMLT %s", date_str(date_end))]}
-      end
-    end
-
-    class SentsinceSearchKey < DateSearchKey
-      def to_query
-        date = @date + 86400
-        return {"main" => "",
-                "sub" => [format("date NUMGE %s", date_str(date))]}
-      end
-    end
-
-    class LargerSearchKey < NullSearchKey
-      def initialize(size_str)
-        @size_str = size_str
-      end
-
-      def to_query
-        return {"main" => "", "sub" => [format("@size NUMGT %s", @size_str)]}
-      end
-    end
-
-    class SmallerSearchKey < LargerSearchKey
-      def to_query
-        return {"main" => "", "sub" => [format("@size NUMLT %s", @size_str)]}
-      end
-    end
-
-    class OrSearchKey < AbstractSearchKey
-      def initialize(key1, key2)
-        @keys = [key1, key2]
-      end
-
-      def exec(index, mailbox, result)
-        sresult = []
-        @keys.each do |key|
-          sresult |= index.query_by_keys(mailbox, [key])
-        end
-
-        result & sresult
-      end
-    end
-
-    class GroupSearchKey < AbstractSearchKey
-      def initialize(keys)
-        @keys = keys
-      end
-
-      def exec(index, mailbox, result)
-        result & index.query_by_keys(mailbox, @keys)
-      end
-    end
-
-    class EndGroupSearchKey
-    end
   end
 end
