@@ -99,43 +99,11 @@ end
 
 class Ximapd
   class HyperEstraierBackend < Backend
-    module QueryFormat
-      module_function
-
-      def quote_query(s)
-        format('"%s"', query.gsub(/[\\"]/n, "\\\\\\&"))
-      end
-    end
-
     private
-
-    extend QueryFormat
-    class << self
-      def make_list_query(list_name)
-        {"main" => "",
-          "sub" => [format("x-ml-name STREQ %s", list_name)]}
-      end
-      public :make_list_query
-
-      def make_default_query(mailbox_id)
-        {"main" => "",
-          "sub" => [format("mailbox-id NUMEQ %d", mailbox_id)]}
-      end
-      public :make_default_query
-
-      def make_query(mailbox_name)
-        sub_query = []
-        query = mailbox_name.gsub(/\(([\)]*)\)/) {
-          sub_query << $1.strip
-          " "
-        }
-        {"main" => query.strip, "sub" => sub_query}
-      end
-      public :make_query
-    end
 
     def initialize(mail_store)
       super(mail_store)
+      @query_compiling_visitor = QueryCompilingVisitor.new
     end
 
     def setup
@@ -181,31 +149,18 @@ class Ximapd
         raise
       end
     end
-    private :open_index
 
     def close_index
       @index.close
+      @index = nil
     end
-    private :close_index
 
     def register(mail_data, filename)
       doc = HyperEstraier::Document.new
       doc.add_attr("@uri", "file://" + File.expand_path(filename))
       doc.add_text(mail_data.text)
       mail_data.properties.each_pair do |name, value|
-        case name
-        when "size"
-          doc.add_attr("@size", value.to_s)
-        when "internal-date"
-          doc.add_attr("@cdate", value.to_s)
-          doc.add_attr("@mdate", value.to_s)
-        when "subject"
-          doc.add_attr("@title", value.to_s)
-        when "date"
-          doc.add_attr(name, value.to_s)
-        else
-          doc.add_attr(name, value.to_s)
-        end
+        doc.add_attr(name, value.to_s)
       end
       doc.add_attr("flags", mail_data.flags)
       @index.put_doc(doc)
@@ -227,15 +182,14 @@ class Ximapd
     def get_doc(uid, item_id, item_obj)
       get_doc_internal(@index, uid, item_id, item_obj)
     end
+
     def get_doc_internal(index, uid, item_id, item_obj)
       if item_obj
         doc = item_obj
       elsif item_id
         doc = index.get_doc(item_id, 0)
       elsif uid
-        cond = HyperEstraier::Condition.new
-        cond.add_attr("uid NUMEQ #{uid}")
-        doc_id = index.search(cond, 0)[0]
+        doc_id = query(PropertyEqQuery.new("uid", uid))[0]
         doc = index.get_doc(doc_id, 0)
       else
         doc = nil
@@ -248,19 +202,23 @@ class Ximapd
     end
 
     def get_flags(uid, item_id, item_obj)
-      doc = get_doc(uid, item_id, item_obj)
-      begin
-        doc.attr("flags").scan(/[^<>\s]+/).join(" ")
-      rescue ArgumentError
-        ""
+      open do
+        doc = get_doc(uid, item_id, item_obj)
+        begin
+          doc.attr("flags").scan(/[^<>\s]+/).join(" ")
+        rescue ArgumentError
+          ""
+        end
       end
     end
     public :get_flags
 
     def set_flags(uid, item_id, item_obj, flags)
-      doc = get_doc(uid, item_id, item_obj)
-      doc.add_attr("flags", "<" + flags.strip.split(/\s+/).join("><") + ">")
-      @index.edit_doc(doc)
+      open do
+        doc = get_doc(uid, item_id, item_obj)
+        doc.add_attr("flags", "<" + flags.strip.split(/\s+/).join("><") + ">")
+        @index.edit_doc(doc)
+      end
     end
     public :set_flags
 
@@ -275,7 +233,7 @@ class Ximapd
     public :delete
 
     def fetch(mailbox, sequence_set)
-      result = query(mailbox, {"main" => "", "sub" => []})
+      result = query(mailbox.query)
       mails = []
       sequence_set.each do |seq_number|
         case seq_number
@@ -287,7 +245,7 @@ class Ximapd
             doc = get_doc(nil, item_id, nil)
             mail = IndexedMail.new(@config, mailbox, i,
                                    doc.attr("uid").to_i, doc.id,
-                                   doc.attr("@mdate"), doc)
+                                   doc.attr("internal-date"), doc)
             mails.push(mail)
           end
         else
@@ -299,7 +257,7 @@ class Ximapd
           doc = get_doc(nil, doc_id, nil)
           mail = IndexedMail.new(@config, mailbox, seq_number,
                                  doc.attr("uid").to_i, doc.id,
-                                 doc.attr("@mdate"), doc)
+                                 doc.attr("internal-date"), doc)
           mails.push(mail)
         end
       end
@@ -311,6 +269,7 @@ class Ximapd
       if sequence_set.empty?
         return []
       end
+      mailbox_query = mailbox.query
 
       mails = []
       result = []
@@ -319,22 +278,22 @@ class Ximapd
         case i
         when Range
           if i.last == -1
-            sq << format("uid NUMGE %d", i.first)
+            q = mailbox_query & PropertyGeQuery.new("uid", i.first)
           else
-            sq << format("uid NUMGE %d", i.first)
-            sq << format("uid NUMLE %d", i.last)
+            q = mailbox_query &
+              PropertyGeQuery.new("uid", i.first) &
+              PropertyLeQuery.new("uid", i.last)
           end
         else
-          sq << format("uid NUMEQ %d", i)
+          q = mailbox_query & PropertyEqQuery.new("uid", i)
         end
-        result |= query(mailbox, {"main" => "", "sub" => sq})
+        result += query(q)
       end
-
       result.each do |item_id|
         doc = get_doc(nil, item_id, nil)
         uid = doc.attr("uid").to_i
         mails << IndexedMail.new(@config, mailbox, uid, uid,
-                                 item_id, doc.attr("@mdate"),
+                                 item_id, doc.attr("internal-date"),
                                  doc)
       end
 
@@ -345,88 +304,33 @@ class Ximapd
     def mailbox_status(mailbox)
       mailbox_status = MailboxStatus.new
 
-      cond = HyperEstraier::Condition.new()
-      if mailbox["query"]["main"] && !mailbox["query"]["main"].empty?
-        cond.set_phrase(mailbox["query"]["main"])
-      end
-      if mailbox["query"]["sub"]
-        mailbox["query"]["sub"].each { |eq| cond.add_attr(eq) }
-      end
-      result = @index.search(cond, 0)
+      mailbox_query = mailbox.query
+      result = query(mailbox_query)
       mailbox_status.messages = result.length
       mailbox_status.unseen = result.select { |item_id|
         !/\\Seen\b/ni.match(get_flags(nil, item_id, nil))
       }.length
-      cond.add_attr("uid NUMGT %d"% mailbox["last_peeked_uid"])
-      result = @index.search(cond, 0)
+      result = query(mailbox_query &
+                     PropertyGtQuery.new("uid", mailbox["last_peeked_uid"]))
       mailbox_status.recent = result.length
       mailbox_status
     end
     public :mailbox_status
 
-    def query(mailbox, query)
-      cond = HyperEstraier::Condition.new()
+    def query(query)
+      cond = @query_compiling_visitor.visit(query)
       cond.set_order("uid NUMA")
-
-      if mailbox["query"]["main"].empty?
-        q = query["main"]
-      elsif query["main"].empty?
-        q = mailbox["query"]["main"]
-      else
-        q = query["main"] + " " + mailbox["query"]["main"]
-      end
-      if q && /\S/ =~ q
-        cond.set_phrase(q)
-      end
-
-      if query["sub"]
-        query["sub"].each { |eq| cond.add_attr(eq) }
-      end
-      if mailbox["query"]["sub"]
-        mailbox["query"]["sub"].each { |eq| cond.add_attr(eq) }
-      end
-      cond.set_order("uid NUMA")
-      cond.set_options(HyperEstraier::Condition::SIMPLE)
 
       result = @index.search(cond, 0)
-      result.to_a
+      return result.to_a
     end
     public :query
 
-    def uid_search(mailbox, query)
-      result = query(mailbox, query)
+    def uid_search(query)
+      result = query(query)
       result.collect { |item_id| get_uid(item_id) }
     end
     public :uid_search
-
-    def query_by_keys(mailbox, keys)
-      rest_keys = []
-      q = {"main" => "", "sub" => []}
-      for key in keys
-        if kq = key.to_query
-          unless kq["main"].empty?
-            q["main"] << " "
-            q["main"] << kq["main"]
-          end
-          q["sub"] |= kq["sub"]
-        else
-          rest_keys << key
-        end
-      end
-
-      result = query(mailbox, q)
-      for key in rest_keys
-        result = key.exec(self, mailbox, result)
-      end
-
-      result
-    end
-    public :query_by_keys
-
-    def uid_search_by_keys(mailbox, keys)
-      query_by_keys(mailbox, keys).collect { |item_id| get_uid(item_id) }
-    end
-    public :uid_search_by_keys
 
     def rebuild_index(*args)
       if args.empty?
@@ -476,19 +380,91 @@ class Ximapd
     public :get_old_flags
 
     def try_query(query)
-      cond = HyperEstraier::Condition.new() 
-      cond.set_max(1)
-      cond.set_phrase(query["main"])       
-      if query["sub"]
-        query["sub"].each { |eq| cond.add_attr(eq) }
-      end 
-      r = @index.search(cond, 0)
-      unless r.kind_of?(HyperEstraier::IntVector)
-        raise "search failed for #{query["main"].dump} (#{query["sub"].collect { |eq| eq.dump }.join(', ')})"
-      end   
-      true
+      query(Query.parse(query))
     end
     public :try_query
+
+    class QueryCompilingVisitor < QueryVisitor
+      def initialize
+        @cond = nil
+      end
+
+      def visit(query)
+        @cond = HyperEstraier::Condition.new
+        phrase = query.accept(self)
+        unless phrase.empty?
+          @cond.set_phrase(phrase)
+        end
+        return @cond
+      end
+
+      def visit_term_query(query)
+        return query.value
+      end
+
+      def visit_property_pe_query(query)
+        return compile_property_query(query, "STRINC")
+      end
+
+      def visit_property_eq_query(query)
+        return compile_property_query(query, "NUMEQ")
+      end
+
+      def visit_property_lt_query(query)
+        return compile_property_query(query, "NUMLT")
+      end
+
+      def visit_property_gt_query(query)
+        return compile_property_query(query, "NUMGT")
+      end
+
+      def visit_property_le_query(query)
+        return compile_property_query(query, "NUMLE")
+      end
+
+      def visit_property_ge_query(query)
+        return compile_property_query(query, "NUMGE")
+      end
+
+      def visit_flag_query(query)
+        @cond.add_attr("flag STRINC #{query.flag}")
+        return ""
+      end
+
+      def visit_no_flag_query(query)
+        @cond.add_attr("flag !STRINC #{query.flag}")
+        return ""
+      end
+
+      def visit_and_query(query)
+        return compile_composite_query(query, "AND")
+      end
+
+      def visit_or_query(query)
+        return compile_composite_query(query, "OR")
+      end
+
+      def visit_diff_query(query)
+        return compile_composite_query(query, "ANDNOT")
+      end
+
+      private
+
+      def visit_default(query)
+        return ""
+      end
+
+      def compile_property_query(query, operator)
+        @cond.add_attr("#{query.name} #{operator} #{query.value}")
+        return ""
+      end
+
+      def compile_composite_query(query, operator)
+        return query.operands.collect { |operand|
+          operand.accept(self)
+        }.reject { |s| s.empty? }.join(" " + operator + " ")
+      end
+    end
 
     class AbstractSearchKey
       def to_query
