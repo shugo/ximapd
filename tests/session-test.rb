@@ -564,14 +564,7 @@ EOF
     assert_equal("* LIST (\\Noselect) \"/\" \"static\"\r\n", sock.output.gets)
     assert_equal("A007 OK LIST completed\r\n", sock.output.gets)
     assert_equal("A008 OK CREATE completed\r\n", sock.output.gets)
-    case @config["backend"]
-    when "Rast"
-      assert_equal("A009 NO invalid query\r\n", sock.output.gets)
-    when "HyperEstraier"
-      assert_equal("A009 OK CREATE completed\r\n", sock.output.gets)
-    else
-      raise
-    end
+    assert_equal("A009 NO invalid query\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
     mail_store = Ximapd::MailStore.new(@config)
     ruby = mail_store.mailboxes["queries/ruby"]

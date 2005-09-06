@@ -385,6 +385,16 @@ class Ximapd
     public :try_query
 
     class QueryCompilingVisitor < QueryVisitor
+      NUMERIC_OR_DATE_PROPERTIES = [
+        "uid",
+        "size",
+        "internal-date",
+        "flags",
+        "mailbox-id",
+        "date",
+        "x-mail-count"
+      ]
+
       def initialize
         @cond = nil
       end
@@ -407,22 +417,38 @@ class Ximapd
       end
 
       def visit_property_eq_query(query)
-        return compile_property_query(query, "NUMEQ")
+        if numeric_or_date_property?(query.name)
+          return compile_property_query(query, "NUMEQ")
+        else
+          return compile_property_query(query, "STREQ")
+        end
       end
 
       def visit_property_lt_query(query)
+        unless numeric_or_date_property?(query.name)
+          raise InvalidQueryError.new("#{query.name} is not a numeric property")
+        end
         return compile_property_query(query, "NUMLT")
       end
 
       def visit_property_gt_query(query)
+        unless numeric_or_date_property?(query.name)
+          raise InvalidQueryError.new("#{query.name} is not a numeric property")
+        end
         return compile_property_query(query, "NUMGT")
       end
 
       def visit_property_le_query(query)
+        unless numeric_or_date_property?(query.name)
+          raise InvalidQueryError.new("#{query.name} is not a numeric property")
+        end
         return compile_property_query(query, "NUMLE")
       end
 
       def visit_property_ge_query(query)
+        unless numeric_or_date_property?(query.name)
+          raise InvalidQueryError.new("#{query.name} is not a numeric property")
+        end
         return compile_property_query(query, "NUMGE")
       end
 
@@ -463,6 +489,10 @@ class Ximapd
         return query.operands.collect { |operand|
           operand.accept(self)
         }.reject { |s| s.empty? }.join(" " + operator + " ")
+      end
+
+      def numeric_or_date_property?(property)
+        return NUMERIC_OR_DATE_PROPERTIES.include?(property)
       end
     end
 
