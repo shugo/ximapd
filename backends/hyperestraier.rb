@@ -101,11 +101,6 @@ class Ximapd
   class HyperEstraierBackend < Backend
     private
 
-    def initialize(mail_store)
-      super(mail_store)
-      @query_compiling_visitor = QueryCompilingVisitor.new
-    end
-
     def setup
       unless File.exist?(@index_path)
         db = HyperEstraier::DatabaseWrapper.new()
@@ -162,7 +157,7 @@ class Ximapd
       mail_data.properties.each_pair do |name, value|
         doc.add_attr(name, value.to_s)
       end
-      doc.add_attr("flags", mail_data.flags)
+      set_flags_internal(doc, mail_data.flags)
       @index.put_doc(doc)
     end
     public :register
@@ -216,11 +211,15 @@ class Ximapd
     def set_flags(uid, item_id, item_obj, flags)
       open do
         doc = get_doc(uid, item_id, item_obj)
-        doc.add_attr("flags", "<" + flags.strip.split(/\s+/).join("><") + ">")
+        set_flags_internal(doc, flags)
         @index.edit_doc(doc)
       end
     end
     public :set_flags
+
+    def set_flags_internal(doc, flags)
+      doc.add_attr("flags", "<" + flags.strip.split(/\s+/).join("><") + ">")
+    end
 
     def delete_flags(uid, item_id, item_obj)
       set_flags(uid, item_id, item_obj, "")
@@ -318,11 +317,8 @@ class Ximapd
     public :mailbox_status
 
     def query(query)
-      cond = @query_compiling_visitor.visit(query)
-      cond.set_order("uid NUMA")
-
-      result = @index.search(cond, 0)
-      return result.to_a
+      visitor = QueryExecutingVisitor.new(@index)
+      return visitor.visit(query)
     end
     public :query
 
@@ -384,6 +380,95 @@ class Ximapd
     end
     public :try_query
 
+    class QueryExecutingVisitor < QueryVisitor
+      def initialize(index)
+        @index = index
+        @query_compiling_visitor = QueryCompilingVisitor.new
+      end
+
+      def visit(query)
+        return query.accept(self)
+      end
+
+      def visit_and_query(query)
+        begin
+          cond = @query_compiling_visitor.visit(query)
+          cond.set_order("uid NUMA")
+          result = @index.search(cond, 0)
+          return result.to_a
+        rescue QueryCompileError
+          first, *rest = query.operands
+          result = first.accept(self)
+          for q in rest
+            result &= q.accept(self)
+          end
+          return result
+        end
+      end
+
+      def visit_or_query(query)
+        begin
+          cond = @query_compiling_visitor.visit(query)
+          cond.set_order("uid NUMA")
+          result = @index.search(cond, 0)
+          return result.to_a
+        rescue QueryCompileError
+          result = []
+          for operand in query.operands
+            result |= operand.accept(self)
+          end
+          return result
+        end
+      end
+
+      def visit_diff_query(query)
+        begin
+          cond = @query_compiling_visitor.visit(query)
+          cond.set_order("uid NUMA")
+          result = @index.search(cond, 0)
+          return result.to_a
+        rescue QueryCompileError
+          first, *rest = query.operands
+          result = first.accept(self)
+          for q in rest
+            result -= q.accept(self)
+          end
+          return result
+        end
+      end
+
+      private
+
+      def visit_default(query)
+        cond = @query_compiling_visitor.visit(query)
+        cond.set_order("uid NUMA")
+        result = @index.search(cond, 0)
+        return result.to_a
+      end
+
+      def search(query)
+        cond = @query_compiling_visitor.visit(query)
+        cond.set_order("uid NUMA")
+        result = @index.search(cond, 0)
+        return result.to_a
+      end
+
+      def compile_property_query(query, operator)
+        @cond.add_attr("#{query.name} #{operator} #{query.value}")
+        return ""
+      end
+
+      def compile_composite_query(query, operator)
+        return query.operands.collect { |operand|
+          operand.accept(self)
+        }.reject { |s| s.empty? }.join(" " + operator + " ")
+      end
+
+      def numeric_or_date_property?(property)
+        return NUMERIC_OR_DATE_PROPERTIES.include?(property)
+      end
+    end
+
     class QueryCompilingVisitor < QueryVisitor
       NUMERIC_OR_DATE_PROPERTIES = [
         "uid",
@@ -397,6 +482,7 @@ class Ximapd
 
       def initialize
         @cond = nil
+        @invert = false
       end
 
       def visit(query)
@@ -453,40 +539,65 @@ class Ximapd
       end
 
       def visit_flag_query(query)
-        @cond.add_attr("flag STRINC #{query.flag}")
+        prefix = @invert ? "!" : ""
+        @cond.add_attr("flags #{prefix}STRINC <#{query.flag}>")
         return ""
       end
 
       def visit_no_flag_query(query)
-        @cond.add_attr("flag !STRINC #{query.flag}")
+        prefix = @invert ? "" : "!"
+        @cond.add_attr("flags #{prefix}STRINC <#{query.flag}>")
         return ""
       end
 
       def visit_and_query(query)
-        return compile_composite_query(query, "AND")
+        if query.operands.any? { |operand|
+          operand.composite? && !operand.is_a?(AndQuery)
+        }
+          raise QueryCompileError.new("operands must be non-composite or AND")
+        end
+        return apply_operator("AND", query.operands)
       end
 
       def visit_or_query(query)
-        return compile_composite_query(query, "OR")
+        if query.operands.any? { |operand| !operand.is_a?(TermQuery) }
+          raise QueryCompileError.new("operands must be TERM")
+        end
+        return apply_operator("OR", query.operands)
       end
 
       def visit_diff_query(query)
-        return compile_composite_query(query, "ANDNOT")
+        first, *rest = query.operands
+        if rest.any? { |operand| operand.composite? }
+          raise QueryCompileError.new("operands must be non-composite")
+        end
+        s = first.accept(self)
+        if s.empty?
+          raise QueryCompileError.new("first operand must not be empty")
+        end
+        @invert = true
+        begin
+          s2 = apply_operator("ANDNOT", rest)
+        ensure
+          @invert = false
+        end
+        if s2.empty?
+          return s
+        else
+          return s + " ANDNOT " + s2
+        end
       end
 
       private
 
-      def visit_default(query)
-        return ""
-      end
-
       def compile_property_query(query, operator)
-        @cond.add_attr("#{query.name} #{operator} #{query.value}")
+        prefix = @invert ? "!" : ""
+        @cond.add_attr("#{query.name} #{prefix}#{operator} #{query.value}")
         return ""
       end
 
-      def compile_composite_query(query, operator)
-        return query.operands.collect { |operand|
+      def apply_operator(operator, operands)
+        return operands.collect { |operand|
           operand.accept(self)
         }.reject { |s| s.empty? }.join(" " + operator + " ")
       end
@@ -495,6 +606,8 @@ class Ximapd
         return NUMERIC_OR_DATE_PROPERTIES.include?(property)
       end
     end
+
+    class QueryCompileError < StandardError; end
 
     class AbstractSearchKey
       def to_query
