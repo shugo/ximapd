@@ -47,7 +47,7 @@ class XimapdSessionTest < Test::Unit::TestCase
     super
   end
 
-  def test_capability
+  def test_capability__insecure
     sock = SpoofSocket.new(<<EOF)
 A001 CAPABILITY\r
 EOF
@@ -55,6 +55,20 @@ EOF
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_match("* CAPABILITY IMAP4REV1 IDLE LOGINDISABLED AUTH=CRAM-MD5\r\n",
+                 sock.output.gets)
+    assert_equal("A001 OK CAPABILITY completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+  end
+
+  def test_capability__secure
+    sock = SpoofSocket.new(<<EOF)
+A001 CAPABILITY\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.secure = true
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_match("* CAPABILITY IMAP4REV1 IDLE AUTH=CRAM-MD5\r\n",
                  sock.output.gets)
     assert_equal("A001 OK CAPABILITY completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
@@ -98,11 +112,37 @@ EOF
     assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
   end
 
-  def test_login
+  def test_login__insecure
     sock = SpoofSocket.new(<<EOF)
 A001 LOGIN foo bar\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("A001 NO LOGIN failed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+    assert_equal(Ximapd::NON_AUTHENTICATED_STATE, session.state)
+  end
+
+  def test_login__success
+    sock = SpoofSocket.new(<<EOF)
+A001 LOGIN foo bar\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.secure = true
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("A001 OK LOGIN completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+    assert_equal(Ximapd::AUTHENTICATED_STATE, session.state)
+  end
+
+  def test_login__fail
+    sock = SpoofSocket.new(<<EOF)
+A001 LOGIN foo baz\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.secure = true
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("A001 NO LOGIN failed\r\n", sock.output.gets)

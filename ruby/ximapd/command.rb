@@ -81,7 +81,11 @@ class Ximapd
 
   class CapabilityCommand < Command
     def exec
-      capa = "CAPABILITY IMAP4REV1 IDLE LOGINDISABLED AUTH=CRAM-MD5"
+      capa = "CAPABILITY IMAP4REV1 IDLE"
+      unless @session.secure?
+        capa += " LOGINDISABLED"
+      end
+      capa += " AUTH=CRAM-MD5"
       if @session.config["starttls"]
         capa += " STARTTLS"
       end
@@ -184,7 +188,13 @@ class Ximapd
     end
 
     def exec
-      @session.send_tagged_no(@tag, "LOGIN failed")
+      if @session.secure? &&
+        @userid == @config["user"] && @password == @config["password"]
+        @session.login
+        send_tagged_ok
+      else
+        @session.send_tagged_no(@tag, "LOGIN failed")
+      end
     end
   end
 
