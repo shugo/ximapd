@@ -7,8 +7,8 @@ ximapd is an eXperimental IMAP Daemon.
 == Requirements
 
 * Ruby 1.8.2 or later
-* Rast 0.0.1 or later
 * RubyMail 0.17 or later
+* Rast 0.0.1 or later or Hyper Estraier 0.5.6 or later
 
 == Subversion Repository
 

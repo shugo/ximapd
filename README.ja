@@ -7,8 +7,8 @@ ximapdは実験的なIMAPデーモンです。
 == 動作環境
 
 * Ruby 1.8.2 以降
-* Rast 0.0.1 以降
 * RubyMail 0.17 以降
+* Rast 0.0.1 以降 あるいは Hyper Estraier 0.5.6 以降
 
 == Subversionレポジトリ
 
