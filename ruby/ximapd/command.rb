@@ -805,7 +805,7 @@ class Ximapd
     end
   end
 
-  class UidCopyCommand < Command
+  class AbstractCopyCommand < Command
     def initialize(sequence_set, mailbox_name)
       @sequence_set = sequence_set
       @mailbox_name = mailbox_name
@@ -816,7 +816,7 @@ class Ximapd
       dest_mailbox = nil
       @session.synchronize do
         mailbox = @session.get_current_mailbox
-        mails = mailbox.uid_fetch(@sequence_set)
+        mails = fetch_mails(mailbox, @sequence_set)
         @mail_store.mailbox_db.transaction(true) do
           dest_mailbox = @mail_store.get_mailbox(@mailbox_name)
         end
@@ -833,6 +833,28 @@ class Ximapd
         end
       end
       send_tagged_ok
+    end
+
+    private
+    
+    def fetch_mails(mailbox, sequence_set)
+      raise SubclassResponsibilityError.new
+    end
+  end
+
+  class CopyCommand < AbstractCopyCommand
+    private
+
+    def fetch_mails(mailbox, sequence_set)
+      return mailbox.fetch(sequence_set)
+    end
+  end
+
+  class UidCopyCommand < AbstractCopyCommand
+    private
+
+    def fetch_mails(mailbox, sequence_set)
+      return mailbox.uid_fetch(sequence_set)
     end
   end
 
@@ -953,6 +975,7 @@ class Ximapd
       "UID FETCH",
       "STORE",
       "UID STORE",
+      "COPY",
       "UID COPY"
     ]
     LOGOUT_STATE_COMMANDS = []
@@ -1674,12 +1697,20 @@ class Ximapd
       end
     end
 
+    def copy
+      return parse_copy(CopyCommand)
+    end
+
     def uid_copy
+      return parse_copy(UidCopyCommand)
+    end
+
+    def parse_copy(command_class)
       match(T_SPACE)
       seq_set = sequence_set
       match(T_SPACE)
       mailbox_name = mailbox
-      return UidCopyCommand.new(seq_set, mailbox_name)
+      return command_class.new(seq_set, mailbox_name)
     end
 
     def astring

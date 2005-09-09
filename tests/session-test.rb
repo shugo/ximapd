@@ -2355,6 +2355,107 @@ EOF
     assert_equal(nil, sock.output.gets)
   end
 
+  def test_copy
+    mail_store = Ximapd::MailStore.new(@config)
+    mail_store.uid_seq.current = 10
+    mail1 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: foo@ruby-lang.org
+Subject: hello
+Date: Wed, 30 Mar 2005 17:34:46 +0900
+
+Hello, Foo
+EOF
+    uid1 = mail_store.import_mail(mail1)
+    mail2 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+To: bar@ruby-lang.org
+Subject: hello
+Date: Sat, 09 Apr 2005 00:54:59 +0900
+Content-Type: text/plain; charset=US-ASCII
+
+Hello, Bar
+EOF
+    uid2 = mail_store.import_mail(mail2)
+    mail_store.create_mailbox("Trash")
+    mail_store.close
+
+    sock = SpoofSocket.new(<<EOF)
+A001 COPY 1:2 Trash\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("A001 BAD Command unrecognized/login please\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 COPY 1:2 Trash\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("A002 BAD Command unrecognized\r\n",
+                 sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+
+    sock = SpoofSocket.new(<<EOF)
+A001 AUTHENTICATE CRAM-MD5\r
+Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
+A002 SELECT INBOX\r
+A003 COPY 1:2 Trash\r
+A004 SELECT Trash\r
+A005 FETCH 1:* (UID BODY[] FLAGS)\r
+EOF
+    session = Ximapd::Session.new(@config, sock, @mail_store)
+    session.start
+    assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
+    assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
+    assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 1}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A002 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("A003 OK COPY completed\r\n", sock.output.gets)
+    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
+    assert_equal("* OK [UIDNEXT #{uid2 + 3}] Predicted next UID\r\n",
+                 sock.output.gets)
+    assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+                 sock.output.gets)
+    assert_equal("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited\r\n",
+                 sock.output.gets)
+    assert_equal("A004 OK [READ-WRITE] SELECT completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (UID #{uid2 + 1} BODY[] {#{mail1.length}}\r\n",
+                 sock.output.gets)
+    assert_equal(mail1, sock.output.read(mail1.length))
+    # TODO: remove duplicate FLAGS
+    # assert_equal(" FLAGS (\\Seen))\r\n", sock.output.gets)
+    assert_equal(" FLAGS (\\Seen) FLAGS (\\Recent \\Seen))\r\n",
+                 sock.output.gets)
+    assert_equal("* 2 FETCH (UID #{uid2 + 2} BODY[] {#{mail2.length}}\r\n",
+                 sock.output.gets)
+    assert_equal(mail2, sock.output.read(mail2.length))
+    # TODO: remove duplicate FLAGS
+    # assert_equal(" FLAGS (\\Seen))\r\n", sock.output.gets)
+    assert_equal(" FLAGS (\\Seen) FLAGS (\\Recent \\Seen))\r\n",
+                 sock.output.gets)
+    assert_equal("A005 OK FETCH completed\r\n", sock.output.gets)
+    assert_equal(nil, sock.output.gets)
+  end
+
   def test_uid_copy
     mail_store = Ximapd::MailStore.new(@config)
     mail1 = <<EOF.gsub(/\n/, "\r\n")
