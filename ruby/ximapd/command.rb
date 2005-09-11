@@ -101,6 +101,7 @@ class Ximapd
         send_tagged_ok
       rescue => e
         @session.send_tagged_bad(@tag, e.message)
+        return
       end
       begin
         @session.starttls_accept

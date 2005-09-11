@@ -121,8 +121,7 @@ class Ximapd
     @config = {}
     @mail_store = nil
     @logger = nil
-    @threads = []
-    @servers = []
+    @server_threads = []
     @sessions = {}
     @option_parser = OptionParser.new { |opts|
       opts.banner = "usage: ximapd action [options]"
@@ -142,7 +141,6 @@ class Ximapd
       parse_options(@args)
       @config["logger"] = @logger
       @max_clients = @config["max_clients"] || MAX_CLIENTS
-      @threads = []
       @sessions = {}
       init_profiler if @config["profile"]
       send(@config["action"])
@@ -155,6 +153,7 @@ class Ximapd
       unless e.kind_of?(StandardError)
         raise
       end
+      exit(1)
     end
   end
 
@@ -269,27 +268,66 @@ class Ximapd
   end
 
   def start
-    @logger.info("started")
+    if server_running?
+      raise "already running"
+    end
     daemon unless @config["debug"]
+    open_pid_file("w") do |f|
+      f.puts(Process.pid)
+    end
     Signal.trap("TERM", &method(:terminate))
     Signal.trap("INT", &method(:terminate))
-    @mail_store = Ximapd::MailStore.new(@config)
     begin
-      @servers.push(start_server)
-      for t in @servers
-        t.join
+      @mail_store = Ximapd::MailStore.new(@config)
+      begin
+        start_servers
+        wait_servers
+        close_sessions
+        @logger.info("terminated")
+      ensure
+        @mail_store.close
       end
-      close_sessions
-      @logger.info("terminated")
+    rescue Exception => e
+      @logger.log_exception(e)
     ensure
-      @mail_store.close
       @logger.close
     end
   end
 
-  def start_server
-    server = open_server
-    return Thread.start {
+  def server_running?
+    begin
+      open_pid_file("r") do |f|
+        pid = f.gets.to_i
+        Process.kill(0, pid)
+      end
+      return true
+    rescue Errno::ENOENT, Errno::ESRCH
+      return false
+    end
+  end
+
+  def start_servers
+    if @config["ssl"]
+      if @config["ssl_port"]
+        start_server(@config["port"], false)
+        start_server(@config["ssl_port"], true)
+      else
+        start_server(@config["port"], true)
+      end
+    else
+      start_server(@config["port"], false)
+    end
+  end
+
+  def wait_servers
+    for t in @server_threads
+      t.join
+    end
+  end
+
+  def start_server(port, ssl)
+    server = open_server(port, ssl)
+    t = Thread.start {
       begin
         loop do
           sock = accept(server)
@@ -307,11 +345,13 @@ class Ximapd
         server.close
       end
     }
+    @server_threads.push(t)
+    @logger.info("started server (port=#{port}, ssl=#{ssl})")
   end
 
-  def open_server
-    server = TCPServer.new(@config["port"])
-    if @config["ssl"]
+  def open_server(port, ssl)
+    server = TCPServer.new(port)
+    if ssl
       require "openssl"
       ssl_ctx = OpenSSL::SSL::SSLContext.new
       if @config.key?("ssl_key") && @config.key?("ssl_cert")
@@ -337,6 +377,7 @@ class Ximapd
       return server.accept
     rescue Exception => e
       if @config["ssl"] && e.kind_of?(OpenSSL::SSL::SSLError)
+        @logger.log_exception(e)
         retry
       else
         raise
@@ -494,9 +535,6 @@ class Ximapd
     exit!(0) if fork
     Process.setsid
     exit!(0) if fork
-    open_pid_file("w") do |f|
-      f.puts(Process.pid)
-    end
     Dir.chdir(File.expand_path(@config["data_dir"]))
     STDIN.reopen("/dev/null")
     STDOUT.reopen("/dev/null", "w")
@@ -512,9 +550,9 @@ class Ximapd
   end
 
   def stop_servers
-    @logger.debug("stop #{@servers.length} servers")
+    @logger.debug("stop #{@server_threads.length} servers")
     i = 1
-    for t in @servers
+    for t in @server_threads
       @mail_store.synchronize do
         @logger.debug("raise TerminateException to #{t}")
         t.raise(TerminateException.new)
@@ -785,6 +823,7 @@ class Ximapd
     StringOption.new("db_type", "database type (yaml, pstore)"),
     IntOption.new("max_clients", "max number of clients"),
     BoolOption.new("ssl", "use SSL"),
+    IntOption.new("ssl_port", "port for IMAPS"),
     StringOption.new("ssl_key", "path to SSL private key"),
     StringOption.new("ssl_cert", "path to SSL certificate"),
     BoolOption.new("starttls", "use STARTTLS"),
