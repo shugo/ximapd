@@ -119,10 +119,10 @@ class Ximapd
   def initialize
     @args = nil
     @config = {}
-    @server = nil
     @mail_store = nil
     @logger = nil
     @threads = []
+    @servers = []
     @sessions = {}
     @option_parser = OptionParser.new { |opts|
       opts.banner = "usage: ximapd action [options]"
@@ -140,7 +140,6 @@ class Ximapd
     begin
       @args = args
       parse_options(@args)
-      @server = nil
       @config["logger"] = @logger
       @max_clients = @config["max_clients"] || MAX_CLIENTS
       @threads = []
@@ -270,16 +269,30 @@ class Ximapd
   end
 
   def start
-    @server = open_server
     @logger.info("started")
     daemon unless @config["debug"]
     Signal.trap("TERM", &method(:terminate))
     Signal.trap("INT", &method(:terminate))
+    @mail_store = Ximapd::MailStore.new(@config)
     begin
-      @mail_store = Ximapd::MailStore.new(@config)
+      @servers.push(start_server)
+      for t in @servers
+        t.join
+      end
+      close_sessions
+      @logger.info("terminated")
+    ensure
+      @mail_store.close
+      @logger.close
+    end
+  end
+
+  def start_server
+    server = open_server
+    return Thread.start {
       begin
         loop do
-          sock = accept(@server)
+          sock = accept(server)
           configure_socket(sock)
           if @sessions.length >= @max_clients
             reject_client(sock)
@@ -287,17 +300,13 @@ class Ximapd
           end
           start_session(sock)
         end
+      rescue TerminateException
+      rescue Exception => e
+        @logger.log_exception(e)
       ensure
-        @mail_store.close
+        server.close
       end
-    rescue SystemExit
-      raise
-    rescue Exception => e
-      @logger.log_exception(e)
-    ensure
-      @logger.close
-      @server.close
-    end
+    }
   end
 
   def open_server
@@ -325,7 +334,7 @@ class Ximapd
 
   def accept(server)
     begin
-      return @server.accept
+      return server.accept
     rescue Exception => e
       if @config["ssl"] && e.kind_of?(OpenSSL::SSL::SSLError)
         retry
@@ -502,6 +511,20 @@ class Ximapd
     end
   end
 
+  def stop_servers
+    @logger.debug("stop #{@servers.length} servers")
+    i = 1
+    for t in @servers
+      @mail_store.synchronize do
+        @logger.debug("raise TerminateException to #{t}")
+        t.raise(TerminateException.new)
+        @logger.debug("raised TerminateException to #{t}")
+      end
+      @logger.debug("stopped server \##{i}")
+      i += 1
+    end
+  end
+
   def close_sessions
     @logger.debug("close #{@sessions.length} sessions")
     i = 1
@@ -533,9 +556,7 @@ class Ximapd
   def terminate(sig)
     @logger.info("signal #{sig}")
     @logger.debug("sessions: #{@sessions.keys.inspect}")
-    close_sessions
-    @logger.info("terminated")
-    exit
+    stop_servers
   end
 
   def open_mail_store
