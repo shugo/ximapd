@@ -273,48 +273,19 @@ class Ximapd
     @server = open_server
     @logger.info("started")
     daemon unless @config["debug"]
-    @main_thread = Thread.current
     Signal.trap("TERM", &method(:terminate))
     Signal.trap("INT", &method(:terminate))
     begin
       @mail_store = Ximapd::MailStore.new(@config)
       begin
         loop do
-          begin
-            sock = @server.accept
-          rescue Exception => e
-            if @config["ssl"] && e.kind_of?(OpenSSL::SSL::SSLError)
-              retry
-            else
-              raise
-            end
-          end
-          unless @config["ssl"]
-            sock.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1)
-            if defined?(Fcntl::FD_CLOEXEC)
-              sock.fcntl(Fcntl::F_SETFD, Fcntl::FD_CLOEXEC) 
-            end
-            if defined?(Fcntl::O_NONBLOCK)
-              sock.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK)
-            end
-          end
+          sock = accept(@server)
+          configure_socket(sock)
           if @sessions.length >= @max_clients
-            sock.print("* BYE too many clients\r\n")
-            peeraddr = sock.peeraddr[3]
-            sock.close
-            @logger.info("rejected connection from #{peeraddr}: " +
-                         "too many clients")
+            reject_client(sock)
             next
           end
-          Thread.start(sock) do |socket|
-            session = Session.new(@config, socket, @mail_store)
-            @sessions[Thread.current] = session
-            begin
-              session.start
-            ensure
-              @sessions.delete(Thread.current)
-            end
-          end
+          start_session(sock)
         end
       ensure
         @mail_store.close
@@ -350,6 +321,50 @@ class Ximapd
       server = OpenSSL::SSL::SSLServer.new(server, ssl_ctx)
     end
     return server
+  end
+
+  def accept(server)
+    begin
+      return @server.accept
+    rescue Exception => e
+      if @config["ssl"] && e.kind_of?(OpenSSL::SSL::SSLError)
+        retry
+      else
+        raise
+      end
+    end
+  end
+
+  def configure_socket(sock)
+    unless @config["ssl"]
+      sock.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1)
+      if defined?(Fcntl::FD_CLOEXEC)
+        sock.fcntl(Fcntl::F_SETFD, Fcntl::FD_CLOEXEC) 
+      end
+      if defined?(Fcntl::O_NONBLOCK)
+        sock.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK)
+      end
+    end
+  end
+
+  def reject_client(sock)
+    sock.print("* BYE too many clients\r\n")
+    peeraddr = sock.peeraddr[3]
+    sock.close
+    @logger.info("rejected connection from #{peeraddr}: " +
+                 "too many clients")
+  end
+
+  def start_session(sock)
+    Thread.start(sock) do |socket|
+      session = Session.new(@config, socket, @mail_store)
+      @sessions[Thread.current] = session
+      begin
+        session.start
+      ensure
+        @sessions.delete(Thread.current)
+      end
+    end
   end
 
   def stop
