@@ -85,7 +85,7 @@ unless defined?(now.to_time)
 end
 
 class Net::IMAP
-  unless defined?(starttls)
+  unless public_instance_methods.include?("starttls")
     def starttls(ctx = nil)
       require "openssl"
       if @sock.kind_of?(OpenSSL::SSL::SSLSocket)
