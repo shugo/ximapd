@@ -23,7 +23,14 @@ http://projects.netlab.jp/svn/ximapd/trunkから最新のソースコードを取得できます。
 
 == インストール
 
-bin/ximapdをPATHにコピーしてください。
+install.rbを実行してください。
+
+  # ruby install.rb
+
+デフォルトのインストール先は/usr/localです。変更したい場合は--prefixオプション
+を指定してください。
+
+  # ruby install.rb --prefix=/opt
 
 == セットアップ
 

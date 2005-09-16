@@ -103,9 +103,9 @@ class Ximapd
         @peeraddr = @sock.peeraddr[3]
         @logger.info("connect from #{@peeraddr}")
         if @pre_authenticated
-          send_preauth("ximapd version %s (r%s %s)", VERSION, REVISION, DATE)
+          send_preauth("ximapd version %s", VERSION)
         else
-          send_ok("ximapd version %s (r%s %s)", VERSION, REVISION, DATE)
+          send_ok("ximapd version %s", VERSION)
         end
       end
       begin

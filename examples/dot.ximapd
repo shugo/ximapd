@@ -3,3 +3,21 @@ user: <user>
 password: <password>
 data_dir: ~/ximapd
 db_type: YAML
+sync_threshold_chars: 2000000
+ml_header_fields:
+  - x-ml-name
+  - list-id
+  - mailing-list
+  - x-trac-project
+log_level: debug
+plugin_path: ~/.ximapd_plugins:/usr/local/share/ximapd/plugins
+plugins:
+  - name: PreSpamFilter
+  - name: SpamFilter
+  - name: PostSpamFilter
+  - name: Expirer
+    expires:
+      ^spam$:
+        days: 14
+      ^static:
+        days: 30

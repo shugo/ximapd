@@ -24,6 +24,15 @@ Shugo Maeda <shugo@ruby-lang.org>
 
 == Install
 
+Run install.rb.
+
+  # ruby install.rb
+
+ximapd will be installed to /usr/local by default.  Please use the --prefix
+option to override it.
+
+  # ruby install.rb --prefix=/opt
+
 Copy bin/ximapd under PATH.
 
 == Setup

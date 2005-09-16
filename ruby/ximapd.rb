@@ -108,8 +108,6 @@ end
 
 class Ximapd
   VERSION = "0.1.0"
-  REVISION = "$Revision$".slice(/\A\$Revision: (.*) \$\z/, 1)
-  DATE = "$Date$".slice(/\d\d\d\d-\d\d-\d\d/)
 
   LOG_SHIFT_AGE = 10
   LOG_SHIFT_SIZE = 1 * 1024 * 1024
@@ -430,7 +428,7 @@ class Ximapd
   end
 
   def version
-    printf("ximapd version %s (r%s %s)\n", VERSION, REVISION, DATE)
+    printf("ximapd version %s\n", VERSION)
     puts
     printf("  Platform    : %s\n", RUBY_PLATFORM)
     printf("  Ruby        : %s (%s)\n", RUBY_VERSION, RUBY_RELEASE_DATE)
