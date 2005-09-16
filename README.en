@@ -33,8 +33,6 @@ option to override it.
 
   # ruby install.rb --prefix=/opt
 
-Copy bin/ximapd under PATH.
-
 == Setup
 
 (1) Copy examples/dot.ximapd to ~/.ximapd.
