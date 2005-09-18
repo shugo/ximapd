@@ -90,6 +90,7 @@ options = OptionParser.new { |opts|
 begin
   Dir.chdir(File.expand_path(File.dirname(__FILE__)))
   options.parse!
+  $config["prefix"] = File.expand_path($config["prefix"])
   $config["bindir"] = "#{$config['prefix']}/bin"
   $config["datadir"] = "#{$config['prefix']}/share/ximapd"
   $config["rubydir"] = "#{$config['datadir']}/ruby"
