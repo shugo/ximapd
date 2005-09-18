@@ -107,7 +107,7 @@ class Net::IMAP
 end
 
 class Ximapd
-  VERSION = "0.1.0"
+  VERSION = "0.1.1"
 
   LOG_SHIFT_AGE = 10
   LOG_SHIFT_SIZE = 1 * 1024 * 1024
