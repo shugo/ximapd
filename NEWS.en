@@ -1,5 +1,9 @@
 = ximapd NEWS
 
+== Major changes in release 0.1.1 (2005-09-18)
+
+* install.rb expands prefix.
+
 == Major changes in release 0.1.0 (2005-09-16)
 
 * Supported Hyper Estraier.
