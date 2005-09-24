@@ -1824,6 +1824,36 @@ Content-Type: text/plain; charset=US-ASCII
 Hello world
 EOF
     uid3 = mail_store.import_mail(mail3)
+    mail4 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+Subject: test4
+To: foo@ruby-lang.org,
+Date: Sat, 09 Apr 2005 00:55:31 +0900
+Content-Type: text/plain; charset=US-ASCII
+
+Hello world
+EOF
+    uid4 = mail_store.import_mail(mail4)
+    mail5 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+Subject: test5
+To: foo@ruby-lang.org,
+Date: Sat, 09 Apr 2005 00:55:31 +0900
+Content-Type: text/plain; charset=US-ASCII
+
+Hello world
+EOF
+    uid5 = mail_store.import_mail(mail5)
+    mail6 = <<EOF.gsub(/\n/, "\r\n")
+From: shugo@ruby-lang.org
+Subject: test6
+To: foo@ruby-lang.org,
+Date: Sat, 09 Apr 2005 00:55:31 +0900
+Content-Type: text/plain; charset=US-ASCII
+
+Hello world
+EOF
+    uid6 = mail_store.import_mail(mail6)
     mail_store.close
 
     sock = SpoofSocket.new(<<EOF)
@@ -1856,16 +1886,17 @@ Zm9vIDk0YzgzZjJkZTAwODZlODMwNmUxNjc0NzA0MmI0OTc0\r
 A002 SELECT INBOX\r
 A003 FETCH 1:* (UID FLAGS RFC822.SIZE)\r
 A004 FETCH 1,2 (UID FLAGS RFC822.SIZE)\r
+A005 FETCH 1,3:5 (UID FLAGS RFC822.SIZE)\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
     assert_match(/\A\* OK ximapd version .*\r\n\z/, sock.output.gets)
     assert_equal("+ PDEyMzQ1QGxvY2FsaG9zdD4=\r\n", sock.output.gets)
     assert_equal("A001 OK AUTHENTICATE completed\r\n", sock.output.gets)
-    assert_equal("* 2 EXISTS\r\n", sock.output.gets)
-    assert_equal("* 2 RECENT\r\n", sock.output.gets)
+    assert_equal("* 5 EXISTS\r\n", sock.output.gets)
+    assert_equal("* 5 RECENT\r\n", sock.output.gets)
     assert_equal("* OK [UIDVALIDITY 1] UIDs valid\r\n", sock.output.gets)
-    assert_equal("* OK [UIDNEXT #{uid3 + 1}] Predicted next UID\r\n",
+    assert_equal("* OK [UIDNEXT #{uid6 + 1}] Predicted next UID\r\n",
                  sock.output.gets)
     assert_equal("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
                  sock.output.gets)
@@ -1876,12 +1907,27 @@ EOF
                  sock.output.gets)
     assert_equal("* 2 FETCH (UID #{uid3} FLAGS (\\Recent) RFC822.SIZE #{mail3.length})\r\n",
                  sock.output.gets)
+    assert_equal("* 3 FETCH (UID #{uid4} FLAGS (\\Recent) RFC822.SIZE #{mail4.length})\r\n",
+                 sock.output.gets)
+    assert_equal("* 4 FETCH (UID #{uid5} FLAGS (\\Recent) RFC822.SIZE #{mail5.length})\r\n",
+                 sock.output.gets)
+    assert_equal("* 5 FETCH (UID #{uid6} FLAGS (\\Recent) RFC822.SIZE #{mail6.length})\r\n",
+                 sock.output.gets)
     assert_equal("A003 OK FETCH completed\r\n", sock.output.gets)
     assert_equal("* 1 FETCH (UID #{uid1} FLAGS (\\Recent) RFC822.SIZE #{mail1.length})\r\n",
                  sock.output.gets)
     assert_equal("* 2 FETCH (UID #{uid3} FLAGS (\\Recent) RFC822.SIZE #{mail3.length})\r\n",
                  sock.output.gets)
     assert_equal("A004 OK FETCH completed\r\n", sock.output.gets)
+    assert_equal("* 1 FETCH (UID #{uid1} FLAGS (\\Recent) RFC822.SIZE #{mail1.length})\r\n",
+                 sock.output.gets)
+    assert_equal("* 3 FETCH (UID #{uid4} FLAGS (\\Recent) RFC822.SIZE #{mail4.length})\r\n",
+                 sock.output.gets)
+    assert_equal("* 4 FETCH (UID #{uid5} FLAGS (\\Recent) RFC822.SIZE #{mail5.length})\r\n",
+                 sock.output.gets)
+    assert_equal("* 5 FETCH (UID #{uid6} FLAGS (\\Recent) RFC822.SIZE #{mail6.length})\r\n",
+                 sock.output.gets)
+    assert_equal("A005 OK FETCH completed\r\n", sock.output.gets)
     assert_equal(nil, sock.output.gets)
   end
 

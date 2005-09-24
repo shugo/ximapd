@@ -202,27 +202,38 @@ class Ximapd
     end
 
     def fetch(mailbox, sequence_set)
-      result = search_query(mailbox.query,
-                            "properties" => ["uid", "internal-date"],
-                            "start_no" => 0,
-                            "num_items" => Rast::RESULT_ALL_ITEMS,
-                            "sort_method" => Rast::SORT_METHOD_PROPERTY,
-                            "sort_property" => "uid",
-                            "sort_order" => Rast::SORT_ORDER_ASCENDING)
       mails = []
       sequence_set.each do |seq_number|
         case seq_number
         when Range
           first = seq_number.first
-          last = seq_number.last == -1 ? result.items.length : seq_number.last
-          for i in first .. last
-            item = result.items[i - 1]
-            mail = IndexedMail.new(@config, mailbox, i, item.properties[0],
-                                    item.doc_id, item.properties[1])
+          if seq_number.last == -1
+            num_items = Rast::RESULT_ALL_ITEMS
+          else
+            num_items = seq_number.last - seq_number.first + 1
+          end
+          result = search_query(mailbox.query,
+                                "properties" => ["uid", "internal-date"],
+                                "start_no" => seq_number.first - 1,
+                                "num_items" => num_items,
+                                "sort_method" => Rast::SORT_METHOD_PROPERTY,
+                                "sort_property" => "uid",
+                                "sort_order" => Rast::SORT_ORDER_ASCENDING)
+          result.items.each_with_index do |item, i|
+            mail = IndexedMail.new(@config, mailbox, seq_number.first + i,
+                                   item.properties[0],
+                                   item.doc_id, item.properties[1])
             mails.push(mail)
           end
         else
-          item = result.items[seq_number - 1]
+          result = search_query(mailbox.query,
+                                "properties" => ["uid", "internal-date"],
+                                "start_no" => seq_number - 1,
+                                "num_items" => 1,
+                                "sort_method" => Rast::SORT_METHOD_PROPERTY,
+                                "sort_property" => "uid",
+                                "sort_order" => Rast::SORT_ORDER_ASCENDING)
+          item = result.items[0]
           next if item.nil?
           mail = IndexedMail.new(@config, mailbox, seq_number,
                                   item.properties[0], item.doc_id,
