@@ -203,22 +203,22 @@ class Ximapd
 
     def fetch(mailbox, sequence_set)
       mails = []
+      options = {
+        "properties" => ["uid", "internal-date"],
+        "sort_method" => Rast::SORT_METHOD_PROPERTY,
+        "sort_property" => "uid",
+        "sort_order" => Rast::SORT_ORDER_ASCENDING
+      }
       sequence_set.each do |seq_number|
         case seq_number
         when Range
-          first = seq_number.first
+          options["start_no"] = seq_number.first - 1
           if seq_number.last == -1
-            num_items = Rast::RESULT_ALL_ITEMS
+            options["num_items"] = Rast::RESULT_ALL_ITEMS
           else
-            num_items = seq_number.last - seq_number.first + 1
+            options["num_items"] = seq_number.last - seq_number.first + 1
           end
-          result = search_query(mailbox.query,
-                                "properties" => ["uid", "internal-date"],
-                                "start_no" => seq_number.first - 1,
-                                "num_items" => num_items,
-                                "sort_method" => Rast::SORT_METHOD_PROPERTY,
-                                "sort_property" => "uid",
-                                "sort_order" => Rast::SORT_ORDER_ASCENDING)
+          result = search_query(mailbox.query, options)
           result.items.each_with_index do |item, i|
             mail = IndexedMail.new(@config, mailbox, seq_number.first + i,
                                    item.properties[0],
@@ -226,13 +226,9 @@ class Ximapd
             mails.push(mail)
           end
         else
-          result = search_query(mailbox.query,
-                                "properties" => ["uid", "internal-date"],
-                                "start_no" => seq_number - 1,
-                                "num_items" => 1,
-                                "sort_method" => Rast::SORT_METHOD_PROPERTY,
-                                "sort_property" => "uid",
-                                "sort_order" => Rast::SORT_ORDER_ASCENDING)
+          options["start_no"] = seq_number - 1
+          options["num_items"] = 1
+          result = search_query(mailbox.query, options)
           item = result.items[0]
           next if item.nil?
           mail = IndexedMail.new(@config, mailbox, seq_number,
@@ -245,14 +241,6 @@ class Ximapd
     end
 
     def uid_fetch(mailbox, sequence_set)
-      options = {
-        "properties" => ["uid", "internal-date"],
-        "start_no" => 0,
-        "num_items" => Rast::RESULT_ALL_ITEMS,
-        "sort_method" => Rast::SORT_METHOD_PROPERTY,
-        "sort_property" => "uid",
-        "sort_order" => Rast::SORT_ORDER_ASCENDING
-      }
       query = mailbox.query
       additional_queries = sequence_set.collect { |seq_number|
         case seq_number
@@ -272,7 +260,13 @@ class Ximapd
       unless additional_queries.empty?
         query &= OrQuery.new(additional_queries)
       end
-      result = search_query(query, options)
+      result = search_query(query,
+                            "properties" => ["uid", "internal-date"],
+                            "start_no" => 0,
+                            "num_items" => Rast::RESULT_ALL_ITEMS,
+                            "sort_method" => Rast::SORT_METHOD_PROPERTY,
+                            "sort_property" => "uid",
+                            "sort_order" => Rast::SORT_ORDER_ASCENDING)
       return result.items.collect { |i|
         uid = i.properties[0]
         IndexedMail.new(@config, mailbox, uid, uid, i.doc_id, i.properties[1])
