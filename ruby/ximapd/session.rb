@@ -127,6 +127,9 @@ class Ximapd
             else
               cmd.exec
             end
+          rescue Errno::EPIPE => e
+            @logger.log_exception(e)
+            break
           rescue StandardError => e
             raise if @@test
             send_tagged_no(cmd.tag, "%s failed - %s", cmd.name, e)
