@@ -51,19 +51,39 @@ class SpamFilter < Plugin
 
   def on_copied(src_mail, dest_mail)
     if dest_mail.mailbox.name == "spam"
-      @logger.info("added to the spam token database: uid=#{src_mail.uid}")
-      IO.popen("bsfilter --add-spam --update", "w") do |bsfilter|
-        bsfilter.print(src_mail)
-      end
+      learn_spam(src_mail)
     end
   end
 
-  def on_delete_mail(mail)
+  def on_store(mail, att, flags)
     if mail.mailbox.name == "spam"
-      @logger.info("added to the clean token database: uid=#{mail.uid}")
-      IO.popen("bsfilter --add-clean --update", "w") do |bsfilter|
-        bsfilter.print(mail)
+      if /\\Deleted\b/in.match(mail.flags)
+        if !/\\Deleted\b/in.match(flags)
+          learn_spam(mail)
+        end
+      else
+        if /\\Deleted\b/in.match(flags)
+          learn_clean(mail)
+        end
       end
+    end
+    return flags
+  end
+
+  private
+
+  def learn_spam(mail)
+    learn(mail, "spam")
+  end
+
+  def learn_clean(mail)
+    learn(mail, "clean")
+  end
+
+  def learn(mail, type)
+    @logger.info("added to the #{type} token database: uid=#{mail.uid}")
+    IO.popen("bsfilter --add-#{type} --update", "w") do |bsfilter|
+      bsfilter.print(mail)
     end
   end
 end
