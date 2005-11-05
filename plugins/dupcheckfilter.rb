@@ -34,7 +34,6 @@ class DupCheckFilter < Plugin
   def filter(mail)
     open_db do |db|
       key = get_key(mail)
-      @logger.debug("key: #{key}")
       uid = db[key]
       if uid
         @logger.warn("rejected duplicated mail: uid=#{mail.uid}, old_uid=#{uid}")
