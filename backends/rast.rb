@@ -24,6 +24,7 @@
 # SUCH DAMAGE.
 
 require "rast"
+require "sdbm"
 
 module Rast
   unless defined?(RESULT_ALL_ITEMS)

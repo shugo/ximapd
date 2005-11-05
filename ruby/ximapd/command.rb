@@ -603,7 +603,7 @@ class Ximapd
     include DataFormat
 
     def fetch(mail)
-      return format("RFC822.HEADER %s", literal(mail.header))
+      return format("RFC822.HEADER %s", literal(mail.get_header))
     end
   end
 
@@ -672,10 +672,10 @@ class Ximapd
         s = mail.mime_header(@section.part)
         return format_data(s)
       when "HEADER"
-        s = mail.header(@section.part)
+        s = mail.get_header(@section.part)
         return format_data(s)
       when "HEADER.FIELDS"
-        s = mail.header_fields(@section.header_list, @section.part)
+        s = mail.get_header_fields(@section.header_list, @section.part)
         return format_data(s)
       end
     end

@@ -67,7 +67,7 @@ class Ximapd
       end
     end
 
-    def header(part = nil)
+    def get_header(part = nil)
       if part
         return get_part(part).body.to_s.slice(/.*?\n\n/mn).gsub(/\n/, "\r\n")
       else
@@ -78,12 +78,12 @@ class Ximapd
       end
     end
 
-    def header_fields(fields, part = nil)
+    def get_header_fields(fields, part = nil)
       pat = "^(?:" + fields.collect { |field|
         Regexp.quote(field)
       }.join("|") + "):.*(?:\r\n[ \t]+.*)*\r\n"
       re = Regexp.new(pat, true, "n")
-      return header(part).scan(re).join + "\r\n"
+      return get_header(part).scan(re).join + "\r\n"
     end
 
     def body_structure(extensible)
@@ -113,6 +113,10 @@ class Ximapd
       rescue Errno::ENOENT
         File.unlink(old_path)
       end
+    end
+
+    def header
+      return parsed_mail.header
     end
 
     private
