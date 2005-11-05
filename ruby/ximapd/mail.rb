@@ -338,7 +338,10 @@ class Ximapd
 
     def internal_date
       unless @internal_date
-        @internal_date = File.mtime(path)
+        mail = @mailbox.uid_fetch([@uid])[0]
+        @internal_date = mail.internal_date
+        @item_id = mail.item_id
+        @indexed_obj = mail.indexed_obj
       end
       return @internal_date
     end
