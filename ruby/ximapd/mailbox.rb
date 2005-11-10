@@ -104,7 +104,10 @@ class Ximapd
     end
 
     def query
-      return Query.parse(@data["query"])
+      q = Query.parse(@data["query"])
+      return @mail_store.plugins.inject(q) { |q, plugin|
+        plugin.translate_mailbox_query(self, q)
+      }
     end
 
     def get_mail_path(mail)

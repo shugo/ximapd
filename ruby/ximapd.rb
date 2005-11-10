@@ -52,6 +52,7 @@ require "ximapd/session"
 require "ximapd/command"
 require "ximapd/query"
 require "ximapd/backend"
+require "ximapd/plugin"
 
 now = DateTime.now
 unless defined?(now.to_time)
@@ -607,85 +608,6 @@ class Ximapd
       end
     ensure
       mail_store.close
-    end
-  end
-
-  class Plugin
-    @@directories = nil
-    @@loaded = false
-
-    def self.directories=(dirs)
-      @@directories = dirs
-    end
-
-    def self.create_plugins(config, mail_store)
-      return Plugins.new([]) unless config.key?("plugins")
-      if !@@loaded && @@directories
-        logger = config["logger"]
-        for plugin in config["plugins"]
-          basename = plugin["name"].downcase + ".rb"
-          filename = @@directories.collect { |dir|
-            File.expand_path(basename, dir)
-          }.detect { |filename| File.exist?(filename) }
-          raise "#{basename} not found" unless filename
-          File.open(filename) do |f|
-            Ximapd.class_eval(f.read)
-          end
-          logger.debug("loaded plugin: #{filename}")
-        end
-        @@loaded = true
-      end
-      plugins = config["plugins"].collect { |plugin|
-        Ximapd.const_get(plugin["name"]).new(plugin, mail_store,
-                                             config["logger"])
-      }
-      return Plugins.new(plugins)
-    end
-
-    def initialize(config, mail_store, logger)
-      @config = config
-      @mail_store = mail_store
-      @logger = logger
-      init_plugin
-    end
-
-    def init_plugin
-    end
-
-    def filter(mail)
-      return nil
-    end
-
-    def on_store(mail, att, flags)
-      return flags
-    end
-
-    def on_copy(src_mail, dest_mailbox)
-    end
-
-    def on_copied(src_mail, dest_mail)
-    end
-
-    def on_delete_mail(mail)
-    end
-
-    def on_idle
-    end
-  end
-
-  class Plugins
-    def initialize(plugins)
-      @plugins = plugins
-    end
-
-    def each(&block)
-      @plugins.each(&block)
-    end
-
-    def fire_event(name, *args)
-      for plugin in @plugins
-        plugin.send(name, *args)
-      end
     end
   end
 
