@@ -12,9 +12,7 @@ ml_header_fields:
 log_level: debug
 plugin_path: ~/.ximapd_plugins:/usr/local/share/ximapd/plugins
 plugins:
-  - name: PreSpamFilter
   - name: SpamFilter
-  - name: PostSpamFilter
   - name: Expirer
     expires:
       ^spam$:

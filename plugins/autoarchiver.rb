@@ -40,7 +40,6 @@ class AutoArchiver < Plugin
       query &= PropertyGeQuery.new("internal-date",
                                    d.strftime("%Y-%m-%dT00:00:00"))
     end
-    @logger.debug("query: #{query.to_s}")
     return query
   end
 end
