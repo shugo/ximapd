@@ -273,6 +273,81 @@ class XimapdQueryTest < Test::Unit::TestCase
       ]),
     ])
     assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('hello and bye')
+    expected = Ximapd::AndQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('hello AND bye')
+    expected = Ximapd::AndQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('hello "and" bye')
+    expected = Ximapd::AndQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("and"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('hello or bye')
+    expected = Ximapd::OrQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('hello OR bye')
+    expected = Ximapd::OrQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('hello "or" bye')
+    expected = Ximapd::AndQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("or"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('hello not bye')
+    expected = Ximapd::DiffQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('hello NOT bye')
+    expected = Ximapd::DiffQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal(expected, q)
+
+    q = Ximapd::Query.parse('hello "not" bye')
+    expected = Ximapd::AndQuery.new([
+      Ximapd::TermQuery.new("hello"),
+      Ximapd::TermQuery.new("not"),
+      Ximapd::TermQuery.new("bye")
+    ])
+    assert_equal(expected, q)
+
+    for op in ["pe", "eq", "le", "ge", "lt", "gt"]
+      q = Ximapd::Query.parse(%Q'date #{op} 2005-08-24')
+      query_class = Ximapd.const_get("Property" + op.capitalize + "Query")
+      assert_equal(query_class.new("date", "2005-08-24"), q)
+
+      q = Ximapd::Query.parse(%Q'"#{op}"')
+      assert_equal(Ximapd::TermQuery.new(op), q)
+    end
   end
 end
 

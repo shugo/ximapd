@@ -482,6 +482,17 @@ class Ximapd
 (?# 13: ATOM   )([^\s:=<>&|!()]+)|\
 (?# 14: EOF    )(\z))/ni
 
+    ATOM_TOKENS = Hash.new(T_ATOM)
+    ATOM_TOKENS["and"] = T_AND
+    ATOM_TOKENS["or"] = T_OR
+    ATOM_TOKENS["not"] = T_NOT
+    ATOM_TOKENS["pe"] = T_COLON
+    ATOM_TOKENS["eq"] = T_EQ
+    ATOM_TOKENS["le"] = T_LE
+    ATOM_TOKENS["ge"] = T_GE
+    ATOM_TOKENS["lt"] = T_LT
+    ATOM_TOKENS["gt"] = T_GT
+
     def next_token
       if @str.index(TOKEN_REGEXP, @pos)
         @pos = $~.end(0)
@@ -512,7 +523,8 @@ class Ximapd
         elsif $12
           return Token.new(T_QUOTED, $+.gsub(/\\(["\\])/n, "\\1"))
         elsif $13
-          return Token.new(T_ATOM, $+)
+          s = $+
+          return Token.new(ATOM_TOKENS[s.downcase], $+)
         elsif $14
           return Token.new(T_EOF, $+)
         else

@@ -110,6 +110,7 @@ end
 class Ximapd
   VERSION = "0.1.0"
 
+  PORT = 10143
   LOG_SHIFT_AGE = 10
   LOG_SHIFT_SIZE = 1 * 1024 * 1024
   MAX_CLIENTS = 10
@@ -178,6 +179,7 @@ class Ximapd
         }
         @config = config.merge(@config)
         check_config(@config)
+        @config["port"] ||= PORT
         if @config.key?("plugin_path")
           path = @config["plugin_path"]
           Plugin.directories = path.split(File::PATH_SEPARATOR).collect { |dir|
