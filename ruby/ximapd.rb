@@ -272,6 +272,8 @@ class Ximapd
     if server_running?
       raise "already running"
     end
+    @config["user"] ||= ENV["USER"] || ENV["LOGNAME"] || read_input("user: ")
+    @config["password"] ||= read_input("password: ", true)
     daemon unless @config["debug"]
     open_pid_file("w") do |f|
       f.puts(Process.pid)
@@ -479,20 +481,8 @@ class Ximapd
   end
 
   def import_imap
-    unless @config["remote_user"]
-      print("user: ")
-      @config["remote_user"] = STDIN.gets.chomp
-    end
-    unless @config["remote_password"]
-      print("password: ")
-      system("stty", "-echo")
-      begin
-        @config["remote_password"] = STDIN.gets.chomp
-      ensure
-        system("stty", "echo")
-        puts
-      end
-    end
+    @config["remote_user"] ||= read_input("user: ")
+    @config["remote_password"] ||= read_input("password: ", true)
     open_mail_store do |mail_store|
       if ARGV.empty?
         args = ["INBOX"]
@@ -604,6 +594,20 @@ class Ximapd
       end
     ensure
       mail_store.close
+    end
+  end
+
+  def read_input(prompt, hide = false)
+    STDOUT.print(prompt)
+    STDOUT.flush
+    system("stty", "-echo") if hide
+    begin
+      return STDIN.gets.chomp
+    ensure
+      if hide
+        system("stty", "echo")
+        puts
+      end
     end
   end
 
