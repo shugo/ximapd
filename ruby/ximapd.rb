@@ -178,7 +178,7 @@ class Ximapd
           YAML.load(f)
         }
         @config = config.merge(@config)
-        check_config(@config)
+        @config["data_dir"] ||= File.expand_path("~/ximapd")
         @config["port"] ||= PORT
         if @config.key?("plugin_path")
           path = @config["plugin_path"]
@@ -523,12 +523,6 @@ class Ximapd
       session.start
     ensure
       @mail_store.close
-    end
-  end
-
-  def check_config(config)
-    unless config.key?("data_dir")
-      raise "data_dir is not specified"
     end
   end
 
