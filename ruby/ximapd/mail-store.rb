@@ -160,13 +160,14 @@ class Ximapd
           @mailbox_db["mailboxes"] ||= DEFAULT_MAILBOXES.dup
           @mailbox_db["mailing_lists"] ||= {}
           convert_old_mailbox_db
-          @plugins = Plugin.create_plugins(@config, self)
         end
         @backend.setup
         begin
           create_mailbox("INBOX")
-        rescue
-          # OK
+        rescue MailboxExistError
+        end
+        @mailbox_db.transaction do
+          @plugins = Plugin.create_plugins(@config, self)
         end
       end
     end

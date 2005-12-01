@@ -177,6 +177,18 @@ class Ximapd
     def initialize(name, value)
       @name = name
       @value = value.to_s
+      if /date\z/n.match(@name)
+        case @value
+        when /\Anow\z/ni
+          @value = DateTime.now.strftime("%Y-%m-%dT%H:%M:%S")
+        when /\Atoday\z/ni
+          @value = Date.today.strftime("%Y-%m-%d")
+        when /\Ayesterday\z/ni
+          @value = (Date.today - 1).strftime("%Y-%m-%d")
+        when /\Atomorrow\z/ni
+          @value = (Date.today + 1).strftime("%Y-%m-%d")
+        end
+      end
     end
 
     def ==(other)

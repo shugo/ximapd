@@ -28,6 +28,23 @@ require File.expand_path("test-helper", File.dirname(__FILE__))
 class XimapdQueryTest < Test::Unit::TestCase
   include XimapdTestMixin
 
+  def test_new
+    time = Time.mktime(2005, 11, 30, 14, 58, 31)
+    Time.replace_now(time) do
+      q = Ximapd::PropertyEqQuery.new("date", "now")
+      assert_equal("2005-11-30T14:58:31", q.value)
+
+      q = Ximapd::PropertyEqQuery.new("date", "today")
+      assert_equal("2005-11-30", q.value)
+
+      q = Ximapd::PropertyEqQuery.new("date", "yesterday")
+      assert_equal("2005-11-29", q.value)
+
+      q = Ximapd::PropertyEqQuery.new("date", "tomorrow")
+      assert_equal("2005-12-01", q.value)
+    end
+  end
+
   def test_eq
     assert_equal(Ximapd::NullQuery.new, Ximapd::NullQuery.new)
     assert_not_equal(Ximapd::TermQuery.new("hello"), Ximapd::NullQuery.new)
