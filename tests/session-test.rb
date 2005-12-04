@@ -1679,6 +1679,7 @@ A303 UID SEARCH FROM foo\r
 A304 UID SEARCH TO foo\r
 A305 UID SEARCH CC foo\r
 A306 UID SEARCH BCC foo\r
+A401 UID SEARCH ALL\r
 EOF
     session = Ximapd::Session.new(@config, sock, @mail_store)
     session.start
@@ -1785,6 +1786,9 @@ EOF
     assert_equal("A305 OK UID SEARCH completed\r\n", sock.output.gets)
     assert_equal("* SEARCH #{uid2}\r\n", sock.output.gets)
     assert_equal("A306 OK UID SEARCH completed\r\n", sock.output.gets)
+    assert_equal("* SEARCH #{uid1} #{uid2} #{uid3} #{uid4} #{uid5}\r\n",
+                 sock.output.gets)
+    assert_equal("A401 OK UID SEARCH completed\r\n", sock.output.gets)
 
     assert_equal(nil, sock.output.gets)
   end

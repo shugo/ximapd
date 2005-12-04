@@ -34,14 +34,17 @@ class Ximapd
     end
 
     def &(other)
+      return self if other.null?
       return AndQuery.new([self, other])
     end
 
     def |(other)
+      return self if other.null?
       return OrQuery.new([self, other])
     end
 
     def -(other)
+      return self if other.null?
       return DiffQuery.new([self, other])
     end
 
