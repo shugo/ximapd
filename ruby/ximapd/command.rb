@@ -566,7 +566,7 @@ class Ximapd
     end
 
     def send_fetch_response(mail, data)
-      @session.send_data("%d FETCH (%s)", mail.uid, data)
+      @session.send_data("%d FETCH (%s)", mail.seqno, data)
     end
   end
 
@@ -775,7 +775,7 @@ class Ximapd
 
     def send_fetch_response(mail, flags)
       @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
-                         mail.uid, flags, mail.uid)
+                         mail.seqno, flags, mail.uid)
     end
   end
 
