@@ -23,9 +23,10 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-require "HyperEstraier"
+require "estraier"
+include Estraier
 
-module HyperEstraier
+module Estraier
   class DatabaseWrapper
     class Error < RuntimeError; end
 
@@ -89,7 +90,7 @@ module HyperEstraier
     def error_message
       errno = error
       if errno
-        "#{HyperEstraier::Database.err_msg(errno)} (#{errno})"
+        "#{Estraier::Database.err_msg(errno)} (#{errno})"
       else
         '(unknown error)'
       end
@@ -103,10 +104,10 @@ class Ximapd
 
     def setup
       unless File.exist?(@index_path)
-        db = HyperEstraier::DatabaseWrapper.new()
+        db = Estraier::DatabaseWrapper.new()
         begin
           db.open(@index_path,
-                  HyperEstraier::Database::DBWRITER|HyperEstraier::Database::DBCREAT|HyperEstraier::Database::DBPERFNG)
+                  Estraier::Database::DBWRITER|Estraier::Database::DBCREAT|Estraier::Database::DBPERFNG)
         ensure
           begin
             db.close
@@ -129,11 +130,11 @@ class Ximapd
 
     def open_index(*args)
       if args.empty?
-        flags = HyperEstraier::Database::DBWRITER
+        flags = Estraier::Database::DBWRITER
       else
         flags = args.last
       end
-      @index = HyperEstraier::DatabaseWrapper.new()
+      @index = Estraier::DatabaseWrapper.new()
       begin
         @index.open(@index_path, flags)
       rescue
@@ -151,7 +152,7 @@ class Ximapd
     end
 
     def register(mail_data, filename)
-      doc = HyperEstraier::Document.new
+      doc = Estraier::Document.new
       doc.add_attr("@uri", "file://" + File.expand_path(filename))
       doc.add_text(mail_data.text)
       mail_data.properties.each_pair do |name, value|
@@ -197,13 +198,17 @@ class Ximapd
     end
 
     def get_flags(uid, item_id, item_obj)
-      open do
-        doc = get_doc(uid, item_id, item_obj)
-        begin
-          doc.attr("flags").scan(/[^<>\s]+/).join(" ")
-        rescue ArgumentError
-          ""
-        end
+      if item_obj
+	doc = item_obj
+      else
+	open do
+	  doc = get_doc(uid, item_id, item_obj)
+	end
+      end
+      begin
+        doc.attr("flags").scan(/[^<>\s]+/).join(" ")
+      rescue ArgumentError
+        ""
       end
     end
     public :get_flags
@@ -269,31 +274,36 @@ class Ximapd
         return []
       end
       mailbox_query = mailbox.query
+      result = query(mailbox_query)
+      seq_number = Hash.new
+      result.each_index do |i|
+	 seq_number[result[i]] = i+1
+      end
 
       mails = []
       result = []
+      querys = NullQuery.new
       sequence_set.collect do |i|
-        sq = []
         case i
         when Range
           if i.last == -1
-            q = mailbox_query & PropertyGeQuery.new("uid", i.first)
+	    querys |= PropertyGeQuery.new("uid", i.first)
           else
-            q = mailbox_query &
-              PropertyGeQuery.new("uid", i.first) &
-              PropertyLeQuery.new("uid", i.last)
+	    querys |= PropertyGeQuery.new("uid", i.first) & 
+	              PropertyLeQuery.new("uid", i.last)
           end
         else
-          q = mailbox_query & PropertyEqQuery.new("uid", i)
+          querys |= PropertyEqQuery.new("uid", i)
         end
-        result += query(q)
       end
+      querys = mailbox_query & querys 
+      result = query(querys)
       result.each do |item_id|
         doc = get_doc(nil, item_id, nil)
         uid = doc.attr("uid").to_i
-        mails << IndexedMail.new(@config, mailbox, uid, uid,
-                                 item_id, doc.attr("internal-date"),
-                                 doc)
+        mails << IndexedMail.new(@config, mailbox, seq_number[item_id], uid,
+                                   item_id, doc.attr("internal-date"),
+                                   doc)
       end
 
       mails
@@ -306,9 +316,9 @@ class Ximapd
       mailbox_query = mailbox.query
       result = query(mailbox_query)
       mailbox_status.messages = result.length
-      mailbox_status.unseen = result.select { |item_id|
-        !/\\Seen\b/ni.match(get_flags(nil, item_id, nil))
-      }.length
+      result = query(mailbox_query &
+                     NoFlagQuery.new("\\Seen"))
+      mailbox_status.unseen = result.length
       result = query(mailbox_query &
                      PropertyGtQuery.new("uid", mailbox["last_peeked_uid"]))
       mailbox_status.recent = result.length
@@ -330,7 +340,7 @@ class Ximapd
 
     def rebuild_index(*args)
       if args.empty?
-        flags = HyperEstraier::Database::DBWRITER|HyperEstraier::Database::DBCREAT|HyperEstraier::Database::DBPERFNG
+        flags = Estraier::Database::DBWRITER|Estraier::Database::DBCREAT|Estraier::Database::DBPERFNG
       else
         flags = args.last
       end
@@ -339,9 +349,9 @@ class Ximapd
       @old_index = nil
       begin
         File.rename(@index_path, old_index_path)
-        @old_index = HyperEstraier::DatabaseWrapper.new()
+        @old_index = Estraier::DatabaseWrapper.new()
         begin
-          @old_index.open(old_index_path, HyperEstraier::Database::DBREADER)
+          @old_index.open(old_index_path, Estraier::Database::DBREADER)
         rescue
           begin
             @old_index.close
@@ -351,7 +361,7 @@ class Ximapd
         end
       rescue Errno::ENOENT
       end
-      @index = HyperEstraier::DatabaseWrapper.new()
+      @index = Estraier::DatabaseWrapper.new()
       @index.open(@index_path, flags)
       @index.close
       begin
@@ -433,8 +443,12 @@ class Ximapd
       def visit_default(query)
         cond = @query_compiling_visitor.visit(query)
         cond.set_order("uid NUMA")
-        result = @index.search(cond, 0)
-        return result.to_a
+        result = @index.search(cond)
+	res = []
+	for i in 0...result.doc_num
+	  res.push(result.get_doc_id(i))
+	end
+        return res
       end
     end
 
@@ -455,7 +469,7 @@ class Ximapd
       end
 
       def visit(query)
-        @cond = HyperEstraier::Condition.new
+        @cond = Estraier::Condition.new
         phrase = query.accept(self)
         unless phrase.empty?
           @cond.set_phrase(phrase)
@@ -509,13 +523,13 @@ class Ximapd
 
       def visit_flag_query(query)
         prefix = @invert ? "!" : ""
-        @cond.add_attr("flags #{prefix}STRINC <#{query.flag}>")
+        @cond.add_attr("flags #{prefix}ISTRINC <#{query.flag}>")
         return ""
       end
 
       def visit_no_flag_query(query)
         prefix = @invert ? "" : "!"
-        @cond.add_attr("flags #{prefix}STRINC <#{query.flag}>")
+        @cond.add_attr("flags #{prefix}ISTRINC <#{query.flag}>")
         return ""
       end
 
