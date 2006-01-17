@@ -1,5 +1,14 @@
 = ximapd NEWS
 
+== Major changes in release 0.2.0 (2006-01-17)
+
+* added DupCheckFilter.
+* added AutoArchiver.
+* added aliases for query operators.
+* added default values to configuration entries.
+* supported hyperestraier-1.1.1. [TAKAGI Kenichi]
+* optimized HyperEstraier backend. [TAKAGI Kenichi]
+
 == Major changes in release 0.1.1 (2005-09-18)
 
 * install.rb expands prefix.

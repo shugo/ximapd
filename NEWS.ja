@@ -1,5 +1,14 @@
 = ximapd NEWS
 
+== リリース0.2.0の主な変更 (2006-01-17)
+
+* DupCheckFilterを追加しました。
+* AutoArchiverを追加しました。
+* クエリの演算子に別名を用意しました。
+* 設定項目のデフォルト値を追加しました。
+* hyperestraier-1.1.1をサポートしました。 [TAKAGI Kenichiさん]
+* HyperEstraierバックエンドを最適化しました。 [TAKAGI Kenichiさん]
+
 == リリース0.1.1の主な変更 (2005-09-18)
 
 * install.rbでprefixを展開するようにしました。

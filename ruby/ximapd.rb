@@ -108,7 +108,7 @@ class Net::IMAP
 end
 
 class Ximapd
-  VERSION = "0.1.0"
+  VERSION = "0.2.0"
 
   PORT = 10143
   LOG_SHIFT_AGE = 10
