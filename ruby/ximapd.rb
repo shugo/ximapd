@@ -137,6 +137,7 @@ class Ximapd
 
   def run(args)
     begin
+      trap("INT", "IGNORE")
       @args = args
       parse_options(@args)
       @config["logger"] = @logger
