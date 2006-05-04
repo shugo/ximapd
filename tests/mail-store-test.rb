@@ -99,6 +99,8 @@ EOF
     m = mails[0]
     assert_equal(uid3, m.uid)
     assert_equal(mail3.sub(/\AFrom.*\r\n/, ""), m.to_s)
+
+    mail_store.teardown
   end
 
   def test_import_mail__ml
@@ -121,6 +123,8 @@ EOF
       ml = mail_store.mailbox_db["mailing_lists"]["ximapd-ja"]
       assert_equal("ml/ximapd-ja", ml["mailbox"])
     end
+
+    mail_store.teardown
   end
 
   def test_delete_mailbox
@@ -169,6 +173,8 @@ EOF
       ml2 = mail_store.mailbox_db["mailing_lists"]["ximapd-en"]
       assert_equal("ml/ximapd-en", ml2["mailbox"])
     end
+
+    mail_store.teardown
   end
 
   def test_rename_mailbox
@@ -219,6 +225,8 @@ EOF
       ml2 = mail_store.mailbox_db["mailing_lists"]["ximapd-en"]
       assert_equal("ml/ximapd-en", ml2["mailbox"])
     end
+
+    mail_store.teardown
   end
 
   def test_rebuild_index
@@ -364,6 +372,8 @@ EOF
     m = mails[0]
     assert_equal(uid3, m.uid)
     assert_equal(mail3.sub(/\AFrom.*\r\n/, ""), m.to_s)
+
+    mail_store.teardown
   end
 end
 

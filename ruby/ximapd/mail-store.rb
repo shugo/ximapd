@@ -176,6 +176,10 @@ class Ximapd
       @lock.close
     end
 
+    def teardown
+      @backend.teardown
+    end
+
     def lock
       mon_enter
       if @lock_count == 0

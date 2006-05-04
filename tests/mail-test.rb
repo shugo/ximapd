@@ -51,6 +51,7 @@ EOF
     }
     mail = inbox.get_mail(uid)
     assert_equal(date, mail.internal_date)
+    mail_store.teardown
   end
 end
 

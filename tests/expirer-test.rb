@@ -98,6 +98,12 @@ EOF
     }
   end
 
+  def teardown
+    @mail_store.close
+    @mail_store.teardown
+    super
+  end
+
   def test_on_idle
     time = Time.mktime(2005, 6, 27, 0, 0, 0)
     Time.replace_now(time) do

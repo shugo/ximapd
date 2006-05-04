@@ -96,6 +96,12 @@ EOF
     }
   end
 
+  def teardown
+    @mail_store.close
+    @mail_store.teardown
+    super
+  end
+
   def test_save
     mailbox = Ximapd::StaticMailbox.new(@mail_store, "mailbox-test",
                                         "flags" => "")

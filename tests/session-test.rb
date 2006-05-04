@@ -42,6 +42,7 @@ class XimapdSessionTest < Test::Unit::TestCase
 
   def teardown
     @mail_store.close
+    @mail_store.teardown
     Ximapd::AuthenticateCramMD5Command.challenge_generator =
       @challenge_generator
     super

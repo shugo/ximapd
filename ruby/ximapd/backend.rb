@@ -81,6 +81,10 @@ class Ximapd
       end
     end
 
+    def teardown
+      # noop
+    end
+
     def register(mail_data, filename)
       raise SubclassResponsibilityError.new
     end

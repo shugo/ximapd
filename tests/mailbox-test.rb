@@ -38,6 +38,8 @@ class XimapdMailboxTest < Test::Unit::TestCase
       assert_equal("Mailbox", mailbox_data["class"])
       assert_equal("\\Noselect", mailbox_data["flags"])
     end
+
+    mail_store.teardown
   end
 
   def test_query
@@ -48,6 +50,8 @@ class XimapdMailboxTest < Test::Unit::TestCase
                                              "flags" => "\\Noselect")
     q = Ximapd::PropertyPeQuery.new("subject", "hello")
     assert_equal(q, mailbox.query)
+
+    mail_store.teardown
   end
 end
 
