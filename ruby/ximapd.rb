@@ -290,6 +290,7 @@ class Ximapd
         @logger.info("terminated")
       ensure
         @mail_store.close
+        @mail_store.teardown
       end
     rescue Exception => e
       @logger.log_exception(e)
@@ -514,6 +515,7 @@ class Ximapd
       session.start
     ensure
       @mail_store.close
+      @mail_store.teardown
     end
   end
 
@@ -595,6 +597,7 @@ class Ximapd
       end
     ensure
       mail_store.close
+      mail_store.teardown
     end
   end
 
