@@ -90,7 +90,7 @@ module Estraier
     def error_message
       errno = error
       if errno
-        "#{Estraier::Database.err_msg(errno)} (#{errno})"
+        "#{@db.err_msg(errno)} (#{errno})"
       else
         '(unknown error)'
       end
