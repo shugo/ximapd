@@ -287,7 +287,6 @@ class Ximapd
       end
       @index = Estraier::DatabaseWrapper.new()
       @index.open(@index_path, flags)
-      @index.close
       begin
         yield
         FileUtils.rm_rf(old_index_path)
