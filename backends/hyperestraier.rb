@@ -100,8 +100,6 @@ end
 
 class Ximapd
   class HyperEstraierBackend < Backend
-    private
-
     def setup
       unless File.exist?(@index_path)
         db = Estraier::DatabaseWrapper.new()
@@ -116,39 +114,13 @@ class Ximapd
         end
       end
     end
-    public :setup
 
     def standby
       # noop
     end
-    public :standby
 
     def relax
       # noop
-    end
-    public :relax
-
-    def open_index(*args)
-      if args.empty?
-        flags = Estraier::Database::DBWRITER
-      else
-        flags = args.last
-      end
-      @index = Estraier::DatabaseWrapper.new()
-      begin
-        @index.open(@index_path, flags)
-      rescue
-        begin
-          @index.close
-        rescue
-        end
-        raise
-      end
-    end
-
-    def close_index
-      @index.close
-      @index = nil
     end
 
     def register(mail_data, filename)
@@ -160,41 +132,6 @@ class Ximapd
       end
       set_flags_internal(doc, mail_data.flags)
       @index.put_doc(doc)
-    end
-    public :register
-
-    def get_uid(item_id)
-      uid = nil
-      if doc = @index.get_doc(item_id, 0)
-        begin
-          uid = doc.attr("uid").to_i
-        rescue ArgumentError
-          raise "item_id:#{item_id} doesnot have uid"
-        end
-      end
-      uid
-    end
-
-    def get_doc(uid, item_id, item_obj)
-      get_doc_internal(@index, uid, item_id, item_obj)
-    end
-
-    def get_doc_internal(index, uid, item_id, item_obj)
-      if item_obj
-        doc = item_obj
-      elsif item_id
-        doc = index.get_doc(item_id, 0)
-      elsif uid
-        doc_id = query(PropertyEqQuery.new("uid", uid), index)[0]
-        doc = index.get_doc(doc_id, 0)
-      else
-        doc = nil
-      end
-      unless doc
-        raise ArgumentError,
-          "no such document (uid = #{uid.inspect}, item_id = #{item_id.inspect})"
-      end
-      doc
     end
 
     def get_flags(uid, item_id, item_obj)
@@ -211,7 +148,6 @@ class Ximapd
         ""
       end
     end
-    public :get_flags
 
     def set_flags(uid, item_id, item_obj, flags)
       open do
@@ -220,21 +156,14 @@ class Ximapd
         @index.edit_doc(doc)
       end
     end
-    public :set_flags
-
-    def set_flags_internal(doc, flags)
-      doc.add_attr("flags", "<" + flags.strip.split(/\s+/).join("><") + ">")
-    end
 
     def delete_flags(uid, item_id, item_obj)
       set_flags(uid, item_id, item_obj, "")
     end
-    public :delete_flags
 
     def delete(uid, item_id)
       @index.out_doc(item_id)
     end
-    public :delete
 
     def fetch(mailbox, sequence_set)
       result = query(mailbox.query)
@@ -267,7 +196,6 @@ class Ximapd
       end
       mails
     end
-    public :fetch
 
     def uid_fetch(mailbox, sequence_set)
       if sequence_set.empty?
@@ -308,7 +236,6 @@ class Ximapd
 
       mails
     end
-    public :uid_fetch
 
     def mailbox_status(mailbox)
       mailbox_status = MailboxStatus.new
@@ -324,19 +251,16 @@ class Ximapd
       mailbox_status.recent = result.length
       mailbox_status
     end
-    public :mailbox_status
 
     def query(query, index = @index)
       visitor = QueryExecutingVisitor.new(index)
       return visitor.visit(query)
     end
-    public :query
 
     def uid_search(query)
       result = query(query)
       result.collect { |item_id| get_uid(item_id) }
     end
-    public :uid_search
 
     def rebuild_index(*args)
       if args.empty?
@@ -371,7 +295,6 @@ class Ximapd
         @old_index = nil
       end
     end
-    public :rebuild_index
 
     def get_old_flags(uid)
       raise RuntimeError, "old index not given" unless @old_index
@@ -383,12 +306,74 @@ class Ximapd
         ""
       end
     end
-    public :get_old_flags
 
     def try_query(query)
       query(Query.parse(query))
     end
-    public :try_query
+
+    private
+
+    def open_index(*args)
+      return if @index
+      if args.empty?
+        flags = Estraier::Database::DBWRITER
+      else
+        flags = args.last
+      end
+      @index = Estraier::DatabaseWrapper.new()
+      begin
+        @index.open(@index_path, flags)
+      rescue
+        begin
+          @index.close
+        rescue
+        end
+        raise
+      end
+    end
+
+    def close_index
+      @index.close
+      @index = nil
+    end
+
+    def get_uid(item_id)
+      uid = nil
+      if doc = @index.get_doc(item_id, 0)
+        begin
+          uid = doc.attr("uid").to_i
+        rescue ArgumentError
+          raise "item_id:#{item_id} doesnot have uid"
+        end
+      end
+      uid
+    end
+
+    def get_doc(uid, item_id, item_obj)
+      get_doc_internal(@index, uid, item_id, item_obj)
+    end
+
+    def get_doc_internal(index, uid, item_id, item_obj)
+      if item_obj
+        doc = item_obj
+      elsif item_id
+        doc = index.get_doc(item_id, 0)
+      elsif uid
+        doc_id = query(PropertyEqQuery.new("uid", uid), index)[0]
+        doc = index.get_doc(doc_id, 0)
+      else
+        doc = nil
+      end
+      unless doc
+        raise ArgumentError,
+          "no such document (uid = #{uid.inspect}, item_id = #{item_id.inspect})"
+      end
+      doc
+    end
+
+    def set_flags_internal(doc, flags)
+      doc.add_attr("flags", "<" + flags.strip.split(/\s+/).join("><") + ">")
+    end
 
     class QueryExecutingVisitor < QueryVisitor
       def initialize(index)
