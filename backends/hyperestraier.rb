@@ -101,6 +101,12 @@ end
 class Ximapd
   class HyperEstraierBackend < Backend
     def setup
+      @close_count = 0
+      @close_index_interval = 1
+      if @config["close_index_interval"]
+	tmp = @config["close_index_interval"].to_i
+	@close_index_interval = tmp if tmp > 0
+      end
       unless File.exist?(@index_path)
         db = Estraier::DatabaseWrapper.new()
         begin
@@ -113,6 +119,15 @@ class Ximapd
           end
         end
       end
+    end
+
+    def teardown
+      if @index
+        @index.close
+        @index = nil
+	@close_count = 0
+      end
+      super
     end
 
     def standby
@@ -272,6 +287,11 @@ class Ximapd
 
       @old_index = nil
       begin
+	if @close_index_interval > 1
+	  @index.close
+	  @index = nil
+	  @close_count = 0
+	end
         File.rename(@index_path, old_index_path)
         @old_index = Estraier::DatabaseWrapper.new()
         begin
@@ -332,8 +352,11 @@ class Ximapd
     end
 
     def close_index
+      @close_count += 1
+      return if @close_count < @close_index_interval
       @index.close
       @index = nil
+      @close_count = 0
     end
 
     def get_uid(item_id)
