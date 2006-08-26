@@ -463,7 +463,7 @@ class Ximapd
   end
 
   def import_via_imap
-    imap = Net::IMAP.new("localhost", @config["port"], @config["ssl"])
+    imap = Net::IMAP.new("localhost", @config["port"], @config["ssl"] ? @config["ssl_port"] ? false : true : false)
     if @config["starttls"] && @config["require_secure"]
       imap.starttls
     end
