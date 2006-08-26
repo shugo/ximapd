@@ -414,10 +414,8 @@ class Ximapd
       @session.synchronize do
         @session.sync
         mailbox = @session.get_current_mailbox
-        mails = mailbox.fetch([1 .. -1])
-        deleted_mails = mails.select { |mail|
-          /\\Deleted\b/ni.match(mail.flags(false))
-        }
+        uids = mailbox.uid_search(mailbox.query&FlagQuery.new("\\Deleted"))
+        deleted_mails = mailbox.uid_fetch(uids).reverse
         @mail_store.delete_mails(deleted_mails)
       end
       @session.close_mailbox
@@ -431,10 +429,8 @@ class Ximapd
       @session.synchronize do
         @session.sync
         mailbox = @session.get_current_mailbox
-        mails = mailbox.fetch([1 .. -1])
-        deleted_mails = mails.select { |mail|
-          /\\Deleted\b/ni.match(mail.flags(false))
-        }.reverse
+        uids = mailbox.uid_search(mailbox.query&FlagQuery.new("\\Deleted"))
+        deleted_mails = mailbox.uid_fetch(uids).reverse
         deleted_seqnos = deleted_mails.collect { |mail|
           mail.seqno
         }
