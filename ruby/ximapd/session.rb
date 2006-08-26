@@ -31,8 +31,9 @@ class Ximapd
 
   class Session
     attr_reader :config, :state, :mail_store, :current_mailbox, :peeraddr
-    attr_accessor :secure
+    attr_accessor :secure, :idle
     alias secure? secure
+    alias idle? idle
 
     NON_AUTEHNTICATED_MAX_IDLE_SECONDS = 10
     AUTEHNTICATED_MAX_IDLE_SECONDS = 30 * 60
@@ -47,10 +48,11 @@ class Ximapd
       @@test = test
     end
 
-    def initialize(config, sock, mail_store, pre_authenticated = false)
+    def initialize(config, sock, mail_store, imapd, pre_authenticated = false)
       @config = config
       @sock = sock
       @mail_store = mail_store
+      @imapd = imapd
       @pre_authenticated = pre_authenticated
       @logger = @config["logger"]
       @parser = CommandParser.new(self, @logger)
@@ -277,6 +279,10 @@ class Ximapd
 
     def synchronize(&block)
       @mail_store.synchronize(&block)
+    end
+
+    def all_session_on_idle?
+      @imapd.all_session_on_idle?
     end
 
     private

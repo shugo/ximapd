@@ -37,4 +37,5 @@ class Ximapd
   class MailboxAccessError < MailboxError; end
   class NotSelectableMailboxError < MailboxError; end
   class InvalidQueryError < StandardError; end
+  class IdleTerminated < Exception; end
 end

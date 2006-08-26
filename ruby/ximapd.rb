@@ -412,7 +412,7 @@ class Ximapd
 
   def start_session(sock)
     Thread.start(sock) do |socket|
-      session = Session.new(@config, socket, @mail_store)
+      session = Session.new(@config, socket, @mail_store, self)
       @sessions[Thread.current] = session
       begin
         session.start
@@ -432,6 +432,10 @@ class Ximapd
       end
     rescue Errno::ENOENT
     end
+  end
+
+  def all_sesion_on_idle?
+    @sessions.values.all? {|session| session.idle?}
   end
 
   def version
@@ -511,7 +515,7 @@ class Ximapd
     @mail_store = Ximapd::MailStore.new(@config)
     begin
       sock = ConsoleSocket.new
-      session = Ximapd::Session.new(@config, sock, @mail_store, true)
+      session = Ximapd::Session.new(@config, sock, @mail_store, self, true)
       session.start
     ensure
       @mail_store.close

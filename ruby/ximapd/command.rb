@@ -398,13 +398,29 @@ class Ximapd
   class IdleCommand < Command
     def exec
       @session.send_continue_req("Waiting for DONE")
-      @session.synchronize do
-        @session.sync
-        @mail_store.mailbox_db.transaction do
-          @mail_store.plugins.fire_event(:on_idle)
+      th = Thread.start do
+        @session.synchronize do
+          begin
+            @session.idle = true
+            @session.sync
+            @mail_store.mailbox_db.transaction do
+              @mail_store.plugins.fire_event(:on_idle)
+              if all_session_on_idle?
+                @mail_store.plugins.fire_event(:on_idle_all)
+              end
+            end
+          rescue IdleTerminated
+            # OK
+          ensure
+            @session.idle = false
+          end
         end
       end
-      @session.recv_line
+      until @session.recv_line == "DONE"
+        @session.send_bad("Waiting for DONE") # XXX: OK?
+      end
+      th.raise(IdleTerminated) if th.alive?
+      th.join
       send_tagged_ok
     end
   end
