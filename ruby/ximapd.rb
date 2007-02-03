@@ -434,7 +434,7 @@ class Ximapd
     end
   end
 
-  def all_sesion_on_idle?
+  def all_session_on_idle?
     @sessions.values.all? {|session| session.idle?}
   end
 
