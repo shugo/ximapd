@@ -405,7 +405,7 @@ class Ximapd
             @session.sync
             @mail_store.mailbox_db.transaction do
               @mail_store.plugins.fire_event(:on_idle)
-              if all_session_on_idle?
+              if @session.all_session_on_idle?
                 @mail_store.plugins.fire_event(:on_idle_all)
               end
             end

@@ -158,6 +158,10 @@ class Ximapd
     end
   end
 
+  def all_session_on_idle?
+    @sessions.values.all? {|session| session.idle?}
+  end
+
   private
 
   def define_options(option_parser, config, options)
@@ -432,10 +436,6 @@ class Ximapd
       end
     rescue Errno::ENOENT
     end
-  end
-
-  def all_session_on_idle?
-    @sessions.values.all? {|session| session.idle?}
   end
 
   def version
