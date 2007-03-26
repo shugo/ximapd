@@ -162,6 +162,13 @@ class Ximapd
     @sessions.values.all? {|session| session.idle?}
   end
 
+  def push_response(mailbox, str, originater)
+    @sessions.values.each do |session|
+      next if session == originater
+      session.push_response(mailbox, str)
+    end
+  end
+
   private
 
   def define_options(option_parser, config, options)

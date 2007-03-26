@@ -68,6 +68,7 @@ class Ximapd
       @current_mailbox = nil
       @read_only = false
       @secure = @sock.kind_of?(OpenSSL::SSL::SSLSocket)
+      @queued_responses = {}
     end
 
     def starttls
@@ -185,12 +186,22 @@ class Ximapd
     end
 
     def close_mailbox
+      cleanup_queued_responses
       @current_mailbox = nil
       @state = AUTHENTICATED_STATE
     end
 
     def sync
       @mail_store.write_last_peeked_uids
+    end
+
+    def push_response(mailbox, response)
+      if mailbox.nil? || @current_mailbox == mailbox
+        @queued_responses[mailbox] ||= []
+        @queued_responses[mailbox].push "* " + response
+      else
+        # noop
+      end
     end
 
     def recv_line
@@ -251,6 +262,35 @@ class Ximapd
       send_tagged_response(tag, "BAD", fmt, *args)
     end
 
+    def send_queued_responses(exclude = nil)
+      synchronize do
+        queued_responses = []
+        if @queued_responses.include?(@current_mailbox) &&
+            !@queued_responses[@current_mailbox].empty?
+          queued_responses << @queued_responses[@current_mailbox]
+        end
+        if @current_mailbox &&
+            @queued_responses.include?(nil) &&
+            !@queued_responses[nil].empty?
+          queued_responses << @queued_responses[@current_mailbox]
+        end
+        queued_responses.each do |qr|
+          if exclude
+            rest, done = qr.partition do |str|
+              exclude =~ str
+            end
+          else
+            rest, done = [], qr
+          end
+          done.reverse.each do |str|
+            send_line str
+          end
+          qr.replace(rest)
+        end
+        cleanup_queued_responses
+      end
+    end
+
     def send_data(fmt, *args)
       s = format(fmt, *args)
       send_line("* " + s)
@@ -285,7 +325,20 @@ class Ximapd
       @imapd.all_session_on_idle?
     end
 
+    def push_queued_response(mailbox_name, resp)
+      return if @@test && @imapd.nil?
+      @imapd.push_response(mailbox_name, resp, self)
+    end
+
     private
+
+    def cleanup_queued_responses
+      synchronize do
+        @queued_responses.delete_if do |mailbox, queued_response|
+          mailbox.nil? ?  false : true
+        end
+      end
+    end
 
     def profile(cmd)
       begin

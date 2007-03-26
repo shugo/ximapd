@@ -74,10 +74,6 @@ class Ximapd
     def uid_fetch(sequence_set)
       raise SubclassResponsibilityError.new
     end
-
-    def get_mail(uid)
-      raise SubclassResponsibilityError.new
-    end
   end
 
   class SearchBasedMailbox < Mailbox
@@ -139,10 +135,6 @@ class Ximapd
       @mail_store.open_backend do |backend|
         return backend.uid_fetch(self, sequence_set)
       end
-    end
-
-    def get_mail(uid)
-      return IndexedMail.new(@config, self, uid, uid)
     end
   end
 
@@ -284,10 +276,6 @@ class Ximapd
         end
       end
       return mails
-    end
-
-    def get_mail(uid)
-      return StaticMail.new(@config, self, uid, uid)
     end
 
     def open_flags_db(&block)

@@ -209,7 +209,7 @@ class Ximapd
           mails.push(mail)
         end
       end
-      mails
+      mails.sort_by {|mail| mail.uid}
     end
 
     def uid_fetch(mailbox, sequence_set)
@@ -249,7 +249,7 @@ class Ximapd
                                    doc)
       end
 
-      mails
+      mails.sort_by {|mail| mail.uid}
     end
 
     def mailbox_status(mailbox)
@@ -274,7 +274,7 @@ class Ximapd
 
     def uid_search(query)
       result = query(query)
-      result.collect { |item_id| get_uid(item_id) }
+      result.collect { |item_id| get_uid(item_id) }.sort
     end
 
     def rebuild_index(*args)

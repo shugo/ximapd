@@ -53,12 +53,14 @@ class Ximapd
 
   class NullCommand < Command
     def exec
+      @session.send_queued_responses
       @session.send_bad("Null command")
     end
   end
 
   class MissingCommand < Command
     def exec
+      @session.send_queued_responses
       @session.send_tagged_bad(@tag, "Missing command")
     end
   end
@@ -69,6 +71,7 @@ class Ximapd
       if @session.state == NON_AUTHENTICATED_STATE
         msg.concat("/login please")
       end
+      @session.send_queued_responses
       @session.send_tagged_bad(@tag, msg)
     end
   end
@@ -116,6 +119,7 @@ class Ximapd
       @session.synchronize do
         @session.sync
       end
+      @session.send_queued_responses
       send_tagged_ok
     end
   end
@@ -217,6 +221,7 @@ class Ximapd
         @session.send_ok("[UIDNEXT %d] Predicted next UID", status.uidnext)
         @session.send_data("FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
         @session.send_ok("[PERMANENTFLAGS (\\Answered \\Flagged \\Draft \\Seen \\Deleted \\*)] Limited")
+        @session.send_queued_responses
         send_tagged_response
       rescue MailboxError => e
         @session.send_tagged_no(@tag, "%s", e)
@@ -238,6 +243,7 @@ class Ximapd
         #@session.sync
         @session.select(@mailbox_name)
       end
+      @session.send_queued_responses
       send_tagged_ok("READ-WRITE")
     end
   end
@@ -250,6 +256,7 @@ class Ximapd
         #@session.sync
         @session.examine(@mailbox_name)
       end
+      @session.send_queued_responses
       send_tagged_ok("READ-ONLY")
     end
   end
@@ -264,6 +271,7 @@ class Ximapd
         @session.synchronize do
           @mail_store.create_mailbox(@mailbox_name)
         end
+        @session.send_queued_responses
         send_tagged_ok
       rescue InvalidQueryError
         @session.send_tagged_no(@tag, "invalid query")
@@ -284,6 +292,7 @@ class Ximapd
       @session.synchronize do
         @mail_store.delete_mailbox(@mailbox_name)
       end
+      @session.send_queued_responses
       send_tagged_ok
     end
   end
@@ -303,13 +312,21 @@ class Ximapd
         @session.synchronize do
           @mail_store.rename_mailbox(@mailbox_name, @new_mailbox_name)
         end
+        @session.send_queued_responses
         send_tagged_ok
-      rescue InvalidQueryError
-        @session.send_tagged_no(@tag, "invalid query")
-      rescue MailboxExistError
-        @session.send_tagged_no(@tag, "mailbox already exists")
-      rescue NoMailboxError
-        @session.send_tagged_no(@tag, "mailbox does not exist")
+      rescue Exception => e
+        case e
+        when InvalidQueryError
+          msg = "invalid query"
+        when MailboxExistError
+          msg = "mailbox already exists"
+        when NoMailboxError
+          msg = "mailbox does not exist"
+        else
+          raise
+        end
+        @session.send_queued_responses
+        @session.send_tagged_no(@tag, msg)
       end
     end
   end
@@ -353,6 +370,7 @@ class Ximapd
         @session.send_data("%s (%s) \"/\" %s",
                            @name, mbox["flags"], quoted(mbox_name))
       end
+      @session.send_queued_responses
       send_tagged_ok
     end
   end
@@ -375,6 +393,7 @@ class Ximapd
         format("%s %d", att, status.send(att.downcase))
       }.join(" ")
       @session.send_data("STATUS %s (%s)", quoted(@mailbox_name), s)
+      @session.send_queued_responses
       send_tagged_ok
     end
   end
@@ -390,7 +409,10 @@ class Ximapd
     def exec
       @session.synchronize do
         @mail_store.import_mail(@message, @mailbox_name, @flags.join(" "))
+        n = @mail_store.get_mailbox_status(@mailbox_name, true).messages
+        @session.push_queued_response(@mailbox_name, "#{n} EXISTS")
       end
+      @session.send_queued_responses
       send_tagged_ok
     end
   end
@@ -399,21 +421,33 @@ class Ximapd
     def exec
       @session.send_continue_req("Waiting for DONE")
       th = Thread.start do
-        @session.synchronize do
-          begin
-            @session.idle = true
-            @session.sync
-            @mail_store.mailbox_db.transaction do
-              @mail_store.plugins.fire_event(:on_idle)
-              if @session.all_session_on_idle?
-                @mail_store.plugins.fire_event(:on_idle_all)
+        begin
+          @session.synchronize do
+            begin
+              @session.idle = true
+              @session.sync
+              @mail_store.mailbox_db.transaction do
+                @mail_store.plugins.fire_event(:on_idle)
+                if @session.all_session_on_idle?
+                  @mail_store.plugins.fire_event(:on_idle_all)
+                end
               end
+            ensure
+              @session.idle = false
             end
-          rescue IdleTerminated
-            # OK
-          ensure
-            @session.idle = false
           end
+        rescue IdleTerminated
+          # OK
+        end
+      end
+      send_queued_responses_th = Thread.start do
+        begin
+          loop do
+            sleep 1
+            @session.send_queued_responses
+          end
+        rescue IdleTerminated
+          # OK
         end
       end
       until @session.recv_line == "DONE"
@@ -421,6 +455,9 @@ class Ximapd
       end
       th.raise(IdleTerminated) if th.alive?
       th.join
+      send_queued_responses_th.raise(IdleTerminated) if send_queued_responses_th.alive?
+      send_queued_responses_th.join
+      @session.send_queued_responses
       send_tagged_ok
     end
   end
@@ -434,6 +471,7 @@ class Ximapd
         deleted_mails = mailbox.uid_fetch(uids).reverse
         @mail_store.delete_mails(deleted_mails)
       end
+      @session.send_queued_responses
       @session.close_mailbox
       send_tagged_ok
     end
@@ -454,7 +492,9 @@ class Ximapd
       end
       for seqno in deleted_seqnos
         @session.send_data("%d EXPUNGE", seqno)
+        @session.push_queued_response(@session.current_mailbox, "#{seqno} EXISTS")
       end
+      @session.send_queued_responses
       send_tagged_ok
     end
   end
@@ -476,6 +516,7 @@ class Ximapd
       else
         @session.send_data("SEARCH %s", result.join(" "))
       end
+      @session.send_queued_responses
       send_tagged_ok
     end
 
@@ -537,6 +578,7 @@ class Ximapd
         end
         send_fetch_response(mail, data)
       end
+      @session.send_queued_responses(/\A\d+ EXPUNGE\z/)
       send_tagged_ok
     end
 
@@ -750,8 +792,10 @@ class Ximapd
           unless @att.silent?
             send_fetch_response(mail, flags)
           end
+          queue_fetch_response(mail, flags)
         end
       end
+      @session.send_queued_responses(/\A\d+ EXPUNGE\z/)
       send_tagged_ok
     end
 
@@ -776,6 +820,10 @@ class Ximapd
     def send_fetch_response(mail, flags)
       @session.send_data("%d FETCH (FLAGS (%s))", mail.seqno, flags)
     end
+
+    def queue_fetch_response(mail, flags)
+      @session.push_queued_response(@session.current_mailbox, "#{mail.seqno} FETCH (FLAGS (#{flags}))")
+    end
   end
 
   class UidStoreCommand < AbstractStoreCommand
@@ -788,6 +836,10 @@ class Ximapd
     def send_fetch_response(mail, flags)
       @session.send_data("%d FETCH (FLAGS (%s) UID %d)",
                          mail.seqno, flags, mail.uid)
+    end
+
+    def queue_fetch_response(mail, flags)
+      @session.push_queued_response(@session.current_mailbox, "#{mail.seqno} FETCH (FLAGS (#{flags}) UID #{mail.uid})")
     end
   end
 
@@ -851,10 +903,12 @@ class Ximapd
           uid = @mail_store.import_mail(mail.to_s, dest_mailbox.name,
                                         mail.flags(false), mail.internal_date,
                                         override)
-          dest_mail = dest_mailbox.get_mail(uid)
+          dest_mail = dest_mailbox.uid_fetch([uid]).first
           @mail_store.plugins.fire_event(:on_copied, mail, dest_mail)
         end
       end
+      n = @mail_store.get_mailbox_status(@mailbox_name, true).messages
+      @session.push_queued_response(@mailbox_name, "#{n} EXISTS")
       send_tagged_ok
     end
 

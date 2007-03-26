@@ -49,7 +49,7 @@ EOF
     inbox = mail_store.mailbox_db.transaction {
       mail_store.get_mailbox("INBOX")
     }
-    mail = inbox.get_mail(uid)
+    mail = inbox.uid_fetch([uid]).first
     assert_equal(date, mail.internal_date)
     mail_store.teardown
   end
